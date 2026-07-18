@@ -20,6 +20,7 @@ REGRESSION_OBJECTIVE_DOMAINS: tuple[tuple[str, str], ...] = (
     ("team_dashboard", "IT 团队看板"),
     ("assistant_qa", "AI 助手问答"),
     ("permission_visibility", "权限可视化"),
+    ("rd_collaboration", "需求驱动研发协作"),
 )
 REGRESSION_OBJECTIVE_DOMAIN_KEYS = tuple(key for key, _label in REGRESSION_OBJECTIVE_DOMAINS)
 REGRESSION_OBJECTIVE_DOMAIN_LABELS = {
@@ -33,6 +34,7 @@ REGRESSION_TARGETED_SUITE_NAMES = (
     "code-inspection-governance",
     "knowledge-index-health",
     "permission-visibility",
+    "rd-collaboration",
 )
 REGRESSION_TARGETED_DOMAIN_KEYS = tuple(
     key
@@ -49,6 +51,7 @@ REGRESSION_TARGETED_DOMAIN_KEYS = tuple(
         "release_blockers",
         "requirement_version_scheduling",
         "runner_reliability",
+        "rd_collaboration",
         "version_branch",
         "version_dashboard",
     }
@@ -81,6 +84,7 @@ REGRESSION_SUITE_DOMAINS: dict[str, tuple[str, ...]] = {
     ),
     "knowledge-index-health": ("knowledge_index_health",),
     "permission-visibility": ("permission_visibility",),
+    "rd-collaboration": ("rd_collaboration",),
 }
 
 

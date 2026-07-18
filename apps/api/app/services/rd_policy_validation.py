@@ -18,6 +18,29 @@ _CONFIG_FIELDS = (
     "deployment_config",
 )
 
+# Role bindings are stored as relational rows, but snapshots must contain only
+# strategy inputs.  In particular, row identity and timestamps are mutable
+# persistence metadata and may be returned as ``datetime`` instances by
+# PostgreSQL.  Including them in a snapshot makes its immutable content hash
+# depend on database representation and breaks JSON serialization.
+_ROLE_BINDING_STRATEGY_FIELDS = {
+    "actor_mode",
+    "budget_config",
+    "candidate_ai_employee_ids",
+    "candidate_human_user_ids",
+    "context_config",
+    "fallback_executor_profile_ids",
+    "metadata",
+    "primary_executor_profile_id",
+    "repository_trust_domains",
+    "required_permissions",
+    "reviewer_role_codes",
+    "role_code",
+    "status",
+    "tool_config",
+    "tool_trust_domains",
+}
+
 
 class PolicyValidationError(ValueError):
     def __init__(self, code: str, message: str) -> None:
@@ -163,7 +186,11 @@ def validate_unified_policy_payload(payload: dict[str, Any]) -> dict[str, Any]:
             raise PolicyValidationError(
                 "RD_EXECUTION_POLICY_INVALID", "each role binding must be an object"
             )
-        binding = deepcopy(binding_value)
+        binding = {
+            key: deepcopy(value)
+            for key, value in binding_value.items()
+            if key in _ROLE_BINDING_STRATEGY_FIELDS
+        }
         role_code = _non_blank(binding.get("role_code"), "role_bindings.role_code")
         status = str(binding.get("status", "active")).strip().lower()
         actor_mode = str(binding.get("actor_mode", "")).strip().lower()

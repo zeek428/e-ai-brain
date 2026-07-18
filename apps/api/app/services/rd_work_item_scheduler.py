@@ -342,8 +342,12 @@ def claim_work_item(
             {"current_version": item.get("version"), "retryable": False},
         )
     run = _records(store, "rd_collaboration_runs").get(str(item.get("collaboration_run_id")))
-    if run is None or run.get("status") != "running":
-        raise api_error(409, "RD_WORK_ITEM_NOT_READY", "Collaboration run is not running")
+    if run is None or run.get("status") not in {"running", "integrating", "verifying"}:
+        raise api_error(
+            409,
+            "RD_WORK_ITEM_NOT_READY",
+            "Collaboration run is not dispatchable",
+        )
     if work_item_id not in {
         entry["id"] for entry in ready_work_items(store, collaboration_run_id=run["id"])
     }:

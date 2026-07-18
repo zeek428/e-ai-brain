@@ -232,6 +232,32 @@ def _quality_gate_policy(
     }
 
 
+def test_postgres_claim_allows_released_integration_work_while_run_is_integrating(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _seed_dispatchable_work_item(repository, prefix="work-item-integrating-claim")
+    with repository._connect(autocommit=False) as connection:
+        connection.execute(
+            "UPDATE rd_collaboration_runs SET status = 'integrating' WHERE id = %s",
+            (ids["run_id"],),
+        )
+        connection.execute(
+            "UPDATE rd_work_items SET work_item_type = 'integration' WHERE id = %s",
+            (ids["work_item_id"],),
+        )
+
+    claimed = repository.claim_ready_work_item(
+        ids["work_item_id"],
+        lease_owner="work-item-integrating-claim-owner",
+        lease_seconds=60,
+        expected_version=1,
+    )
+
+    assert claimed is not None
+    assert claimed["status"] == "claimed"
+    assert claimed["work_item"]["status"] == "claimed"
+
+
 def test_postgres_dispatch_freezes_custom_quality_gate_before_later_policy_mutation(
     repository: PostgresSnapshotRepository,
 ) -> None:

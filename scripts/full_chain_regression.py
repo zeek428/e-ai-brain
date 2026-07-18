@@ -5,6 +5,7 @@ import argparse
 import http.client
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -24,6 +25,9 @@ from full_chain_regression_assistant_qa import validate_assistant_qa_quick_regre
 from full_chain_regression_code_inspection import validate_code_inspection_governance_quick_regression  # noqa: E402
 from full_chain_regression_knowledge import validate_knowledge_index_health_quick_regression  # noqa: E402
 from full_chain_regression_permissions import validate_permission_visibility_quick_regression  # noqa: E402
+from full_chain_regression_rd_collaboration import (  # noqa: E402
+    validate_rd_collaboration_quick_regression,
+)
 from full_chain_regression_slug import regression_slug  # noqa: E402
 from full_chain_regression_suites import (  # noqa: E402
     REGRESSION_TARGETED_SUITE_NAMES,
@@ -160,10 +164,28 @@ class ApiClient:
         self.token: str | None = None
 
     def login(self, username: str, password: str) -> dict[str, Any]:
+        challenge = self.request(
+            "POST",
+            "/api/auth/login-challenge",
+            body={},
+            authenticated=False,
+        )
+        challenge_id = str(challenge.get("challenge_id") or "").strip()
+        question = str(challenge.get("question") or "")
+        addition = re.search(r"(\d+)\s*\+\s*(\d+)", question)
+        if not challenge_id or addition is None:
+            raise RegressionError(
+                "Login challenge response is missing a supported arithmetic prompt."
+            )
         payload = self.request(
             "POST",
             "/api/auth/login",
-            body={"password": password, "username": username},
+            body={
+                "challenge_answer": str(int(addition.group(1)) + int(addition.group(2))),
+                "challenge_id": challenge_id,
+                "password": password,
+                "username": username,
+            },
             authenticated=False,
         )
         token = payload.get("access_token")
@@ -1581,6 +1603,15 @@ def run_regression_suite(
             )
         )
         return results
+    if suite == "rd-collaboration":
+        results.extend(
+            validate_rd_collaboration_quick_regression(
+                client,
+                username=username,
+                password=password,
+            )
+        )
+        return results
     raise RegressionError(f"Unsupported regression suite: {suite}")
 
 
@@ -1625,6 +1656,7 @@ def main() -> int:
             "code-inspection-governance",
             "knowledge-index-health",
             "permission-visibility",
+            "rd-collaboration",
         ],
         default=os.getenv("FULL_CHAIN_SUITE", "full"),
         help=(
@@ -1643,7 +1675,9 @@ def main() -> int:
             "knowledge document, index health, permission scope, retrieval mode, and "
             "search hit gate; permission-visibility executes role list, permission "
             "matrix, readable scope names, menu permission gap, and user permission "
-            "diagnostic gates."
+            "diagnostic gates; rd-collaboration executes requirement assessment, "
+            "compatible-version grouping, a dependency-gated work-item DAG, and "
+            "independent review through public APIs, stopping before delivery or deployment."
         ),
     )
     parser.add_argument(

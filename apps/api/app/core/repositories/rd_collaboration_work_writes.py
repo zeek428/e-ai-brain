@@ -1113,7 +1113,7 @@ class RdCollaborationWorkWriteMixin:
             (work_item_id,),
         )
         run = _row_dict(cursor, cursor.fetchone())
-        if run is None or run["status"] != "running":
+        if run is None or run["status"] not in {"running", "integrating", "verifying"}:
             return None
         params: list[Any] = [work_item_id]
         version_clause = ""

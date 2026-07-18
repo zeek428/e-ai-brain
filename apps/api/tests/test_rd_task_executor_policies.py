@@ -1,5 +1,6 @@
 import base64
 import json
+from datetime import UTC, datetime
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -1168,6 +1169,54 @@ def test_policy_snapshot_hash_and_identity_are_checked_and_no_delta_reuses_base(
         assert exc.code == "RD_POLICY_SNAPSHOT_INVALID"
     else:
         raise AssertionError("historical reads must reject hash-mismatched snapshots")
+
+
+def test_policy_snapshot_excludes_persisted_role_binding_timestamps():
+    class Repository:
+        def __init__(self) -> None:
+            self.snapshots: dict[str, dict] = {}
+
+        def freeze_base_policy_snapshot(self, snapshot: dict) -> dict:
+            self.snapshots[snapshot["id"]] = snapshot
+            return snapshot
+
+    class Store:
+        repository = Repository()
+
+        def __init__(self) -> None:
+            self.index = 0
+
+        def new_id(self, prefix: str) -> str:
+            self.index += 1
+            return f"{prefix}_{self.index}"
+
+    store = Store()
+    payload = valid_policy_payload()
+    policy = {
+        "id": "policy_timestamp_normalization",
+        "policy_version": 1,
+        "created_by": "user_admin",
+        "strategy_config": {key: value for key, value in payload.items() if key != "role_bindings"},
+    }
+    snapshot = freeze_base_rd_policy_snapshot(
+        store,
+        policy=policy,
+        role_bindings=[
+            {
+                **payload["role_bindings"][0],
+                "created_at": datetime.now(UTC),
+                "id": "rd_policy_binding_persisted",
+                "policy_id": policy["id"],
+                "updated_at": datetime.now(UTC),
+            }
+        ],
+    )
+
+    binding = snapshot["payload_json"]["role_bindings"][0]
+    assert binding["role_code"] == "developer"
+    assert "created_at" not in binding
+    assert "updated_at" not in binding
+    assert "policy_id" not in binding
 
 
 def test_assessment_policy_expansion_requires_human_decision():

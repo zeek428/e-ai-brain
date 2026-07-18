@@ -155,6 +155,44 @@ def test_claim_replays_the_same_lease_before_expiry_without_new_attempt() -> Non
     )
 
 
+def test_scheduler_claims_released_integration_work_while_run_is_integrating() -> None:
+    store = MemoryStore()
+    store.rd_collaboration_runs["run-integration"] = {
+        "id": "run-integration",
+        "status": "integrating",
+        "version": 2,
+    }
+    store.rd_run_seats["seat-tester"] = {
+        "id": "seat-tester",
+        "collaboration_run_id": "run-integration",
+        "human_user_id": "user-tester",
+        "role_code": "tester",
+        "status": "active",
+        "subject_type": "human_user",
+    }
+    store.rd_work_items["integration-item"] = {
+        "id": "integration-item",
+        "collaboration_run_id": "run-integration",
+        "owner_seat_id": "seat-tester",
+        "priority": 2,
+        "status": "ready",
+        "version": 3,
+        "work_item_type": "integration",
+    }
+
+    claimed = claim_work_item(
+        store,
+        work_item_id="integration-item",
+        actor={"id": "user-tester", "roles": ["tester"]},
+        expected_version=3,
+        lease_seconds=60,
+        idempotency_key="claim:integration-item:1",
+    )
+
+    assert claimed["work_item"]["status"] == "running"
+    assert claimed["attempt"]["work_item_id"] == "integration-item"
+
+
 def test_expired_claim_secret_is_scrubbed_without_removing_command_replay_record() -> None:
     store = MemoryStore()
     store.rd_command_replay_secrets["secret-1"] = {

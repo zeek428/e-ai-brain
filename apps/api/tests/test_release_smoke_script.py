@@ -189,6 +189,7 @@ def test_full_chain_regression_script_supports_targeted_suites():
         '"code-inspection-governance"',
         '"knowledge-index-health"',
         '"permission-visibility"',
+        '"rd-collaboration"',
         "REGRESSION_TARGETED_SUITE_NAMES",
         "run_regression_suite(",
         'suite == "all-targeted"',
@@ -197,6 +198,7 @@ def test_full_chain_regression_script_supports_targeted_suites():
         'suite == "code-inspection-governance"',
         'suite == "knowledge-index-health"',
         'suite == "permission-visibility"',
+        'suite == "rd-collaboration"',
         'StepResult("suite", suite)',
     ]:
         assert marker in content
@@ -465,6 +467,7 @@ def test_full_chain_regression_report_includes_suite_coverage():
     assert "assistant_qa" in targeted_coverage["covered_keys"]
     assert "assistant_draft_governance" in targeted_coverage["covered_keys"]
     assert "permission_visibility" in targeted_coverage["covered_keys"]
+    assert "rd_collaboration" in targeted_coverage["covered_keys"]
     assert "full_chain_trace" in targeted_coverage["skipped_keys"]
     assert targeted_coverage["covered_domain_count"] > dashboard_coverage["covered_domain_count"]
 
@@ -478,6 +481,7 @@ def test_full_chain_regression_slugs_are_unique_for_targeted_suites():
         REPO_ROOT / "scripts" / "full_chain_regression_code_inspection.py",
         REPO_ROOT / "scripts" / "full_chain_regression_knowledge.py",
         REPO_ROOT / "scripts" / "full_chain_regression_permissions.py",
+        REPO_ROOT / "scripts" / "full_chain_regression_rd_collaboration.py",
     ]
 
     first_slug = module.regression_slug()
@@ -551,6 +555,11 @@ def test_full_chain_regression_all_targeted_suite_aggregates_fast_suite_results(
         "validate_permission_visibility_quick_regression",
         suite_result("permission_visibility"),
     )
+    monkeypatch.setattr(
+        module,
+        "validate_rd_collaboration_quick_regression",
+        suite_result("rd_collaboration"),
+    )
 
     results = module.run_regression_suite(
         FakeClient(),
@@ -569,6 +578,7 @@ def test_full_chain_regression_all_targeted_suite_aggregates_fast_suite_results(
     assert "code-inspection-governance:code_inspection_governance" in result_names
     assert "knowledge-index-health:knowledge_index_health" in result_names
     assert "permission-visibility:permission_visibility" in result_names
+    assert "rd-collaboration:rd_collaboration" in result_names
     assert called == [
         "runner-reliability",
         "version_dashboard",
@@ -577,6 +587,7 @@ def test_full_chain_regression_all_targeted_suite_aggregates_fast_suite_results(
         "code_inspection_governance",
         "knowledge_index_health",
         "permission_visibility",
+        "rd_collaboration",
     ]
 
 
