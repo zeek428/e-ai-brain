@@ -94,7 +94,7 @@ def project_committed_rd_collaboration_event(
 
     The projection event id is stable for a source event.  Retrying this method
     after a checkpointer failure therefore reuses the same idempotent command
-    bundle and cannot duplicate event, outbox, audit, or role-feedback rows.
+    bundle and cannot duplicate event, audit, or role-feedback rows.
     """
     if _is_runtime_event(event):
         return {"checkpoint_status": "skipped", "reason": "runtime_event"}
