@@ -358,7 +358,7 @@ def test_cancel_and_decision_roll_back_with_command(
     assert repository.get_decision_request(str(decision["id"])) is None
 
 
-def test_feedback_experience_and_decision_roll_back_with_command(
+def test_feedback_and_experience_candidate_roll_back_with_command(
     repository: PostgresSnapshotRepository,
 ) -> None:
     prefix = "command-experience"
@@ -414,16 +414,6 @@ def test_feedback_experience_and_decision_roll_back_with_command(
     def domain(transaction: RdCollaborationTransaction) -> str:
         transaction.save_role_feedback_once(feedback)
         transaction.save_rd_role_experience_record(experience, sources=sources)
-        transaction.decide_role_experience(
-            experience_id=str(experience["id"]),
-            decision="approve",
-            expected_review_version=1,
-            reviewer_subject_type="human_user",
-            reviewer_subject_id="user_reviewer",
-            reviewer_role_code="rd_owner",
-            reviewer_seat_id=None,
-            require_independent_reviewer=True,
-        )
         return str(experience["id"])
 
     _assert_command_rolls_back(
@@ -434,6 +424,128 @@ def test_feedback_experience_and_decision_roll_back_with_command(
     )
     assert repository.get_role_feedback_record(str(feedback["id"])) is None
     assert repository.get_rd_role_experience_record(str(experience["id"])) is None
+
+
+def test_governed_experience_decision_rolls_back_with_owning_command(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    """A transaction-level decision must not open a separately committed transaction."""
+    prefix = "command-experience-decision"
+    seeded = _seed_exact_run(repository, prefix=prefix)
+    run_id = str(seeded["run"]["id"])
+    repository.save_rd_collaboration_event_record(
+        {
+            "id": f"{prefix}-source-event",
+            "collaboration_run_id": run_id,
+            "event_type": "feedback.source",
+            "event_key": f"{prefix}-source-event",
+            "subject_type": "rd_collaboration_run",
+            "subject_id": run_id,
+        }
+    )
+    feedback = repository.save_role_feedback_once(
+        {
+            "id": f"{prefix}-feedback",
+            "brain_app_id": "rd_brain",
+            "product_id": seeded["product"],
+            "collaboration_run_id": run_id,
+            "feedback_kind": "review",
+            "source_event_id": f"{prefix}-source-event",
+            "feedback_fingerprint": f"{prefix}-fingerprint",
+            "role_code": "developer",
+            "human_user_id": "user_admin",
+            "strategy_snapshot_id": seeded["version_snapshot"]["id"],
+            "producer_subject_type": "service",
+            "producer_subject_id": "quality_gate",
+        }
+    )
+    experience_id = f"{prefix}-experience"
+    repository.save_rd_role_experience_record(
+        {
+            "id": experience_id,
+            "experience_key": f"developer:{prefix}",
+            "brain_app_id": "rd_brain",
+            "product_scope": [seeded["product"]],
+            "role_code": "developer",
+            "work_item_type": "implementation",
+            "scenario": prefix,
+            "risk_scope": {"maximum": "high"},
+            "content": {"guidance": "atomic governed decision"},
+            "strategy_snapshot_id": seeded["version_snapshot"]["id"],
+            "confidence": 0.9,
+            "status": "pending",
+        },
+        sources=[
+            {
+                "id": f"{prefix}-source",
+                "experience_id": experience_id,
+                "role_feedback_record_id": feedback["id"],
+                "strategy_snapshot_id": seeded["version_snapshot"]["id"],
+            }
+        ],
+    )
+
+    def operation(transaction: RdCollaborationTransaction) -> dict[str, Any]:
+        decided = transaction.decide_role_experience_command(
+            experience_id=experience_id,
+            decision="approve",
+            comment="independent review",
+            expected_review_version=1,
+            reviewer_subject_id="user_reviewer",
+            reviewer_role_code=None,
+            reviewer_seat_id=None,
+            reviewer_role_codes=["rd_owner"],
+            reviewer_seat_ids=[],
+            require_independent_reviewer=True,
+            idempotency_key=f"{prefix}-approve",
+            request_hash=f"sha256:{prefix}",
+            audit_event={
+                "id": f"{prefix}-audit",
+                "event_type": "rd_role_experience.approved",
+                "actor_id": "user_reviewer",
+                "subject_type": "rd_role_experience",
+                "subject_id": experience_id,
+                "payload": {},
+            },
+        )
+        return {
+            "result_type": "rd_role_experience",
+            "result_id": decided["id"],
+            "http_status": 200,
+            "response_json": {"data": decided},
+        }
+
+    with pytest.raises(RuntimeError, match="force outer rollback"):
+        repository.execute_idempotent_rd_command(
+            command_type="experience-decision-test",
+            aggregate_type="rd_role_experience",
+            aggregate_id=experience_id,
+            idempotency_key=f"{prefix}-outer",
+            request_hash=f"sha256:{prefix}:outer",
+            command_record_id=f"{prefix}-command",
+            operation=operation,
+            failure_injection=lambda stage: (
+                (_ for _ in ()).throw(RuntimeError("force outer rollback"))
+                if stage == "after_domain"
+                else None
+            ),
+        )
+
+    assert repository.get_rd_role_experience_record(experience_id)["status"] == "pending"
+    with repository._connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM rd_role_experience_decisions WHERE experience_id = %s",
+                (experience_id,),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT id FROM audit_events WHERE id = %s", (f"{prefix}-audit",)
+            ).fetchone()
+            is None
+        )
 
 
 def test_decision_and_scope_request_replays_reject_divergent_provenance(

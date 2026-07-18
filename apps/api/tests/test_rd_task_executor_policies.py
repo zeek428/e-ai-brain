@@ -929,7 +929,8 @@ def test_version_merge_tightens_known_policy_operators_and_rejects_unknown_delta
                 "experience_reuse_config": {
                     "enabled": True,
                     "min_confidence": 0.6,
-                    "max_capacity": 8,
+                    "max_items": 8,
+                    "max_context_tokens": 800,
                     "max_age_days": 30,
                     "policy_compatibility": "same_policy_schema",
                     "repository_trust_domains": ["trusted", "internal"],
@@ -955,7 +956,8 @@ def test_version_merge_tightens_known_policy_operators_and_rejects_unknown_delta
                 "experience_reuse_config": {
                     "enabled": False,
                     "min_confidence": 0.8,
-                    "max_capacity": 4,
+                    "max_items": 4,
+                    "max_context_tokens": 400,
                     "max_age_days": 7,
                     "policy_compatibility": "same_policy_version",
                     "repository_trust_domains": ["trusted", "partner"],
@@ -983,7 +985,8 @@ def test_version_merge_tightens_known_policy_operators_and_rejects_unknown_delta
     assert merged["experience_reuse_config"] == {
         "enabled": False,
         "min_confidence": 0.8,
-        "max_capacity": 4,
+        "max_items": 4,
+        "max_context_tokens": 400,
         "max_age_days": 7,
         "policy_compatibility": "same_policy_version",
         "repository_trust_domains": ["trusted"],

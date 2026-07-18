@@ -47,6 +47,76 @@ def _string_list(value: Any, field: str) -> list[str]:
     return sorted(set(str(item).strip() for item in value))
 
 
+def _validate_experience_reuse_config(value: dict[str, Any]) -> dict[str, Any]:
+    """Normalize the frozen experience-reuse contract used by planning.
+
+    Capacity is deliberately two-dimensional: item count and context tokens.
+    The old ambiguous ``max_capacity`` field is rejected instead of silently
+    weakening one of those limits.
+    """
+    config = deepcopy(value)
+    if "max_capacity" in config:
+        raise PolicyValidationError(
+            "RD_EXECUTION_POLICY_INVALID",
+            "experience_reuse_config.max_capacity is unsupported; "
+            "use max_items and max_context_tokens",
+        )
+    if "enabled" in config and not isinstance(config["enabled"], bool):
+        raise PolicyValidationError(
+            "RD_EXECUTION_POLICY_INVALID", "experience_reuse_config.enabled must be boolean"
+        )
+    if "min_confidence" in config and (
+        isinstance(config["min_confidence"], bool)
+        or not isinstance(config["min_confidence"], (int, float))
+        or not 0 <= float(config["min_confidence"]) <= 1
+    ):
+        raise PolicyValidationError(
+            "RD_EXECUTION_POLICY_INVALID", "experience_reuse_config.min_confidence must be 0..1"
+        )
+    for field, allow_zero in (
+        ("max_age_days", True),
+        ("max_items", False),
+        ("max_context_tokens", False),
+    ):
+        if field not in config:
+            continue
+        value = config[field]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < (0 if allow_zero else 1)
+        ):
+            raise PolicyValidationError(
+                "RD_EXECUTION_POLICY_INVALID", f"experience_reuse_config.{field} is invalid"
+            )
+    for field in ("repository_trust_domains", "tool_trust_domains"):
+        if field in config:
+            config[field] = _string_list(config[field], f"experience_reuse_config.{field}")
+    if "policy_compatibility" in config and config["policy_compatibility"] not in {
+        "same_policy_version",
+        "same_policy_schema",
+    }:
+        raise PolicyValidationError(
+            "RD_EXECUTION_POLICY_INVALID",
+            "experience_reuse_config.policy_compatibility is invalid",
+        )
+    if "require_independent_reviewer" in config and not isinstance(
+        config["require_independent_reviewer"], bool
+    ):
+        raise PolicyValidationError(
+            "RD_EXECUTION_POLICY_INVALID",
+            "experience_reuse_config.require_independent_reviewer must be boolean",
+        )
+    if config.get("enabled") and (
+        "max_items" not in config or "max_context_tokens" not in config
+    ):
+        raise PolicyValidationError(
+            "RD_EXECUTION_POLICY_INVALID",
+            "enabled experience reuse requires max_items and max_context_tokens",
+        )
+    return config
+
+
 def validate_unified_policy_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Validate the one-policy strategy contract before persistence or resolution."""
     normalized = {
@@ -69,6 +139,9 @@ def validate_unified_policy_payload(payload: dict[str, Any]) -> dict[str, Any]:
         )
     for field in _CONFIG_FIELDS:
         normalized[field] = _config(payload.get(field), field)
+    normalized["experience_reuse_config"] = _validate_experience_reuse_config(
+        normalized["experience_reuse_config"]
+    )
 
     bindings_value = payload.get("role_bindings")
     if not isinstance(bindings_value, list):

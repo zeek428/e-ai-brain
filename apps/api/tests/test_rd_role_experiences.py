@@ -7,6 +7,9 @@ from fastapi.testclient import TestClient
 
 from app.core.store import MemoryStore
 from app.main import app
+from app.services.rd_feedback_attribution import record_role_feedback
+from app.services.rd_policy_resolution import merge_policy_payloads
+from app.services.rd_policy_validation import PolicyValidationError, validate_unified_policy_payload
 from app.services.rd_role_experiences import (
     decide_role_experience,
     generate_role_experience_candidates,
@@ -180,6 +183,162 @@ def test_candidate_decision_is_versioned_idempotent_and_separated_from_all_produ
         user=_reviewer(),
     )
     assert (retired["status"], retired["review_version"]) == ("retired", 3)
+
+
+def test_brain_scope_is_server_enforced_for_list_detail_and_decision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RD_ROLE_EXPERIENCE_ENABLED", "true")
+    current_store = _store()
+    [allowed] = generate_role_experience_candidates(current_store, candidates=[_candidate()])
+    current_store.role_feedback_records["feedback-other"] = {
+        **current_store.role_feedback_records["feedback-1"],
+        "id": "feedback-other",
+        "brain_app_id": "other_brain",
+    }
+    other = _candidate(candidate_id="experience-other")
+    other.update({"brain_app_id": "other_brain", "source_feedback_ids": ["feedback-other"]})
+    [hidden] = generate_role_experience_candidates(current_store, candidates=[other])
+    scoped_user = {
+        **_reviewer(),
+        "scope_summary": [
+            {"scope_type": "product", "scope_id": "product-a", "access_level": "write"},
+            {"scope_type": "brain_app", "scope_id": "rd_brain", "access_level": "read"},
+        ],
+    }
+
+    listed = list_role_experiences_response(
+        current_store=current_store,
+        user=scoped_user,
+        filters={},
+        page=1,
+        page_size=10,
+    )
+    assert [item["id"] for item in listed["items"]] == [allowed["id"]]
+    with pytest.raises(Exception) as detail:
+        from app.services.rd_role_experiences import get_role_experience_response
+
+        get_role_experience_response(
+            current_store=current_store,
+            user=scoped_user,
+            experience_id=hidden["id"],
+        )
+    assert getattr(detail.value, "detail", {}).get("code") == "FORBIDDEN"
+    with pytest.raises(Exception) as decide:
+        decide_role_experience(
+            current_store,
+            experience_id=hidden["id"],
+            decision="approve",
+            comment="out of brain scope",
+            expected_version=1,
+            idempotency_key="other-brain",
+            user=scoped_user,
+        )
+    assert getattr(decide.value, "detail", {}).get("code") == "FORBIDDEN"
+
+
+def test_independent_reviewer_uses_server_identity_roles_not_optional_client_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RD_ROLE_EXPERIENCE_ENABLED", "true")
+    current_store = _store()
+    [candidate] = generate_role_experience_candidates(current_store, candidates=[_candidate()])
+
+    with pytest.raises(Exception) as same_producer_role:
+        decide_role_experience(
+            current_store,
+            experience_id=candidate["id"],
+            decision="approve",
+            comment="same role cannot review",
+            expected_version=1,
+            idempotency_key="same-producer-role",
+            user={**_reviewer(), "roles": ["tester"]},
+        )
+    assert getattr(same_producer_role.value, "detail", {}).get("code") == "PERMISSION_DENIED"
+
+
+def test_experience_reuse_capacity_uses_items_and_tokens_with_strict_policy_validation() -> None:
+    with pytest.raises(PolicyValidationError):
+        validate_unified_policy_payload(
+            {
+                "name": "legacy capacity",
+                "role_bindings": [],
+                "experience_reuse_config": {"enabled": True, "max_capacity": 4},
+            }
+        )
+    with pytest.raises(PolicyValidationError):
+        validate_unified_policy_payload(
+            {
+                "name": "bad token capacity",
+                "role_bindings": [],
+                "experience_reuse_config": {
+                    "enabled": True,
+                    "max_items": 2,
+                    "max_context_tokens": "100",
+                },
+            }
+        )
+    merged = merge_policy_payloads(
+        [
+            {"experience_reuse_config": {"max_items": 5, "max_context_tokens": 600}},
+            {"experience_reuse_config": {"max_items": 2, "max_context_tokens": 150}},
+        ]
+    )
+    assert merged["experience_reuse_config"] == {"max_items": 2, "max_context_tokens": 150}
+
+
+def test_persisted_feedback_generates_one_pending_governed_candidate_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RD_ROLE_EXPERIENCE_ENABLED", "true")
+    current_store = _store()
+    current_store.rd_run_seats.update(
+        {
+            "seat-tester": {
+                "id": "seat-tester",
+                "collaboration_run_id": "run-1",
+                "role_code": "tester",
+                "subject_type": "human_user",
+                "human_user_id": "tester-1",
+            },
+            "seat-developer": {
+                "id": "seat-developer",
+                "collaboration_run_id": "run-1",
+                "role_code": "developer",
+                "subject_type": "ai_employee",
+                "ai_employee_id": "employee-1",
+            },
+        }
+    )
+    feedback = record_role_feedback(
+        current_store,
+        collaboration_run_id="run-1",
+        work_item_id="work-1",
+        source_event_id="review-event-1",
+        feedback_kind="review_approved",
+        producer={
+            "subject_type": "human_user",
+            "subject_id": "tester-1",
+            "role_code": "tester",
+            "seat_id": "seat-tester",
+        },
+        attributed={
+            "subject_type": "ai_employee",
+            "subject_id": "employee-1",
+            "role_code": "developer",
+            "seat_id": "seat-developer",
+        },
+        executor_profile_id="executor-1",
+        actor_id="tester-1",
+        evidence_refs=[{"id": "review-event-1", "kind": "review"}],
+    )
+    assert feedback["id"]
+    assert len(current_store.rd_role_experience_records) == 1
+    candidate = next(iter(current_store.rd_role_experience_records.values()))
+    assert candidate["status"] == "pending"
+    assert next(iter(current_store.rd_role_experience_sources.values()))[
+        "role_feedback_record_id"
+    ] == feedback["id"]
 
 
 def test_list_and_reuse_filter_scope_including_policy_trust_and_token_capacity(

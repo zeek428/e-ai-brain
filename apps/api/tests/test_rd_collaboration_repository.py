@@ -3143,20 +3143,52 @@ def test_experience_version_sources_and_reviewer_producer_separation(
             reviewer_seat_id=None,
             require_independent_reviewer=False,
         )
-    assert self_review.value.code == "PERMISSION_DENIED"
+    assert self_review.value.code == "RD_EXPERIENCE_GOVERNANCE_REQUIRED"
 
-    approved = repository.decide_role_experience(
+    approved = repository.decide_role_experience_command(
         experience_id="experience-1",
         decision="approve",
+        comment="independent review",
         expected_review_version=1,
-        reviewer_subject_type="human_user",
         reviewer_subject_id="user_reviewer",
         reviewer_role_code="rd_owner",
         reviewer_seat_id=None,
         require_independent_reviewer=True,
+        idempotency_key="experience-1-approve",
+        request_hash="sha256:experience-1-approve",
+        audit_event={
+            "id": "experience-1-approve-audit",
+            "event_type": "rd_role_experience.approved",
+            "actor_id": "user_reviewer",
+            "subject_type": "rd_role_experience",
+            "subject_id": "experience-1",
+            "payload": {},
+        },
     )
     assert approved["status"] == "approved"
     assert approved["review_version"] == 2
+
+    with repository._connect(autocommit=False) as connection:
+        with pytest.raises(psycopg.errors.RaiseException):
+            connection.execute(
+                "UPDATE rd_role_experience_records SET status = 'retired' WHERE id = %s",
+                ("experience-1",),
+            )
+    with repository._connect(autocommit=False) as connection:
+        with pytest.raises(psycopg.errors.RaiseException):
+            connection.execute(
+                """
+                INSERT INTO rd_role_experience_sources (
+                  id, experience_id, role_feedback_record_id, strategy_snapshot_id
+                ) VALUES (%s, %s, %s, %s)
+                """,
+                (
+                    "experience-source-after-review",
+                    "experience-1",
+                    feedback["id"],
+                    seeded["version_snapshot"]["id"],
+                ),
+            )
 
 
 def test_postgres_experience_decision_command_is_idempotent_and_db_filtered(
@@ -3236,9 +3268,15 @@ def test_postgres_experience_decision_command_is_idempotent_and_db_filtered(
             "payload": {},
         },
     }
-    approved = repository.decide_role_experience_command(**kwargs)
-    assert approved["status"] == "approved"
-    assert repository.decide_role_experience_command(**kwargs)["review_version"] == 2
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        decisions = list(
+            executor.map(
+                lambda _: repository.decide_role_experience_command(**kwargs),
+                range(2),
+            )
+        )
+    assert {row["status"] for row in decisions} == {"approved"}
+    assert {row["review_version"] for row in decisions} == {2}
     rows, total = repository.list_rd_role_experience_records_page(
         filters={
             "brain_app_id": "rd_brain",
@@ -3252,6 +3290,14 @@ def test_postgres_experience_decision_command_is_idempotent_and_db_filtered(
         page_size=10,
     )
     assert total == 1 and rows[0]["id"] == experience["id"]
+    blocked_rows, blocked_total = repository.list_rd_role_experience_records_page(
+        filters={"product_id": seeded["product"]},
+        product_scope_ids=[seeded["product"]],
+        brain_app_ids=["other_brain"],
+        page=1,
+        page_size=10,
+    )
+    assert blocked_rows == [] and blocked_total == 0
 
 
 def test_database_constraints_reject_invalid_identity_dependency_and_plan_duplicates(

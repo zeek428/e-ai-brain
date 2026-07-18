@@ -251,6 +251,8 @@ class RdCollaborationExperienceWriteMixin:
                         or feedback[1] not in set(record.get("product_scope") or [])
                         or feedback[2] != record.get("role_code")
                         or feedback[3] != source.get("strategy_snapshot_id")
+                        or source.get("strategy_snapshot_id")
+                        != record.get("strategy_snapshot_id")
                     ):
                         raise RdCollaborationRepositoryError(
                             "RD_EXPERIENCE_INVALID",
@@ -280,18 +282,9 @@ class RdCollaborationExperienceWriteMixin:
         reviewer_seat_id: str | None,
         require_independent_reviewer: bool,
     ) -> dict[str, Any]:
-        return self._in_transaction(
-            lambda cursor: self._decide_role_experience_cursor(
-                cursor,
-                experience_id=experience_id,
-                decision=decision,
-                expected_review_version=expected_review_version,
-                reviewer_subject_type=reviewer_subject_type,
-                reviewer_subject_id=reviewer_subject_id,
-                reviewer_role_code=reviewer_role_code,
-                reviewer_seat_id=reviewer_seat_id,
-                require_independent_reviewer=require_independent_reviewer,
-            )
+        raise RdCollaborationRepositoryError(
+            "RD_EXPERIENCE_GOVERNANCE_REQUIRED",
+            "role experience lifecycle changes require the idempotent governed decision command",
         )
 
     def decide_role_experience_command(
@@ -308,64 +301,117 @@ class RdCollaborationExperienceWriteMixin:
         idempotency_key: str,
         request_hash: str,
         audit_event: dict[str, Any] | None,
+        reviewer_role_codes: list[str] | None = None,
+        reviewer_seat_ids: list[str] | None = None,
     ) -> dict[str, Any]:
-        def operation(cursor: Any) -> dict[str, Any]:
-            with nullcontext(cursor) as current:
-                current.execute(
-                    """
-                    SELECT request_hash, response_json FROM rd_role_experience_decisions
-                    WHERE experience_id = %s AND idempotency_key = %s
-                    """,
-                    (experience_id, idempotency_key),
-                )
-                existing = current.fetchone()
-                if existing is not None:
-                    if existing[0] != request_hash:
-                        raise self._idempotency_conflict(
-                            "experience decision idempotency key is bound to a different request",
-                            experience_id=experience_id,
-                        )
-                    return dict(existing[1])
-                persisted = self._decide_role_experience_cursor(
-                    current,
-                    experience_id=experience_id,
-                    decision=decision,
-                    expected_review_version=expected_review_version,
-                    reviewer_subject_type="human_user",
-                    reviewer_subject_id=reviewer_subject_id,
-                    reviewer_role_code=reviewer_role_code,
-                    reviewer_seat_id=reviewer_seat_id,
-                    require_independent_reviewer=require_independent_reviewer,
-                )
-                current.execute(
-                    """
-                    INSERT INTO rd_role_experience_decisions (
-                      id, experience_id, decision, comment, reviewer_user_id,
-                      expected_review_version, resulting_review_version, idempotency_key,
-                      request_hash, response_json
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        str(uuid4()),
-                        experience_id,
-                        decision,
-                        comment,
-                        reviewer_subject_id,
-                        expected_review_version,
-                        persisted["review_version"],
-                        idempotency_key,
-                        request_hash,
-                        Jsonb(json.loads(json.dumps(persisted, default=str))),
-                    ),
-                )
-                if audit_event is not None:
-                    callback = self._upsert_audit_events
-                    if callback is None:
-                        raise RuntimeError("audit persistence callback is not configured")
-                    callback(current, [audit_event])
-                return persisted
+        return self._in_transaction(
+            lambda cursor: self._decide_role_experience_command_cursor(
+                cursor,
+                experience_id=experience_id,
+                decision=decision,
+                comment=comment,
+                expected_review_version=expected_review_version,
+                reviewer_subject_id=reviewer_subject_id,
+                reviewer_role_code=reviewer_role_code,
+                reviewer_seat_id=reviewer_seat_id,
+                reviewer_role_codes=reviewer_role_codes,
+                reviewer_seat_ids=reviewer_seat_ids,
+                require_independent_reviewer=require_independent_reviewer,
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                audit_event=audit_event,
+            )
+        )
 
-        return self._in_transaction(operation)
+    def _decide_role_experience_command_cursor(
+        self,
+        cursor: Any,
+        *,
+        experience_id: str,
+        decision: str,
+        comment: str | None,
+        expected_review_version: int,
+        reviewer_subject_id: str,
+        reviewer_role_code: str | None,
+        reviewer_seat_id: str | None,
+        reviewer_role_codes: list[str] | None,
+        reviewer_seat_ids: list[str] | None,
+        require_independent_reviewer: bool,
+        idempotency_key: str,
+        request_hash: str,
+        audit_event: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Apply one governed decision through the caller's transaction cursor."""
+        with nullcontext(cursor) as current:
+            current.execute(
+                """
+                SELECT id FROM rd_role_experience_records
+                WHERE id = %s FOR UPDATE
+                """,
+                (experience_id,),
+            )
+            if current.fetchone() is None:
+                raise RdCollaborationRepositoryError(
+                    "RD_EXPERIENCE_INVALID", "experience candidate does not exist"
+                )
+            # Re-read only after the aggregate lock.  Concurrent identical
+            # calls then observe the first immutable decision and replay it
+            # instead of failing its stale review version.
+            current.execute(
+                """
+                SELECT request_hash, response_json FROM rd_role_experience_decisions
+                WHERE experience_id = %s AND idempotency_key = %s
+                """,
+                (experience_id, idempotency_key),
+            )
+            existing = current.fetchone()
+            if existing is not None:
+                if existing[0] != request_hash:
+                    raise self._idempotency_conflict(
+                        "experience decision idempotency key is bound to a different request",
+                        experience_id=experience_id,
+                    )
+                return dict(existing[1])
+            persisted = self._decide_role_experience_cursor(
+                current,
+                experience_id=experience_id,
+                decision=decision,
+                expected_review_version=expected_review_version,
+                reviewer_subject_type="human_user",
+                reviewer_subject_id=reviewer_subject_id,
+                reviewer_role_code=reviewer_role_code,
+                reviewer_seat_id=reviewer_seat_id,
+                reviewer_role_codes=reviewer_role_codes,
+                reviewer_seat_ids=reviewer_seat_ids,
+                require_independent_reviewer=require_independent_reviewer,
+            )
+            current.execute(
+                """
+                INSERT INTO rd_role_experience_decisions (
+                  id, experience_id, decision, comment, reviewer_user_id,
+                  expected_review_version, resulting_review_version, idempotency_key,
+                  request_hash, response_json
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    str(uuid4()),
+                    experience_id,
+                    decision,
+                    comment,
+                    reviewer_subject_id,
+                    expected_review_version,
+                    persisted["review_version"],
+                    idempotency_key,
+                    request_hash,
+                    Jsonb(json.loads(json.dumps(persisted, default=str))),
+                ),
+            )
+            if audit_event is not None:
+                callback = self._upsert_audit_events
+                if callback is None:
+                    raise RuntimeError("audit persistence callback is not configured")
+                callback(current, [audit_event])
+            return persisted
 
     def _decide_role_experience_cursor(
         self,
@@ -379,6 +425,8 @@ class RdCollaborationExperienceWriteMixin:
         reviewer_role_code: str | None,
         reviewer_seat_id: str | None,
         require_independent_reviewer: bool,
+        reviewer_role_codes: list[str] | None = None,
+        reviewer_seat_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         status_by_decision = {
             "approve": "approved",
@@ -437,9 +485,14 @@ class RdCollaborationExperienceWriteMixin:
                     producer[0] == reviewer_subject_type and producer[1] == reviewer_subject_id
                     for producer in producers
                 )
+                roles = set(reviewer_role_codes or [])
+                seats = set(reviewer_seat_ids or [])
+                if reviewer_role_code:
+                    roles.add(reviewer_role_code)
+                if reviewer_seat_id:
+                    seats.add(reviewer_seat_id)
                 same_frozen_role_or_seat = require_independent_reviewer and any(
-                    (reviewer_role_code is not None and producer[2] == reviewer_role_code)
-                    or (reviewer_seat_id is not None and producer[3] == reviewer_seat_id)
+                    producer[2] in roles or producer[3] in seats
                     for producer in producers
                 )
                 if same_subject or same_frozen_role_or_seat:
@@ -447,6 +500,9 @@ class RdCollaborationExperienceWriteMixin:
                         "PERMISSION_DENIED",
                         "feedback producer cannot review its derived experience",
                     )
+                cursor.execute(
+                    "SELECT set_config('app.rd_role_experience_governed_decision', 'true', true)"
+                )
                 cursor.execute(
                     """
                     UPDATE rd_role_experience_records

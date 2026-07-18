@@ -1708,22 +1708,13 @@ class RdCollaborationTransaction:
         reviewer_seat_id: str | None,
         require_independent_reviewer: bool,
     ) -> dict[str, Any]:
-        return self._repository._decide_role_experience_cursor(
-            self.cursor,
-            experience_id=experience_id,
-            decision=decision,
-            expected_review_version=expected_review_version,
-            reviewer_subject_type=reviewer_subject_type,
-            reviewer_subject_id=reviewer_subject_id,
-            reviewer_role_code=reviewer_role_code,
-            reviewer_seat_id=reviewer_seat_id,
-            require_independent_reviewer=require_independent_reviewer,
+        raise RdCollaborationRepositoryError(
+            "RD_EXPERIENCE_GOVERNANCE_REQUIRED",
+            "role experience lifecycle changes require the idempotent governed decision command",
         )
 
     def decide_role_experience_command(self, **kwargs: Any) -> dict[str, Any]:
-        # Commands opened by a higher-level aggregate transaction retain the
-        # same durability and idempotency boundary as direct repository calls.
-        return self._repository.decide_role_experience_command(**kwargs)
+        return self._repository._decide_role_experience_command_cursor(self.cursor, **kwargs)
 
     def save_collaboration_event(self, event: dict[str, Any]) -> dict[str, Any]:
         return self._repository._insert_event_cursor(self.cursor, event)

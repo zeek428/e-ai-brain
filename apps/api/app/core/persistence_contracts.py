@@ -193,6 +193,13 @@ class RdCollaborationRepository(Protocol):
     def get_role_feedback_record(self, record_id: str) -> dict[str, Any] | None: ...
     def list_role_feedback_records(self, collaboration_run_id: str) -> list[dict[str, Any]]: ...
     def get_rd_role_experience_record(self, record_id: str) -> dict[str, Any] | None: ...
+    def get_rd_role_experience_record_scoped(
+        self,
+        record_id: str,
+        *,
+        product_scope_ids: list[str] | None,
+        brain_app_ids: list[str] | None,
+    ) -> dict[str, Any] | None: ...
     def list_rd_role_experience_records(self, experience_key: str) -> list[dict[str, Any]]: ...
     def list_rd_role_experience_records_page(
         self,
@@ -201,6 +208,7 @@ class RdCollaborationRepository(Protocol):
         product_scope_ids: list[str] | None,
         page: int,
         page_size: int,
+        brain_app_ids: list[str] | None = None,
     ) -> tuple[list[dict[str, Any]], int]: ...
     def list_rd_role_experience_sources(self, experience_id: str) -> list[dict[str, Any]]: ...
     def get_rd_role_experience_source(self, record_id: str) -> dict[str, Any] | None: ...
@@ -443,6 +451,8 @@ class RdCollaborationRepository(Protocol):
         idempotency_key: str,
         request_hash: str,
         audit_event: dict[str, Any] | None,
+        reviewer_role_codes: list[str] | None = None,
+        reviewer_seat_ids: list[str] | None = None,
     ) -> dict[str, Any]: ...
 
 

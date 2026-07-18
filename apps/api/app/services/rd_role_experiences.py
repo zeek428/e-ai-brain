@@ -20,8 +20,11 @@ from app.core.repositories.rd_collaboration import (
     RdCollaborationVersionConflictError,
 )
 from app.services.product_scope import (
+    brain_app_scope_filter,
     product_scope_filter,
+    require_brain_app_scope,
     require_product_scope,
+    user_can_read_brain_app,
     user_can_read_product,
 )
 
@@ -239,7 +242,71 @@ def generate_role_experience_candidates(
     return saved
 
 
+def generate_role_experience_candidate_from_feedback(
+    store: Any, *, feedback: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Project one persisted feedback fact into a pending governed candidate.
+
+    This closes the production feedback-to-review loop without treating a
+    candidate as an approved rule.  The feedback id is part of the immutable
+    candidate identity, so worker replay is safe.
+    """
+    if not role_experience_enabled() or not feedback.get("strategy_snapshot_id"):
+        return []
+    role_code = str(feedback.get("role_code") or "").strip()
+    product_id = str(feedback.get("product_id") or "").strip()
+    if not role_code or role_code == "system" or not product_id:
+        return []
+    work_item_id = str(feedback.get("work_item_id") or "")
+    work_item = (
+        _get(store, "rd_work_items", work_item_id, "get_rd_work_item") if work_item_id else None
+    )
+    work_item = work_item or {}
+    work_item_type = str(work_item.get("work_item_type") or "feedback").strip()
+    scenario = str(
+        work_item.get("scenario")
+        or work_item.get("objective")
+        or feedback.get("feedback_kind")
+        or "feedback"
+    ).strip()
+    snapshot = _snapshot(store, str(feedback["strategy_snapshot_id"]))
+    reuse = _reuse_config(snapshot)
+    raw = {
+        "brain_app_id": str(feedback.get("brain_app_id") or "rd_brain"),
+        "content": {
+            "kind": "feedback_candidate",
+            "feedback_kind": str(feedback.get("feedback_kind") or "feedback"),
+            "guidance": "Pending review: inspect cited feedback before reuse.",
+        },
+        "confidence": 0.5,
+        "evidence_refs": deepcopy(feedback.get("evidence_refs") or []),
+        "experience_key": f"{role_code}:{work_item_type}:{scenario}",
+        "product_scope": [product_id],
+        "repository_trust_domains": deepcopy(reuse.get("repository_trust_domains") or []),
+        "risk_scope": {"maximum": str(work_item.get("risk_level") or "medium")},
+        "role_code": role_code,
+        "scenario": scenario,
+        "source_feedback_ids": [str(feedback["id"])],
+        "strategy_snapshot_id": str(feedback["strategy_snapshot_id"]),
+        "tool_trust_domains": deepcopy(reuse.get("tool_trust_domains") or []),
+        "work_item_type": work_item_type,
+    }
+    raw["id"] = _new_id(
+        store,
+        "rd_role_experience",
+        {"feedback_id": feedback["id"], "snapshot_id": raw["strategy_snapshot_id"]},
+    )
+    return generate_role_experience_candidates(store, candidates=[raw])
+
+
 def _require_candidate_scope(user: dict[str, Any], record: dict[str, Any]) -> None:
+    require_brain_app_scope(
+        user,
+        record.get("brain_app_id"),
+        code="FORBIDDEN",
+        message="Experience is outside business brain scope",
+        status_code=403,
+    )
     for product_id in record.get("product_scope") or []:
         require_product_scope(
             user,
@@ -250,8 +317,74 @@ def _require_candidate_scope(user: dict[str, Any], record: dict[str, Any]) -> No
         )
 
 
+def _get_scoped_candidate(
+    store: Any, *, experience_id: str, user: dict[str, Any]
+) -> dict[str, Any] | None:
+    repository = _repository(store)
+    getter = getattr(repository, "get_rd_role_experience_record_scoped", None)
+    if callable(getter):
+        return getter(
+            experience_id,
+            product_scope_ids=product_scope_filter(user),
+            brain_app_ids=brain_app_scope_filter(user),
+        )
+    record = _get(
+        store,
+        "rd_role_experience_records",
+        experience_id,
+        "get_rd_role_experience_record",
+    )
+    if record is not None:
+        _require_candidate_scope(user, record)
+    return record
+
+
 def _require_decide_permission(user: dict[str, Any]) -> None:
     require_permissions(user, {DECIDE_PERMISSION})
+
+
+def _reviewer_identity(
+    store: Any, *, user: dict[str, Any], experience_id: str
+) -> tuple[list[str], list[str]]:
+    """Resolve review separation from authenticated roles and frozen seats.
+
+    Request bodies never carry these values.  A user may hold several role
+    codes, so any overlap with a feedback producer rejects the review.
+    """
+    role_codes = {
+        str(value).strip()
+        for value in [*(user.get("rd_role_codes") or []), *(user.get("roles") or [])]
+        if str(value).strip()
+    }
+    source_runs: set[str] = set()
+    for source in _source_rows(store, experience_id):
+        feedback = _feedback(store, str(source.get("role_feedback_record_id") or ""))
+        if feedback and feedback.get("collaboration_run_id"):
+            source_runs.add(str(feedback["collaboration_run_id"]))
+    repository = _repository(store)
+    list_seats = getattr(repository, "list_rd_run_seats", None)
+    seats: list[dict[str, Any]] = []
+    for run_id in sorted(source_runs):
+        if callable(list_seats):
+            seats.extend(dict(item) for item in list_seats(run_id))
+        else:
+            seats.extend(
+                item
+                for item in _records(store, "rd_run_seats").values()
+                if item.get("collaboration_run_id") == run_id
+            )
+    reviewer_seat_ids = {
+        str(seat["id"])
+        for seat in seats
+        if seat.get("subject_type") == "human_user"
+        and seat.get("human_user_id") == user.get("id")
+    }
+    role_codes.update(
+        str(seat.get("role_code"))
+        for seat in seats
+        if str(seat.get("id")) in reviewer_seat_ids and seat.get("role_code")
+    )
+    return sorted(role_codes), sorted(reviewer_seat_ids)
 
 
 def decide_role_experience(
@@ -263,29 +396,28 @@ def decide_role_experience(
     expected_version: int,
     idempotency_key: str,
     user: dict[str, Any],
-    reviewer_role_code: str | None = None,
-    reviewer_seat_id: str | None = None,
 ) -> dict[str, Any]:
     require_role_experience_enabled()
     _require_decide_permission(user)
     if decision not in _DECISIONS or not idempotency_key.strip():
         raise api_error(422, "RD_EXPERIENCE_INVALID", "Experience decision is invalid")
-    record = _get(
-        store, "rd_role_experience_records", experience_id, "get_rd_role_experience_record"
-    )
+    record = _get_scoped_candidate(store, experience_id=experience_id, user=user)
     if record is None:
         raise api_error(404, "NOT_FOUND", "Role experience not found")
     _require_candidate_scope(user, record)
     snapshot = _snapshot(store, str(record["strategy_snapshot_id"]))
     independent = bool(_reuse_config(snapshot).get("require_independent_reviewer"))
+    reviewer_role_codes, reviewer_seat_ids = _reviewer_identity(
+        store, user=user, experience_id=experience_id
+    )
     request_hash = _hash(
         {
             "decision": decision,
             "comment": comment,
             "expected_version": expected_version,
             "reviewer": user["id"],
-            "reviewer_role_code": reviewer_role_code,
-            "reviewer_seat_id": reviewer_seat_id,
+            "reviewer_role_codes": reviewer_role_codes,
+            "reviewer_seat_ids": reviewer_seat_ids,
         }
     )
     event_status = {"approve": "approved", "reject": "rejected", "retire": "retired"}[decision]
@@ -314,8 +446,10 @@ def decide_role_experience(
                 comment=comment,
                 expected_review_version=expected_version,
                 reviewer_subject_id=str(user["id"]),
-                reviewer_role_code=reviewer_role_code,
-                reviewer_seat_id=reviewer_seat_id,
+                reviewer_role_code=None,
+                reviewer_seat_id=None,
+                reviewer_role_codes=reviewer_role_codes,
+                reviewer_seat_ids=reviewer_seat_ids,
                 require_independent_reviewer=independent,
                 idempotency_key=idempotency_key,
                 request_hash=request_hash,
@@ -374,12 +508,10 @@ def decide_role_experience(
             )
         if independent and (
             (
-                reviewer_role_code is not None
-                and feedback.get("producer_role_code") == reviewer_role_code
+                feedback.get("producer_role_code") in reviewer_role_codes
             )
             or (
-                reviewer_seat_id is not None
-                and feedback.get("producer_seat_id") == reviewer_seat_id
+                feedback.get("producer_seat_id") in reviewer_seat_ids
             )
         ):
             raise api_error(
@@ -446,6 +578,7 @@ def list_role_experiences_response(
         rows, total = list_page(
             filters=filters,
             product_scope_ids=product_scope_filter(user),
+            brain_app_ids=brain_app_scope_filter(user),
             page=page,
             page_size=page_size,
         )
@@ -459,6 +592,7 @@ def list_role_experiences_response(
         row
         for row in _records(current_store, "rd_role_experience_records").values()
         if _matches_scope(row, filters)
+        and user_can_read_brain_app(user, row.get("brain_app_id"))
         and all(
             user_can_read_product(user, product_id) for product_id in row.get("product_scope") or []
         )
@@ -491,9 +625,7 @@ def get_role_experience_response(
 ) -> dict[str, Any]:
     require_role_experience_enabled()
     require_permissions(user, {READ_PERMISSION})
-    record = _get(
-        current_store, "rd_role_experience_records", experience_id, "get_rd_role_experience_record"
-    )
+    record = _get_scoped_candidate(current_store, experience_id=experience_id, user=user)
     if record is None:
         raise api_error(404, "NOT_FOUND", "Role experience not found")
     _require_candidate_scope(user, record)

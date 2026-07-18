@@ -38,6 +38,52 @@ def product_scope_filter(user: dict[str, Any]) -> list[str] | None:
     return None if global_access else sorted(product_ids)
 
 
+def brain_app_scope_filter(user: dict[str, Any]) -> list[str] | None:
+    """Return server-derived business-brain access for collaboration reads.
+
+    Product grants do not implicitly authorize every business brain that may
+    share a product.  Existing R&D-only accounts retain access to the default
+    ``rd_brain`` until explicit ``brain_app`` grants are configured.
+    """
+    roles = set(user.get("roles") or [])
+    permissions = set(user.get("permissions") or [])
+    if "admin" in roles or "system.admin" in permissions:
+        return None
+    explicit: set[str] = set()
+    for scope in user.get("scope_summary") or []:
+        if not isinstance(scope, dict) or scope.get("access_level") not in {
+            "admin",
+            "read",
+            "write",
+        }:
+            continue
+        scope_type = scope.get("scope_type")
+        scope_id = scope.get("scope_id")
+        if scope_type == "global" and scope_id == "*":
+            return None
+        if scope_type in {"brain_app", "business_brain"} and scope_id:
+            explicit.add(str(scope_id))
+    return sorted(explicit) if explicit else ["rd_brain"]
+
+
+def user_can_read_brain_app(user: dict[str, Any], brain_app_id: Any) -> bool:
+    allowed = brain_app_scope_filter(user)
+    return allowed is None or (brain_app_id is not None and str(brain_app_id) in allowed)
+
+
+def require_brain_app_scope(
+    user: dict[str, Any],
+    brain_app_id: Any,
+    *,
+    code: str = "NOT_FOUND",
+    message: str = "Business brain not found",
+    status_code: int = 404,
+) -> None:
+    if user_can_read_brain_app(user, brain_app_id):
+        return
+    raise api_error(status_code, code, message)
+
+
 def user_can_read_product(user: dict[str, Any], product_id: Any) -> bool:
     global_access, product_ids = user_product_access(user)
     if global_access:

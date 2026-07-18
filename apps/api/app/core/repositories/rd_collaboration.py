@@ -561,6 +561,34 @@ class RdCollaborationReadRepository(RdCollaborationWriteRepository):
     def get_rd_role_experience_record(self, record_id: str) -> dict[str, Any] | None:
         return self._get("rd_role_experience_records", record_id)
 
+    def get_rd_role_experience_record_scoped(
+        self,
+        record_id: str,
+        *,
+        product_scope_ids: list[str] | None,
+        brain_app_ids: list[str] | None,
+    ) -> dict[str, Any] | None:
+        """Load an experience only when both caller-owned scopes match in SQL."""
+        clauses = ["experience.id = %s"]
+        params: list[Any] = [record_id]
+        if product_scope_ids is not None:
+            clauses.append(
+                "NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text("
+                "experience.product_scope) p WHERE NOT p = ANY(%s))"
+            )
+            params.append(product_scope_ids)
+        if brain_app_ids is not None:
+            clauses.append("experience.brain_app_id = ANY(%s)")
+            params.append(brain_app_ids)
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT experience.* FROM rd_role_experience_records experience WHERE "
+                    + " AND ".join(clauses),
+                    tuple(params),
+                )
+                return _row_dict(cursor, cursor.fetchone())
+
     def list_rd_role_experience_records(
         self,
         experience_key: str,
@@ -578,6 +606,7 @@ class RdCollaborationReadRepository(RdCollaborationWriteRepository):
         product_scope_ids: list[str] | None,
         page: int,
         page_size: int,
+        brain_app_ids: list[str] | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """Filter experience in PostgreSQL before any source metadata is read."""
         clauses: list[str] = []
@@ -602,6 +631,9 @@ class RdCollaborationReadRepository(RdCollaborationWriteRepository):
                 "experience.product_scope) p WHERE NOT p = ANY(%s))"
             )
             params.append(product_scope_ids)
+        if brain_app_ids is not None:
+            clauses.append("experience.brain_app_id = ANY(%s)")
+            params.append(brain_app_ids)
         if filters.get("risk_level"):
             clauses.append("experience.risk_scope ->> 'maximum' = %s")
             params.append(filters["risk_level"])

@@ -15,6 +15,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from app.api.deps import api_error
 from app.core.config import get_settings
 from app.services.rd_feedback_attribution import record_role_feedback
+from app.services.rd_role_experiences import generate_role_experience_candidate_from_feedback
 
 _SATISFIED_PREDECESSOR_STATES = {"completed", "approved"}
 _TERMINAL_WORK_ITEM_STATES = {"completed", "approved", "failed", "cancelled"}
@@ -795,6 +796,7 @@ def review_work_item(
     repository = _repository(store)
     if repository is not None:
         return _review_work_item_repository(
+            store,
             repository,
             work_item_id=work_item_id,
             decision=decision,
@@ -910,6 +912,7 @@ def review_work_item(
 
 
 def _review_work_item_repository(
+    store: Any,
     repository: Any,
     *,
     work_item_id: str,
@@ -1046,7 +1049,11 @@ def _review_work_item_repository(
         request_hash=_canonical_hash(request),
         operation=operation,
     )
-    return {**dict(result["response_json"]), "idempotent_replay": bool(result["idempotent_replay"])}
+    response = dict(result["response_json"])
+    feedback = response.get("feedback")
+    if isinstance(feedback, dict):
+        generate_role_experience_candidate_from_feedback(store, feedback=feedback)
+    return {**response, "idempotent_replay": bool(result["idempotent_replay"])}
 
 
 def cancel_work_item(

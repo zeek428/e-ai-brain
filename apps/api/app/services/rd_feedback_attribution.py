@@ -9,6 +9,7 @@ from threading import Lock
 from typing import Any
 
 from app.api.deps import api_error
+from app.services.rd_role_experiences import generate_role_experience_candidate_from_feedback
 
 _MEMORY_FEEDBACK_LOCK = Lock()
 
@@ -180,7 +181,9 @@ def record_role_feedback(
     if callable(save):
         if not record["product_id"] or not record["strategy_snapshot_id"]:
             raise api_error(409, "RD_FEEDBACK_ATTRIBUTION_INVALID", "Run provenance is unavailable")
-        return save(record)
+        persisted = save(record)
+        generate_role_experience_candidate_from_feedback(store, feedback=persisted)
+        return persisted
     # A database unique key protects production.  The test-only memory store
     # needs the equivalent critical section so concurrent replays follow the
     # same one-row contract rather than a read-before-write race.
@@ -194,7 +197,8 @@ def record_role_feedback(
             ),
             None,
         )
-        if existing is not None:
-            return deepcopy(existing)
-        _records(store, "role_feedback_records")[record["id"]] = record
-        return deepcopy(record)
+        persisted = deepcopy(existing) if existing is not None else deepcopy(record)
+        if existing is None:
+            _records(store, "role_feedback_records")[record["id"]] = deepcopy(record)
+    generate_role_experience_candidate_from_feedback(store, feedback=persisted)
+    return persisted
