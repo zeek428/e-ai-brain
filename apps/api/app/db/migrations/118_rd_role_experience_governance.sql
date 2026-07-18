@@ -72,6 +72,17 @@ CREATE TRIGGER trg_rd_role_experience_sources_immutable
 BEFORE UPDATE OR DELETE ON rd_role_experience_sources
 FOR EACH ROW EXECUTE FUNCTION protect_rd_role_experience_source();
 
+CREATE OR REPLACE FUNCTION protect_rd_role_experience_decision() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'rd_role_experience_decisions are immutable';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_rd_role_experience_decisions_immutable ON rd_role_experience_decisions;
+CREATE TRIGGER trg_rd_role_experience_decisions_immutable
+BEFORE UPDATE OR DELETE ON rd_role_experience_decisions
+FOR EACH ROW EXECUTE FUNCTION protect_rd_role_experience_decision();
+
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ai_brain_app_runtime') THEN
