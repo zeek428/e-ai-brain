@@ -27,7 +27,7 @@ def _delivery_store(*, delivery_target: str = "ready_for_release") -> MemoryStor
         "brain_app_id": "rd_brain",
         "product_id": "product-1",
         "product_version_id": "version-1",
-        "status": "integrating",
+        "status": "verifying",
         "strategy_snapshot_id": "snapshot-1",
         "delivery_target": delivery_target,
     }
@@ -334,11 +334,115 @@ def test_runner_delivery_outbox_and_signed_provider_callback_form_the_only_remot
         working_branch="rd/run-1/coding-1",
     )
     callback["payload"]["project"] = {"path_with_namespace": "group/delivery"}
-    status, error = project_external_event(store, event=callback)
+    with pytest.raises(
+        type(api_error(409, "RD_DELIVERY_EVIDENCE_INCOMPLETE", "missing"))
+    ) as incomplete:
+        project_external_event(store, event=callback)
 
-    assert (status, error) == ("completed", None)
+    assert incomplete.value.detail["code"] == "RD_DELIVERY_EVIDENCE_INCOMPLETE"
     reconciled = _materialized_delivery(store, str(created["delivery"]["id"]))
     assert reconciled["remote_commit_sha"] == "local-sha-1"
+
+
+def test_incomplete_callback_is_retryable_instead_of_being_marked_completed() -> None:
+    """A remote push may arrive before the durable integration phase is ready."""
+    from app.services.external_event_projectors import project_external_event
+
+    store = _delivery_store()
+    store.product_git_repositories["repo-1"] = {
+        "id": "repo-1",
+        "product_id": "product-1",
+        "git_provider": "gitlab",
+        "remote_url": "https://git.example.test/group/delivery.git",
+        "project_path": "group/delivery",
+        "status": "active",
+    }
+    delivery = record_version_git_delivery(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="coding-1",
+        repository_id="repo-1",
+        provider="gitlab",
+        working_branch="rd/run-1/coding-1",
+        version_branch="release/v1",
+        target_branch="main",
+        local_commit_sha="local-sha-1",
+        workspace_isolation={
+            "worktree_path": "/tmp/rd/run-1/coding-1",
+            "branch": "rd/run-1/coding-1",
+            "status": "isolated",
+        },
+    )
+    callback = _persist_verified_callback(
+        store,
+        delivery_id=str(delivery["delivery"]["id"]),
+        remote_commit_sha="local-sha-1",
+        working_branch="rd/run-1/coding-1",
+    )
+    callback["payload"]["project"] = {"path_with_namespace": "group/delivery"}
+
+    with pytest.raises(
+        type(api_error(409, "RD_DELIVERY_EVIDENCE_INCOMPLETE", "missing"))
+    ) as incomplete:
+        project_external_event(store, event=callback)
+
+    assert incomplete.value.detail["code"] == "RD_DELIVERY_EVIDENCE_INCOMPLETE"
+
+
+def test_inbox_defers_incomplete_delivery_callback_without_consuming_retry_budget() -> None:
+    from app.services.external_event_inbox import process_external_event_inbox_events
+
+    store = _delivery_store()
+    store.product_git_repositories["repo-1"] = {
+        "id": "repo-1",
+        "product_id": "product-1",
+        "git_provider": "gitlab",
+        "remote_url": "https://git.example.test/group/delivery.git",
+        "project_path": "group/delivery",
+        "status": "active",
+    }
+    delivery = record_version_git_delivery(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="coding-1",
+        repository_id="repo-1",
+        provider="gitlab",
+        working_branch="rd/run-1/coding-1",
+        version_branch="release/v1",
+        target_branch="main",
+        local_commit_sha="local-sha-1",
+        workspace_isolation={
+            "worktree_path": "/tmp/rd/run-1/coding-1",
+            "branch": "rd/run-1/coding-1",
+            "status": "isolated",
+        },
+    )
+    callback = _persist_verified_callback(
+        store,
+        delivery_id=str(delivery["delivery"]["id"]),
+        remote_commit_sha="local-sha-1",
+        working_branch="rd/run-1/coding-1",
+    )
+    callback.update(
+        {
+            "attempt_count": 0,
+            "error_message": None,
+            "lease_owner": None,
+            "lease_until": None,
+            "received_at": datetime.now(UTC).isoformat(),
+            "processed_at": None,
+            "status": "pending",
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+    )
+    callback["payload"]["project"] = {"path_with_namespace": "group/delivery"}
+
+    assert process_external_event_inbox_events(store, worker_id="delivery-worker") == 0
+    deferred = store.external_event_inbox[str(callback["id"])]
+    assert deferred["status"] == "pending"
+    assert deferred["attempt_count"] == 0
+    assert deferred["lease_until"] is not None
+    assert deferred["error_message"] == "RD_DELIVERY_EVIDENCE_INCOMPLETE"
 
 
 def _materialized_delivery(store: MemoryStore, delivery_id: str) -> dict[str, object]:
@@ -394,6 +498,42 @@ def test_ready_evidence_requires_reconciled_remote_and_version_integration_tests
     assert not any(
         "deploy" in event["event_type"] for event in store.execution_outbox_events.values()
     )
+
+
+def test_ready_evidence_requires_the_verified_run_phase() -> None:
+    store = _delivery_store()
+    _record_verified_delivery(store)
+    integration = record_version_git_delivery(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="integration-1",
+        repository_id="repo-1",
+        provider="gitlab",
+        working_branch="release/v1",
+        version_branch="release/v1",
+        target_branch="main",
+        local_commit_sha="local-sha-1",
+        test_evidence={"suite": "version-integration", "status": "passed"},
+    )
+    integration_callback = _persist_verified_callback(
+        store,
+        delivery_id=str(integration["delivery"]["id"]),
+        remote_commit_sha="local-sha-1",
+        working_branch="release/v1",
+    )
+    store.rd_collaboration_runs["run-1"]["status"] = "integrating"
+    verify_version_git_delivery(
+        store,
+        inbox_event_id=str(integration_callback["id"]),
+        inbox_event_payload_hash=str(integration_callback["payload_hash"]),
+    )
+
+    with pytest.raises(
+        type(api_error(409, "RD_DELIVERY_EVIDENCE_INCOMPLETE", "missing"))
+    ) as incomplete:
+        record_ready_for_release_evidence(store, collaboration_run_id="run-1")
+
+    assert incomplete.value.detail["code"] == "RD_DELIVERY_EVIDENCE_INCOMPLETE"
 
 
 def test_remote_sha_mismatch_and_stale_evidence_cannot_enter_ready_for_release() -> None:

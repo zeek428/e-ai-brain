@@ -422,6 +422,37 @@ def process_external_event_inbox_events(
         except Exception as exc:  # noqa: BLE001 - Inbox retries isolate projector failures.
             now = datetime.now(UTC).isoformat()
             attempts = int(event.get("attempt_count") or 1)
+            detail = getattr(exc, "detail", None)
+            error_code = detail.get("code") if isinstance(detail, dict) else None
+            if error_code == "RD_DELIVERY_EVIDENCE_INCOMPLETE":
+                # A signed Git callback may arrive before independently
+                # approved work items have advanced the collaboration run to
+                # verifying.  Its immutable reconciliation remains useful,
+                # but it is not a failed provider delivery and must not burn
+                # the bounded retry budget or be acknowledged as completed.
+                event.update(
+                    {
+                        "attempt_count": max(0, attempts - 1),
+                        "error_message": error_code,
+                        "lease_owner": None,
+                        "lease_until": (
+                            datetime.now(UTC) + timedelta(seconds=max(lease_seconds, 30))
+                        ).isoformat(),
+                        "processed_at": None,
+                        "status": "pending",
+                        "updated_at": now,
+                    }
+                )
+                audit = record_audit_event(
+                    current_store,
+                    event_type="external_event.deferred",
+                    actor_id=worker_id,
+                    subject_type="external_event",
+                    subject_id=event["id"],
+                    payload={"error_code": error_code},
+                )
+                _save_event(current_store, event, audit_event=audit)
+                continue
             event.update(
                 {
                     "error_message": type(exc).__name__,

@@ -13,6 +13,7 @@ from typing import Any
 
 from app.api.deps import api_error
 from app.services.operational_records import read_memory_dict
+from app.services.rd_work_item_scheduler import advance_delivery_phase_after_work_item_completion
 from app.services.task_persistence_helpers import (
     record_audit_event,
     save_audit_event,
@@ -636,6 +637,10 @@ def approve_work_item_after_task_review(
             }
         )
         _promote_ready_successors(current_store, completed_work_item_id=item["id"])
+        advance_delivery_phase_after_work_item_completion(
+            current_store,
+            collaboration_run_id=str(item["collaboration_run_id"]),
+        )
         event = _save_event(
             current_store,
             event_key=event_key,

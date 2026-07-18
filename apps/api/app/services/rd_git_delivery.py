@@ -21,7 +21,12 @@ DELIVERY_RECORD_TYPE = "rd_git_delivery"
 RECONCILIATION_RECORD_TYPE = "rd_git_delivery_reconciliation"
 READINESS_RECORD_TYPE = "rd_ready_for_release_evidence"
 _CODING_WORK_ITEM_TYPES = {"coding", "development", "implementation"}
-_INTEGRATION_WORK_ITEM_TYPES = {"integration", "integration_test", "version_integration"}
+_INTEGRATION_WORK_ITEM_TYPES = {
+    "automated_testing",
+    "integration",
+    "integration_test",
+    "version_integration",
+}
 
 
 def _now() -> str:
@@ -774,6 +779,7 @@ def verify_version_git_delivery(
     )
     verified = _materialize_delivery(store, delivery)
     readiness: dict[str, Any] | None = None
+    readiness_pending = False
     try:
         readiness = record_ready_for_release_evidence(
             store,
@@ -785,10 +791,16 @@ def verify_version_git_delivery(
         code = detail.get("code") if isinstance(detail, dict) else None
         if code != "RD_DELIVERY_EVIDENCE_INCOMPLETE":
             raise
+        # The local/remote Git fact is immutable and may arrive before the
+        # approved integration item has advanced the durable run to verifying.
+        # Keep that reconciliation, but make the Inbox projector defer rather
+        # than falsely acknowledge the callback as fully completed.
+        readiness_pending = True
     return {
         "delivery": deepcopy(verified),
         "reconciliation": deepcopy(persisted_reconciliation),
         "readiness": deepcopy(readiness) if readiness is not None else None,
+        "readiness_pending": readiness_pending,
     }
 
 
@@ -807,11 +819,18 @@ def reconcile_version_git_delivery_from_provider_callback(
     control = payload.get("ai_brain") if isinstance(payload.get("ai_brain"), dict) else {}
     if not str(control.get("rd_delivery_id") or "").strip():
         return None
-    return verify_version_git_delivery(
+    reconciled = verify_version_git_delivery(
         store,
         inbox_event_id=str(inbox_event.get("id") or ""),
         inbox_event_payload_hash=str(inbox_event.get("payload_hash") or ""),
     )
+    if reconciled.get("readiness_pending"):
+        raise api_error(
+            409,
+            "RD_DELIVERY_EVIDENCE_INCOMPLETE",
+            "Remote Git callback is reconciled but the collaboration delivery phase is incomplete",
+        )
+    return reconciled
 
 
 def dispatch_rd_git_delivery_push_from_outbox(
@@ -1090,6 +1109,12 @@ def _persist_ready_status(
         return dict(result["run"]), dict(result["product_version"])
     run = _run(store, collaboration_run_id)
     version = _version(store, str(run["product_version_id"]))
+    if run.get("status") not in {"verifying", "ready_for_release"}:
+        raise api_error(
+            409,
+            "RD_DELIVERY_EVIDENCE_INCOMPLETE",
+            "Collaboration run must complete the verified delivery phase",
+        )
     if version.get("status") not in {"testing", "active", "ready_for_release"}:
         raise api_error(
             409, "RD_DELIVERY_EVIDENCE_INCOMPLETE", "Version cannot enter ready for release"

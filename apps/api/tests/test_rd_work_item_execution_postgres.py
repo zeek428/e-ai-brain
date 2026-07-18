@@ -13,6 +13,10 @@ from app.core.persistence import PostgresRuntimeStore, PostgresSnapshotRepositor
 from app.main import app
 from app.services.ai_executor_runners import _sync_runner_completion_to_ai_task
 from app.services.quality_gates import resolve_pre_merge_quality_gate_policy
+from app.services.rd_work_item_execution import (
+    approve_work_item_after_task_review,
+    project_work_item_quality_gate_result,
+)
 from app.services.task_start_execution import dispatch_ai_task_for_work_item
 from tests.test_rd_collaboration_repository import (
     _accepted_assessment,
@@ -436,6 +440,80 @@ def test_postgres_coding_completion_creates_gate_verifier_and_task_projection_to
     assert len([task for task in runner_tasks if task["task_kind"] == "quality_gate"]) == 1
 
 
+def test_postgres_approved_work_items_advance_delivery_phases_transactionally(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    """No caller or callback may set the R&D delivery phase directly."""
+    prefix = "work-item-delivery-phases"
+    ids = _seed_dispatchable_work_item(repository, prefix=prefix)
+    integration_work_item_id = f"{prefix}-integration-work-item"
+    repository.save_rd_work_item_record(
+        {
+            "id": integration_work_item_id,
+            "collaboration_run_id": ids["run_id"],
+            "requirement_id": f"{prefix}-requirement",
+            "plan_version": 1,
+            "work_item_type": "automated_testing",
+            "title": "version integration",
+            "objective": "run version integration tests",
+            "owner_seat_id": f"{prefix}-owner",
+            "reviewer_seat_id": f"{prefix}-reviewer",
+            "status": "ready",
+            "idempotency_key": integration_work_item_id,
+        }
+    )
+    runtime = PostgresRuntimeStore(repository)
+
+    coding = dispatch_ai_task_for_work_item(
+        runtime,
+        collaboration_run_id=ids["run_id"],
+        work_item_id=ids["work_item_id"],
+    )
+    project_work_item_quality_gate_result(
+        runtime,
+        ai_task_id=coding["task"]["id"],
+        quality_gate_run={"id": f"{prefix}-coding-gate", "status": "passed"},
+        runner_task_id=coding["runner_task"]["id"],
+    )
+    approve_work_item_after_task_review(
+        runtime,
+        ai_task_id=coding["task"]["id"],
+        review_id=f"{prefix}-coding-review",
+        actor_id="user_reviewer",
+    )
+
+    assert repository.get_rd_collaboration_run(ids["run_id"])["status"] == "integrating"
+
+    integration = dispatch_ai_task_for_work_item(
+        runtime,
+        collaboration_run_id=ids["run_id"],
+        work_item_id=integration_work_item_id,
+    )
+    project_work_item_quality_gate_result(
+        runtime,
+        ai_task_id=integration["task"]["id"],
+        quality_gate_run={"id": f"{prefix}-integration-gate", "status": "passed"},
+        runner_task_id=integration["runner_task"]["id"],
+    )
+    approve_work_item_after_task_review(
+        runtime,
+        ai_task_id=integration["task"]["id"],
+        review_id=f"{prefix}-integration-review",
+        actor_id="user_reviewer",
+    )
+
+    assert repository.get_rd_collaboration_run(ids["run_id"])["status"] == "verifying"
+    phase_events = [
+        event
+        for event in repository.list_rd_collaboration_events(ids["run_id"])
+        if event["event_type"] == "run.delivery_phase_advanced"
+    ]
+    assert [event["payload_json"]["to_status"] for event in phase_events] == [
+        "integrating",
+        "verifying",
+    ]
+
+
 def test_postgres_coding_runner_queues_push_and_only_signed_inbox_callback_reconciles(
     repository: PostgresSnapshotRepository,
     monkeypatch: pytest.MonkeyPatch,
@@ -496,6 +574,23 @@ def test_postgres_coding_runner_queues_push_and_only_signed_inbox_callback_recon
             """,
             (f"{prefix}-branch", ids["product_id"], f"{prefix}-version", repository_id),
         )
+
+    integration_work_item_id = f"{prefix}-integration-work-item"
+    repository.save_rd_work_item_record(
+        {
+            "id": integration_work_item_id,
+            "collaboration_run_id": ids["run_id"],
+            "requirement_id": f"{prefix}-requirement",
+            "plan_version": 1,
+            "work_item_type": "automated_testing",
+            "title": "version integration",
+            "objective": "record trusted version integration evidence",
+            "owner_seat_id": f"{prefix}-owner",
+            "reviewer_seat_id": f"{prefix}-reviewer",
+            "status": "ready",
+            "idempotency_key": integration_work_item_id,
+        }
+    )
 
     runtime = PostgresRuntimeStore(repository)
     dispatched = dispatch_ai_task_for_work_item(
@@ -559,6 +654,22 @@ def test_postgres_coding_runner_queues_push_and_only_signed_inbox_callback_recon
     assert "do not amend, reset, rebase, merge, deploy" in push_task["instruction"].lower()
     assert repository.list_execution_outbox_events(aggregate_type="deployment_request") == []
 
+    # Phase progression is owned by the normal work-item quality/review path,
+    # not by the later Git callback or a direct database mutation.
+    project_work_item_quality_gate_result(
+        runtime,
+        ai_task_id=dispatched["task"]["id"],
+        quality_gate_run={"id": f"{prefix}-coding-gate", "status": "passed"},
+        runner_task_id=dispatched["runner_task"]["id"],
+    )
+    approve_work_item_after_task_review(
+        runtime,
+        ai_task_id=dispatched["task"]["id"],
+        review_id=f"{prefix}-coding-review",
+        actor_id="user_reviewer",
+    )
+    assert repository.get_rd_collaboration_run(ids["run_id"])["status"] == "integrating"
+
     repository.save_plugin_record(
         {
             "id": "plugin_standard_gitlab",
@@ -603,7 +714,7 @@ def test_postgres_coding_runner_queues_push_and_only_signed_inbox_callback_recon
     assert callback["signature_status"] == "verified"
     processed_callback = process_external_event_inbox_events(runtime, worker_id="rd-inbox-worker")
     inbox_events = repository.list_external_event_inbox()
-    assert processed_callback == 1, {
+    assert processed_callback == 0, {
         key: inbox_events[0].get(key)
         for key in ("status", "error_message", "signature_status", "payload")
     }
@@ -620,9 +731,11 @@ def test_postgres_coding_runner_queues_push_and_only_signed_inbox_callback_recon
     assert reconciliations[0]["provider_callback_ref"] == (
         f"rd/{ids['run_id']}/{ids['work_item_id']}"
     )
-    assert repository.list_external_event_inbox(status="completed")[0]["id"] == callback["id"]
     persisted_callback = repository.get_external_event_inbox(callback["id"])
     assert persisted_callback is not None
+    assert persisted_callback["status"] == "pending"
+    assert persisted_callback["error_message"] == "RD_DELIVERY_EVIDENCE_INCOMPLETE"
+    assert persisted_callback["lease_until"] is not None
     assert persisted_callback["payload"]["_context"] == {
         "connection_id": f"{prefix}-gitlab-connection",
         "environment": None,
@@ -656,28 +769,27 @@ def test_postgres_coding_runner_queues_push_and_only_signed_inbox_callback_recon
     assert process_external_event_inbox_events(runtime, worker_id="rd-inbox-worker") == 0
     wrong_ref = repository.get_external_event_inbox(wrong_ref_callback["id"])
     assert wrong_ref is not None and wrong_ref["status"] == "failed"
-    assert repository.get_rd_collaboration_run(ids["run_id"])["status"] == "running"
+    assert repository.get_rd_collaboration_run(ids["run_id"])["status"] == "integrating"
 
-    integration_work_item_id = f"{prefix}-integration-work-item"
-    repository.save_rd_work_item_record(
-        {
-            "id": integration_work_item_id,
-            "collaboration_run_id": ids["run_id"],
-            "plan_version": 1,
-            "work_item_type": "integration",
-            "title": "version integration",
-            "objective": "record trusted version integration evidence",
-            "owner_seat_id": f"{prefix}-owner",
-            "reviewer_seat_id": f"{prefix}-reviewer",
-            "status": "completed",
-            "idempotency_key": integration_work_item_id,
-        }
+    integration_task = dispatch_ai_task_for_work_item(
+        runtime,
+        collaboration_run_id=ids["run_id"],
+        work_item_id=integration_work_item_id,
     )
-    with repository._connect(autocommit=False) as connection:
-        connection.execute(
-            "UPDATE rd_collaboration_runs SET status = 'integrating' WHERE id = %s",
-            (ids["run_id"],),
-        )
+    project_work_item_quality_gate_result(
+        runtime,
+        ai_task_id=integration_task["task"]["id"],
+        quality_gate_run={"id": f"{prefix}-integration-gate", "status": "passed"},
+        runner_task_id=integration_task["runner_task"]["id"],
+    )
+    approve_work_item_after_task_review(
+        runtime,
+        ai_task_id=integration_task["task"]["id"],
+        review_id=f"{prefix}-integration-review",
+        actor_id="user_reviewer",
+    )
+    assert repository.get_rd_collaboration_run(ids["run_id"])["status"] == "verifying"
+
     integration = record_version_git_delivery(
         runtime,
         collaboration_run_id=ids["run_id"],

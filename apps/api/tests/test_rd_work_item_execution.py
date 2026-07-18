@@ -11,6 +11,7 @@ from app.services.rd_work_item_execution import (
     approve_work_item_after_task_review,
     project_work_item_quality_gate_result,
 )
+from app.services.rd_work_item_scheduler import review_work_item
 from app.services.task_creation import create_ai_task_for_work_item
 from app.services.task_review_decisions import approve_review_response
 from app.services.task_start_execution import dispatch_ai_task_for_work_item
@@ -443,6 +444,65 @@ def test_approving_the_ai_task_review_projects_to_the_work_item() -> None:
 
     assert approved["task_status"] == "completed"
     assert store.rd_work_items["work-1"]["status"] == "completed"
+
+
+def test_approved_work_item_evidence_advances_delivery_phases_once() -> None:
+    """The durable work-item review path, not a caller, owns phase changes."""
+    store = _ai_work_item_store()
+    coding_item = store.rd_work_items["work-1"]
+    coding_item.update({"work_item_type": "implementation", "status": "reviewing"})
+    store.rd_work_item_attempts["attempt-coding"] = {
+        "id": "attempt-coding",
+        "work_item_id": "work-1",
+        "attempt_no": 1,
+        "status": "completed",
+    }
+    store.rd_work_items["integration-1"] = {
+        "id": "integration-1",
+        "collaboration_run_id": "run-1",
+        "work_item_type": "integration",
+        "title": "版本集成测试",
+        "owner_seat_id": "seat-developer",
+        "reviewer_seat_id": "seat-reviewer",
+        "status": "reviewing",
+        "risk_level": "low",
+        "version": 1,
+    }
+    store.rd_work_item_attempts["attempt-integration"] = {
+        "id": "attempt-integration",
+        "work_item_id": "integration-1",
+        "attempt_no": 1,
+        "status": "completed",
+    }
+
+    review_work_item(
+        store,
+        work_item_id="work-1",
+        decision="approve",
+        comment=None,
+        actor={"id": "reviewer-1"},
+        version=1,
+        idempotency_key="approve-coding",
+    )
+
+    assert store.rd_collaboration_runs["run-1"]["status"] == "integrating"
+
+    review_work_item(
+        store,
+        work_item_id="integration-1",
+        decision="approve",
+        comment=None,
+        actor={"id": "reviewer-1"},
+        version=1,
+        idempotency_key="approve-integration",
+    )
+
+    assert store.rd_collaboration_runs["run-1"]["status"] == "verifying"
+    assert [
+        event["event_type"]
+        for event in store.rd_collaboration_events.values()
+        if event["event_type"] == "run.delivery_phase_advanced"
+    ] == ["run.delivery_phase_advanced", "run.delivery_phase_advanced"]
 
 
 def test_low_risk_work_item_cancel_fences_task_review_attempt_and_runner() -> None:

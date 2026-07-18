@@ -27,6 +27,13 @@ from app.core.repositories.rd_collaboration_shared import (
 
 
 class RdCollaborationWorkWriteMixin:
+    _INTEGRATION_WORK_ITEM_TYPES = {
+        "automated_testing",
+        "integration",
+        "integration_test",
+        "version_integration",
+    }
+
     def record_rd_ready_for_release_evidence_bundle(
         self,
         *,
@@ -196,7 +203,7 @@ class RdCollaborationWorkWriteMixin:
         run = _row_dict(cursor, cursor.fetchone())
         if run is None:
             raise RdCollaborationRepositoryError("NOT_FOUND", "collaboration run does not exist")
-        if run["status"] not in {"integrating", "verifying", "ready_for_release"}:
+        if run["status"] not in {"verifying", "ready_for_release"}:
             raise RdCollaborationRepositoryError(
                 "RD_DELIVERY_EVIDENCE_INCOMPLETE",
                 "collaboration run is not at the delivery boundary",
@@ -1093,6 +1100,22 @@ class RdCollaborationWorkWriteMixin:
     ) -> dict[str, Any]:
         with nullcontext():
             with nullcontext(cursor) as cursor:
+                # Work-item completion can advance the version-level delivery
+                # phase.  Lock the aggregate before the item so cancellation,
+                # suspension and phase progression share the same lock order.
+                cursor.execute(
+                    "SELECT collaboration_run_id FROM rd_work_items WHERE id = %s",
+                    (work_item_id,),
+                )
+                provenance = cursor.fetchone()
+                collaboration_run_id = str(provenance[0]) if provenance is not None else ""
+                run = None
+                if collaboration_run_id:
+                    cursor.execute(
+                        "SELECT * FROM rd_collaboration_runs WHERE id = %s FOR UPDATE",
+                        (collaboration_run_id,),
+                    )
+                    run = _row_dict(cursor, cursor.fetchone())
                 cursor.execute(
                     "SELECT * FROM rd_work_items WHERE id = %s FOR UPDATE",
                     (work_item_id,),
@@ -1147,10 +1170,18 @@ class RdCollaborationWorkWriteMixin:
                     ),
                 )
                 persisted_work_item = _row_dict(cursor, cursor.fetchone())
+                persisted_phase_event = None
+                persisted_run = run
                 if persisted_work_item is not None and next_status == "completed":
                     self._promote_dependency_satisfied_successors_cursor(
                         cursor,
                         predecessor_work_item_id=work_item_id,
+                    )
+                    persisted_run, persisted_phase_event = (
+                        self._advance_rd_delivery_phase_after_work_item_completion_cursor(
+                            cursor,
+                            run=run,
+                        )
                     )
                 persisted_event = None
                 if event is not None:
@@ -1170,7 +1201,100 @@ class RdCollaborationWorkWriteMixin:
                     "work_item": persisted_work_item,
                     "attempt": persisted_attempt,
                     "event": persisted_event,
+                    "run": persisted_run,
+                    "delivery_phase_event": persisted_phase_event,
                 }
+
+    def _advance_rd_delivery_phase_after_work_item_completion_cursor(
+        self,
+        cursor: Any,
+        *,
+        run: dict[str, Any] | None,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """Advance a run only from independently approved work-item evidence.
+
+        The explicit integration work item forms the delivery boundary.  A
+        normal implementation completion enters ``integrating`` only once all
+        non-integration work is accepted; completing all work (including every
+        integration item) then enters ``verifying``.  The phase event and
+        aggregate state share the caller's transaction with the work-item
+        completion, so a callback cannot manufacture or race either signal.
+        """
+        if run is None or run.get("status") not in {"running", "integrating"}:
+            return run, None
+        collaboration_run_id = str(run["id"])
+        cursor.execute(
+            """
+            SELECT * FROM rd_work_items
+            WHERE collaboration_run_id = %s
+            ORDER BY id
+            FOR UPDATE
+            """,
+            (collaboration_run_id,),
+        )
+        work_items = [
+            item
+            for row in cursor.fetchall()
+            if (item := _row_dict(cursor, row)) is not None
+        ]
+        integration_items = [
+            item
+            for item in work_items
+            if str(item.get("work_item_type") or "").strip().lower()
+            in self._INTEGRATION_WORK_ITEM_TYPES
+        ]
+        if not integration_items:
+            return run, None
+        current_status = str(run["status"])
+        if current_status == "running":
+            predecessor_items = [item for item in work_items if item not in integration_items]
+            next_status = (
+                "integrating"
+                if predecessor_items
+                and all(item.get("status") == "completed" for item in predecessor_items)
+                else None
+            )
+        else:
+            next_status = (
+                "verifying"
+                if all(item.get("status") == "completed" for item in work_items)
+                else None
+            )
+        if next_status is None:
+            return run, None
+        event_key = f"delivery-phase:{collaboration_run_id}:{current_status}:{next_status}"
+        event = self._insert_event_cursor(
+            cursor,
+            {
+                "id": f"delivery-phase-event:{collaboration_run_id}:{current_status}:{next_status}",
+                "collaboration_run_id": collaboration_run_id,
+                "event_type": "run.delivery_phase_advanced",
+                "event_key": event_key,
+                "subject_type": "rd_collaboration_run",
+                "subject_id": collaboration_run_id,
+                "payload_json": {
+                    "from_status": current_status,
+                    "to_status": next_status,
+                    "evidence": "approved_work_items",
+                },
+            },
+        )
+        cursor.execute(
+            """
+            UPDATE rd_collaboration_runs
+            SET status = %s, version = version + 1, updated_at = now()
+            WHERE id = %s AND status = %s
+            RETURNING *
+            """,
+            (next_status, collaboration_run_id, current_status),
+        )
+        persisted_run = _row_dict(cursor, cursor.fetchone())
+        if persisted_run is None:
+            raise RdCollaborationRepositoryError(
+                "RD_WORK_ITEM_STATE_INVALID",
+                "collaboration run delivery phase changed concurrently",
+            )
+        return persisted_run, event
 
     @staticmethod
     def _promote_dependency_satisfied_successors_cursor(

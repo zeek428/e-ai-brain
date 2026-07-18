@@ -18,6 +18,12 @@ from app.services.rd_feedback_attribution import record_role_feedback
 
 _SATISFIED_PREDECESSOR_STATES = {"completed", "approved"}
 _TERMINAL_WORK_ITEM_STATES = {"completed", "approved", "failed", "cancelled"}
+_INTEGRATION_WORK_ITEM_TYPES = {
+    "automated_testing",
+    "integration",
+    "integration_test",
+    "version_integration",
+}
 
 
 def _records(store: Any, name: str) -> dict[str, dict[str, Any]]:
@@ -84,6 +90,87 @@ def ready_work_items(store: Any, *, collaboration_run_id: str) -> list[dict[str,
 
 def is_terminal_work_item_status(status: str | None) -> bool:
     return status in _TERMINAL_WORK_ITEM_STATES
+
+
+def advance_delivery_phase_after_work_item_completion(
+    store: Any,
+    *,
+    collaboration_run_id: str,
+) -> dict[str, Any] | None:
+    """Advance only the two delivery phases proved by approved work items.
+
+    This is the MemoryStore counterpart of the repository transaction.  A
+    completion signal is accepted only after the work-item review command has
+    persisted ``status=completed``.  The explicit integration item is the
+    safety boundary: a run cannot leave ``running`` without one, and cannot
+    reach ``verifying`` until every integration item has been independently
+    accepted.
+    """
+    run = _records(store, "rd_collaboration_runs").get(collaboration_run_id)
+    if run is None or run.get("status") not in {"running", "integrating"}:
+        return None
+    work_items = _work_items(store, collaboration_run_id)
+    integration_items = [
+        item
+        for item in work_items
+        if str(item.get("work_item_type") or "").strip().lower()
+        in _INTEGRATION_WORK_ITEM_TYPES
+    ]
+    if not integration_items:
+        return None
+    current_status = str(run["status"])
+    if current_status == "running":
+        predecessor_items = [item for item in work_items if item not in integration_items]
+        next_status = (
+            "integrating"
+            if predecessor_items
+            and all(item.get("status") == "completed" for item in predecessor_items)
+            else None
+        )
+    else:
+        next_status = (
+            "verifying"
+            if all(item.get("status") == "completed" for item in work_items)
+            else None
+        )
+    if next_status is None:
+        return None
+    event_key = f"delivery-phase:{collaboration_run_id}:{current_status}:{next_status}"
+    events = _records(store, "rd_collaboration_events")
+    existing = next(
+        (
+            event
+            for event in events.values()
+            if event.get("collaboration_run_id") == collaboration_run_id
+            and event.get("event_key") == event_key
+        ),
+        None,
+    )
+    if existing is not None:
+        return dict(run)
+    run.update(
+        {
+            "status": next_status,
+            "version": int(run.get("version") or 1) + 1,
+            "updated_at": _now().isoformat(),
+        }
+    )
+    event = {
+        "id": _new_id(store, "rd_collaboration_event"),
+        "collaboration_run_id": collaboration_run_id,
+        "event_type": "run.delivery_phase_advanced",
+        "event_key": event_key,
+        "subject_type": "rd_collaboration_run",
+        "subject_id": collaboration_run_id,
+        "payload_json": {
+            "from_status": current_status,
+            "to_status": next_status,
+            "evidence": "approved_work_items",
+        },
+        "occurred_at": _now().isoformat(),
+    }
+    events[event["id"]] = event
+    return dict(run)
 
 
 def _now() -> datetime:
@@ -761,6 +848,10 @@ def review_work_item(
                         "version": int(promoted.get("version") or 1) + 1,
                     }
                 )
+        advance_delivery_phase_after_work_item_completion(
+            store,
+            collaboration_run_id=str(item["collaboration_run_id"]),
+        )
     review = {
         "id": _new_id(store, "rd_work_item_review"),
         "decision": decision,
