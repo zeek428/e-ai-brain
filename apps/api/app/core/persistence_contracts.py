@@ -312,6 +312,21 @@ class RdCollaborationRepository(Protocol):
         event: dict[str, Any],
         audit_event: dict[str, Any],
     ) -> dict[str, Any]: ...
+    def complete_work_item_coding_bundle(
+        self,
+        *,
+        collaboration_run_id: str,
+        work_item_id: str,
+        attempt_id: str,
+        ai_task: dict[str, Any],
+        coding_runner_task: dict[str, Any],
+        quality_gate_run: dict[str, Any],
+        quality_gate_checks: list[dict[str, Any]],
+        verifier_runner_task: dict[str, Any],
+        audit_events: list[dict[str, Any]],
+        fence_event: dict[str, Any],
+        fence_audit_event: dict[str, Any],
+    ) -> dict[str, Any]: ...
     def cancel_work_item_bundle(
         self,
         *,

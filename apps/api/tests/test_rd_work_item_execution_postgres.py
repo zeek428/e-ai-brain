@@ -2,15 +2,20 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
+from threading import Event, Thread
 
 import pytest
+from fastapi.testclient import TestClient
 
 from app.core.persistence import PostgresRuntimeStore, PostgresSnapshotRepository
+from app.main import app
 from app.services.ai_executor_runners import _sync_runner_completion_to_ai_task
+from app.services.quality_gates import resolve_pre_merge_quality_gate_policy
 from app.services.task_start_execution import dispatch_ai_task_for_work_item
 from tests.test_rd_collaboration_repository import (
     _accepted_assessment,
     _base_snapshot,
+    _decision_record,
     _insert_product_version,
     _insert_requirement,
     _policy_record,
@@ -28,6 +33,8 @@ def _seed_dispatchable_work_item(
     repository: PostgresSnapshotRepository,
     *,
     prefix: str,
+    quality_gate_policy_id: str | None = None,
+    with_verifier: bool = False,
 ) -> dict[str, str]:
     ids = _insert_product_version(repository, prefix=prefix, status="active")
     policy = _policy_record(ids, prefix=prefix)
@@ -59,7 +66,14 @@ def _seed_dispatchable_work_item(
     version_snapshot["payload_json"] = {
         "autonomy_config": {"mode": "single_pass", "timeout_seconds": 60},
         "git_config": {"workspace_root": "/srv/rd-work"},
-        "quality_gate_config": {"code_change_review_mode": "manual_review"},
+        "quality_gate_config": {
+            "code_change_review_mode": "manual_review",
+            **(
+                {"quality_gate_policy_id": quality_gate_policy_id}
+                if quality_gate_policy_id is not None
+                else {}
+            ),
+        },
     }
     repository.merge_version_policy_snapshot_with_sources(
         snapshot=version_snapshot,
@@ -105,9 +119,26 @@ def _seed_dispatchable_work_item(
             "token_hash": sha256(b"rd-work-item-runner").hexdigest(),
             "executor_types": ["codex"],
             "workspace_roots": ["/srv/rd-work"],
+            "trust_boundary_id": f"{prefix}-coding-boundary",
+            "trust_domain": "coding",
+            "attestation_status": "active",
             "created_by": "user_admin",
         }
     )
+    if with_verifier:
+        repository.save_ai_executor_runner_record(
+            {
+                "id": f"{prefix}-verification-runner",
+                "name": f"{prefix}-verification-runner",
+                "token_hash": sha256(b"rd-work-item-verification-runner").hexdigest(),
+                "executor_types": ["codex"],
+                "workspace_roots": ["/srv/rd-work"],
+                "trust_boundary_id": f"{prefix}-verification-boundary",
+                "trust_domain": "verification",
+                "attestation_status": "active",
+                "created_by": "user_admin",
+            }
+        )
     repository.save_rd_ai_employee_record(
         {
             "id": employee_id,
@@ -167,7 +198,76 @@ def _seed_dispatchable_work_item(
     return {
         "run_id": run_id,
         "work_item_id": work_item_id,
+        "product_id": ids["product"],
     }
+
+
+def _quality_gate_policy(
+    policy_id: str,
+    *,
+    check_type: str,
+    product_id: str,
+    version: int,
+) -> dict[str, object]:
+    return {
+        "id": policy_id,
+        "name": policy_id,
+        "product_id": product_id,
+        "phase": "pre_merge",
+        "risk_levels": ["low", "medium", "high", "critical"],
+        "required_checks": [{"required": True, "type": check_type}],
+        "protected_paths": [],
+        "required_ci_contexts": [],
+        "minimum_independent_evidence": 1,
+        "manual_review_on_migration": True,
+        "status": "active",
+        "version": version,
+    }
+
+
+def test_postgres_dispatch_freezes_custom_quality_gate_before_later_policy_mutation(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    policy_id = "work-item-quality-gate-frozen"
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-quality-gate-frozen",
+        quality_gate_policy_id=policy_id,
+    )
+    repository.save_quality_gate_policy_record(
+        _quality_gate_policy(
+            policy_id,
+            check_type="unit_test",
+            product_id="work-item-quality-gate-frozen-product",
+            version=1,
+        )
+    )
+
+    dispatched = dispatch_ai_task_for_work_item(
+        PostgresRuntimeStore(repository),
+        collaboration_run_id=ids["run_id"],
+        work_item_id=ids["work_item_id"],
+    )
+    frozen = dispatched["task"]["input_json"]["rd_collaboration"]["execution_policy_snapshot"]
+    assert frozen["quality_gate_policy_snapshot"]["required_checks"] == [
+        {"required": True, "type": "unit_test"}
+    ]
+
+    repository.save_quality_gate_policy_record(
+        _quality_gate_policy(
+            policy_id,
+            check_type="secret_scan",
+            product_id="work-item-quality-gate-frozen-product",
+            version=2,
+        ),
+        expected_version=1,
+    )
+    resolved = resolve_pre_merge_quality_gate_policy(
+        PostgresRuntimeStore(repository),
+        ai_task=dispatched["task"],
+        executor_policy={"quality_gate_policy_id": policy_id},
+    )
+    assert resolved["required_checks"] == [{"required": True, "type": "unit_test"}]
 
 
 def test_postgres_dispatch_rolls_back_task_runner_attempt_event_and_audit_together(
@@ -293,6 +393,440 @@ def test_postgres_work_item_transition_rolls_back_task_attempt_event_and_audit(
     )
 
 
+def test_postgres_coding_completion_creates_gate_verifier_and_task_projection_together(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-completion-atomic",
+        with_verifier=True,
+    )
+    dispatched = dispatch_ai_task_for_work_item(
+        PostgresRuntimeStore(repository),
+        collaboration_run_id=ids["run_id"],
+        work_item_id=ids["work_item_id"],
+    )
+    coding_runner = repository.list_ai_executor_tasks(ai_task_id=dispatched["task"]["id"])[0]
+    coding_runner.update(
+        {
+            "status": "succeeded",
+            "finished_at": "2026-07-18T00:00:00+00:00",
+            "result_json": {"summary": "atomic implementation complete"},
+        }
+    )
+
+    _sync_runner_completion_to_ai_task(
+        PostgresRuntimeStore(repository),
+        task=coding_runner,
+        runner_id=coding_runner["runner_id"],
+    )
+
+    linked_tasks = repository.load_ai_tasks()["ai_tasks"]
+    persisted_task = linked_tasks[dispatched["task"]["id"]]
+    gates = repository.list_quality_gate_runs(
+        subject_type="ai_task",
+        subject_id=persisted_task["id"],
+    )
+    runner_tasks = repository.list_ai_executor_tasks(ai_task_id=persisted_task["id"])
+    assert persisted_task["current_step"] == "quality_gate_running"
+    assert len(gates) == 1
+    assert len([task for task in runner_tasks if task["task_kind"] == "quality_gate"]) == 1
+
+
+def test_postgres_cancel_after_accepted_completion_cancels_verifier_runner(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-completion-cancel-after-commit",
+        with_verifier=True,
+    )
+    dispatched = dispatch_ai_task_for_work_item(
+        PostgresRuntimeStore(repository),
+        collaboration_run_id=ids["run_id"],
+        work_item_id=ids["work_item_id"],
+    )
+    coding_runner = repository.list_ai_executor_tasks(ai_task_id=dispatched["task"]["id"])[0]
+    coding_runner.update(
+        {
+            "status": "succeeded",
+            "finished_at": "2026-07-18T00:00:00+00:00",
+            "result_json": {"summary": "completion accepted before cancellation"},
+        }
+    )
+    _sync_runner_completion_to_ai_task(
+        PostgresRuntimeStore(repository),
+        task=coding_runner,
+        runner_id=coding_runner["runner_id"],
+    )
+
+    repository.cancel_work_item_bundle(
+        work_item_id=ids["work_item_id"],
+        expected_version=2,
+        high_risk=False,
+    )
+
+    runner_tasks = repository.list_ai_executor_tasks(ai_task_id=dispatched["task"]["id"])
+    verifier = next(task for task in runner_tasks if task["task_kind"] == "quality_gate")
+    assert repository.load_ai_tasks()["ai_tasks"][dispatched["task"]["id"]]["status"] == "cancelled"
+    assert verifier["status"] == "cancelled"
+
+
+def test_postgres_completion_bundle_rolls_back_gate_verifier_and_task_together(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-completion-bundle-rollback",
+        with_verifier=True,
+    )
+    dispatched = dispatch_ai_task_for_work_item(
+        PostgresRuntimeStore(repository),
+        collaboration_run_id=ids["run_id"],
+        work_item_id=ids["work_item_id"],
+    )
+    coding_runner = repository.list_ai_executor_tasks(ai_task_id=dispatched["task"]["id"])[0]
+    coding_runner.update(
+        {
+            "status": "succeeded",
+            "finished_at": "2026-07-18T00:00:00+00:00",
+            "result_json": {"summary": "completion that must roll back"},
+        }
+    )
+    governance_writes = repository._execution_governance_read_repository._write_repository
+
+    def fail_gate_checks(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("inject completion bundle rollback")
+
+    monkeypatch.setattr(governance_writes, "upsert_quality_gate_checks", fail_gate_checks)
+
+    with pytest.raises(RuntimeError, match="inject completion bundle rollback"):
+        _sync_runner_completion_to_ai_task(
+            PostgresRuntimeStore(repository),
+            task=coding_runner,
+            runner_id=coding_runner["runner_id"],
+        )
+
+    persisted_task = repository.load_ai_tasks()["ai_tasks"][dispatched["task"]["id"]]
+    runner_tasks = repository.list_ai_executor_tasks(ai_task_id=dispatched["task"]["id"])
+    assert persisted_task["current_step"] == "waiting_ai_executor"
+    assert len(runner_tasks) == 1
+    assert runner_tasks[0]["status"] == "queued"
+    assert runner_tasks[0]["result_json"] == {}
+    assert (
+        repository.list_quality_gate_runs(
+            subject_type="ai_task",
+            subject_id=dispatched["task"]["id"],
+        )
+        == []
+    )
+
+
+def test_postgres_cancel_wins_completion_race_without_orphan_gate_or_verifier(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-completion-cancel-race",
+        with_verifier=True,
+    )
+    dispatched = dispatch_ai_task_for_work_item(
+        PostgresRuntimeStore(repository),
+        collaboration_run_id=ids["run_id"],
+        work_item_id=ids["work_item_id"],
+    )
+    coding_runner = repository.list_ai_executor_tasks(ai_task_id=dispatched["task"]["id"])[0]
+    coding_runner.update(
+        {
+            "status": "succeeded",
+            "finished_at": "2026-07-18T00:00:00+00:00",
+            "result_json": {"summary": "completion racing cancellation"},
+        }
+    )
+    cancel_has_run_lock = Event()
+    release_cancel = Event()
+    original_cancel = repository._cancel_work_item_bundle_cursor
+    errors: list[BaseException] = []
+
+    def hold_cancel_run_lock(cursor, **kwargs):  # type: ignore[no-untyped-def]
+        cursor.execute(
+            "SELECT id FROM rd_collaboration_runs WHERE id = %s FOR UPDATE",
+            (ids["run_id"],),
+        )
+        cancel_has_run_lock.set()
+        assert release_cancel.wait(timeout=5)
+        return original_cancel(cursor, **kwargs)
+
+    monkeypatch.setattr(repository, "_cancel_work_item_bundle_cursor", hold_cancel_run_lock)
+
+    def cancel() -> None:
+        try:
+            repository.cancel_work_item_bundle(
+                work_item_id=ids["work_item_id"],
+                expected_version=2,
+                high_risk=False,
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    def complete() -> None:
+        try:
+            _sync_runner_completion_to_ai_task(
+                PostgresRuntimeStore(repository),
+                task=coding_runner,
+                runner_id=coding_runner["runner_id"],
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    cancelling = Thread(target=cancel)
+    cancelling.start()
+    assert cancel_has_run_lock.wait(timeout=5)
+    completing = Thread(target=complete)
+    completing.start()
+    release_cancel.set()
+    cancelling.join(timeout=10)
+    completing.join(timeout=10)
+
+    assert not errors
+    assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "cancelled"
+    assert repository.load_ai_tasks()["ai_tasks"][dispatched["task"]["id"]]["status"] == "cancelled"
+    assert (
+        repository.list_quality_gate_runs(
+            subject_type="ai_task",
+            subject_id=dispatched["task"]["id"],
+        )
+        == []
+    )
+    runner_tasks = repository.list_ai_executor_tasks(ai_task_id=dispatched["task"]["id"])
+    assert [task for task in runner_tasks if task["task_kind"] == "quality_gate"] == []
+    fences = [
+        event
+        for event in repository.list_rd_collaboration_events(ids["run_id"])
+        if event["event_type"] == "work_item.runner_result_fenced"
+    ]
+    audits = repository.list_audit_events(
+        subject_type="rd_work_item",
+        subject_id=ids["work_item_id"],
+    )
+    assert len(fences) == 1
+    assert (
+        len(
+            [
+                event
+                for event in audits
+                if event["event_type"] == "rd_work_item.runner_result_fenced"
+            ]
+        )
+        == 1
+    )
+
+
+def test_postgres_runner_complete_http_race_is_fenced_after_cancel(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-http-completion-cancel-race",
+        with_verifier=True,
+    )
+    original_store = app.state.store
+    app.state.store = PostgresRuntimeStore(repository)
+    try:
+        dispatched = dispatch_ai_task_for_work_item(
+            app.state.store,
+            collaboration_run_id=ids["run_id"],
+            work_item_id=ids["work_item_id"],
+        )
+        coding_runner = repository.list_ai_executor_tasks(ai_task_id=dispatched["task"]["id"])[0]
+        cancel_has_run_lock = Event()
+        completion_reached_bundle = Event()
+        release_cancel = Event()
+        original_cancel = repository._cancel_work_item_bundle_cursor
+        original_complete = repository.complete_work_item_coding_bundle
+        errors: list[BaseException] = []
+        responses = []
+
+        def hold_cancel_run_lock(cursor, **kwargs):  # type: ignore[no-untyped-def]
+            cursor.execute(
+                "SELECT id FROM rd_collaboration_runs WHERE id = %s FOR UPDATE",
+                (ids["run_id"],),
+            )
+            cancel_has_run_lock.set()
+            assert release_cancel.wait(timeout=5)
+            return original_cancel(cursor, **kwargs)
+
+        monkeypatch.setattr(repository, "_cancel_work_item_bundle_cursor", hold_cancel_run_lock)
+
+        def observe_completion_bundle(**kwargs):  # type: ignore[no-untyped-def]
+            completion_reached_bundle.set()
+            return original_complete(**kwargs)
+
+        monkeypatch.setattr(
+            repository,
+            "complete_work_item_coding_bundle",
+            observe_completion_bundle,
+        )
+
+        def cancel() -> None:
+            try:
+                repository.cancel_work_item_bundle(
+                    work_item_id=ids["work_item_id"],
+                    expected_version=2,
+                    high_risk=False,
+                )
+            except BaseException as exc:  # pragma: no cover - asserted below
+                errors.append(exc)
+
+        def complete_over_http() -> None:
+            try:
+                client = TestClient(app)
+                responses.append(
+                    client.post(
+                        f"/api/system/ai-executor-tasks/{coding_runner['id']}/complete",
+                        headers={"Authorization": "Bearer rd-work-item-runner"},
+                        json={
+                            "runner_id": coding_runner["runner_id"],
+                            "status": "succeeded",
+                            "result_json": {"summary": "HTTP completion racing cancellation"},
+                        },
+                    )
+                )
+            except BaseException as exc:  # pragma: no cover - asserted below
+                errors.append(exc)
+
+        cancelling = Thread(target=cancel)
+        cancelling.start()
+        assert cancel_has_run_lock.wait(timeout=5)
+        completing = Thread(target=complete_over_http)
+        completing.start()
+        assert completion_reached_bundle.wait(timeout=5)
+        release_cancel.set()
+        cancelling.join(timeout=10)
+        completing.join(timeout=10)
+
+        assert not errors
+        assert len(responses) == 1 and responses[0].status_code == 200
+        assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "cancelled"
+        assert (
+            repository.load_ai_tasks()["ai_tasks"][dispatched["task"]["id"]]["status"]
+            == "cancelled"
+        )
+        assert (
+            repository.list_quality_gate_runs(
+                subject_type="ai_task",
+                subject_id=dispatched["task"]["id"],
+            )
+            == []
+        )
+        runner_tasks = repository.list_ai_executor_tasks(ai_task_id=dispatched["task"]["id"])
+        assert [task for task in runner_tasks if task["task_kind"] == "quality_gate"] == []
+        fences = [
+            event
+            for event in repository.list_rd_collaboration_events(ids["run_id"])
+            if event["event_type"] == "work_item.runner_result_fenced"
+        ]
+        assert len(fences) == 1
+    finally:
+        app.state.store = original_store
+
+
+def test_postgres_suspend_wins_completion_race_without_creating_gate_or_verifier(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-completion-suspend-race",
+        with_verifier=True,
+    )
+    dispatched = dispatch_ai_task_for_work_item(
+        PostgresRuntimeStore(repository),
+        collaboration_run_id=ids["run_id"],
+        work_item_id=ids["work_item_id"],
+    )
+    coding_runner = repository.list_ai_executor_tasks(ai_task_id=dispatched["task"]["id"])[0]
+    coding_runner.update(
+        {
+            "status": "succeeded",
+            "finished_at": "2026-07-18T00:00:00+00:00",
+            "result_json": {"summary": "completion racing suspension"},
+        }
+    )
+    decision_id = "work-item-completion-suspend-race-decision"
+    repository.save_decision_request_record(
+        _decision_record(
+            {"product": ids["product_id"], "run": {"id": ids["run_id"]}},
+            decision_id=decision_id,
+        )
+    )
+    suspend_has_run_lock = Event()
+    release_suspend = Event()
+    original_suspend = repository._suspend_collaboration_run_cursor
+    errors: list[BaseException] = []
+
+    def hold_suspend_run_lock(cursor, **kwargs):  # type: ignore[no-untyped-def]
+        cursor.execute(
+            "SELECT id FROM rd_collaboration_runs WHERE id = %s FOR UPDATE",
+            (ids["run_id"],),
+        )
+        suspend_has_run_lock.set()
+        assert release_suspend.wait(timeout=5)
+        return original_suspend(cursor, **kwargs)
+
+    monkeypatch.setattr(repository, "_suspend_collaboration_run_cursor", hold_suspend_run_lock)
+
+    def suspend() -> None:
+        try:
+            repository.suspend_collaboration_run(
+                collaboration_run_id=ids["run_id"],
+                decision_request_id=decision_id,
+                expected_version=1,
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    def complete() -> None:
+        try:
+            _sync_runner_completion_to_ai_task(
+                PostgresRuntimeStore(repository),
+                task=coding_runner,
+                runner_id=coding_runner["runner_id"],
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    suspending = Thread(target=suspend)
+    suspending.start()
+    assert suspend_has_run_lock.wait(timeout=5)
+    completing = Thread(target=complete)
+    completing.start()
+    release_suspend.set()
+    suspending.join(timeout=10)
+    completing.join(timeout=10)
+
+    assert not errors
+    assert repository.get_rd_collaboration_run(ids["run_id"])["status"] == "waiting_human"
+    assert (
+        repository.list_quality_gate_runs(
+            subject_type="ai_task",
+            subject_id=dispatched["task"]["id"],
+        )
+        == []
+    )
+    runner_tasks = repository.list_ai_executor_tasks(ai_task_id=dispatched["task"]["id"])
+    assert [task for task in runner_tasks if task["task_kind"] == "quality_gate"] == []
+    fences = [
+        event
+        for event in repository.list_rd_collaboration_events(ids["run_id"])
+        if event["event_type"] == "work_item.runner_result_fenced"
+    ]
+    assert len(fences) == 1
+
+
 def test_postgres_cancelled_work_item_fences_late_coding_completion_once(
     repository: PostgresSnapshotRepository,
 ) -> None:
@@ -308,9 +842,7 @@ def test_postgres_cancelled_work_item_fences_late_coding_completion_once(
         high_risk=False,
     )
     late_runner_task = repository.list_ai_executor_tasks(ai_task_id=dispatched["task"]["id"])[0]
-    late_runner_task.update(
-        {"status": "succeeded", "result_json": {"summary": "late completion"}}
-    )
+    late_runner_task.update({"status": "succeeded", "result_json": {"summary": "late completion"}})
     store = PostgresRuntimeStore(repository)
 
     _sync_runner_completion_to_ai_task(

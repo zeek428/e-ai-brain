@@ -41,6 +41,18 @@ RETRYABLE_TASK_FAILURE_STEPS = {
 }
 
 
+def _immutable_json_payload(value: Any) -> Any:
+    """Copy repository values into a JSON-safe immutable task snapshot."""
+    if isinstance(value, dict):
+        return {str(key): _immutable_json_payload(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_immutable_json_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return [_immutable_json_payload(item) for item in value]
+    isoformat = getattr(value, "isoformat", None)
+    return isoformat() if callable(isoformat) else deepcopy(value)
+
+
 def _work_item_execution_records(
     current_store: Any,
     collection_name: str,
@@ -140,10 +152,14 @@ def _frozen_work_item_execution_policy(
     quality_gate_policy_id = str(quality.get("quality_gate_policy_id") or "").strip() or None
     quality_gate_policy_snapshot: dict[str, Any] | None = None
     if quality_gate_policy_id:
-        candidates = read_memory_dict(current_store, "quality_gate_policies")
-        candidate = candidates.get(quality_gate_policy_id)
+        repository = getattr(current_store, "repository", None)
+        load_policy = getattr(repository, "get_quality_gate_policy", None)
+        candidate = load_policy(quality_gate_policy_id) if callable(load_policy) else None
+        if not isinstance(candidate, dict):
+            candidates = read_memory_dict(current_store, "quality_gate_policies")
+            candidate = candidates.get(quality_gate_policy_id)
         if isinstance(candidate, dict):
-            quality_gate_policy_snapshot = deepcopy(candidate)
+            quality_gate_policy_snapshot = _immutable_json_payload(candidate)
     execution_snapshot = {
         "snapshot_schema_version": 1,
         "source_snapshot_id": strategy_snapshot["id"],
@@ -164,9 +180,7 @@ def _frozen_work_item_execution_policy(
         "resolved_executor_policy": {
             "id": strategy_snapshot.get("policy_id"),
             "autonomy_mode": "autonomous_loop" if mode == "autonomous_loop" else "single_pass",
-            "auto_merge_risk_threshold": str(
-                quality.get("auto_merge_risk_threshold") or "low"
-            ),
+            "auto_merge_risk_threshold": str(quality.get("auto_merge_risk_threshold") or "low"),
             "code_change_review_mode": str(
                 quality.get("code_change_review_mode") or "manual_review"
             ),

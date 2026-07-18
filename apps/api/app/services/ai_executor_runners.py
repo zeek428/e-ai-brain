@@ -48,7 +48,6 @@ from app.services.ai_executor_runner_health import (
 from app.services.ai_executor_runner_packages import build_ai_executor_runner_install_package
 from app.services.ai_executor_runner_persistence import (
     _delete_runner_record,
-    _existing_pending_review,
     _memory_collection,
     _persist_record,
     _persist_task_state_records,
@@ -62,6 +61,10 @@ from app.services.ai_executor_runner_queue import (
 )
 from app.services.ai_executor_runner_queue import (
     runner_queue_summary as _runner_queue_summary,
+)
+from app.services.ai_executor_runner_rd_completion import (
+    complete_rd_coding_runner_atomically,
+    move_ai_task_to_executor_review,
 )
 from app.services.ai_executor_runner_readiness import (
     runner_readiness_summary as _runner_readiness_summary,
@@ -463,78 +466,6 @@ def _complete_ai_task_with_auto_commit_if_configured(
     return True
 
 
-def _move_ai_task_to_executor_review(
-    current_store: Any,
-    *,
-    ai_task: dict[str, Any],
-    actor_id: str,
-    executor_snapshot: dict[str, Any],
-    output_json: dict[str, Any],
-    quality_gate_run: dict[str, Any] | None = None,
-) -> None:
-    now = datetime.now(UTC).isoformat()
-    review_output = (
-        {**output_json, "quality_gate": quality_gate_run}
-        if quality_gate_run is not None
-        else output_json
-    )
-    updated_task = {
-        **ai_task,
-        "current_step": "executor_completed",
-        "output_json": review_output,
-        "status": "waiting_review",
-        "updated_at": now,
-    }
-    reviews: list[dict[str, Any]] = []
-    existing_review = _existing_pending_review(
-        current_store,
-        updated_task["id"],
-        str(updated_task.get("task_type") or "executor_result"),
-    )
-    if existing_review is None:
-        review_id = current_store.new_id("review")
-        reviews.append(
-            {
-                "ai_task_id": updated_task["id"],
-                "content": review_output,
-                "created_at": now,
-                "decided_at": None,
-                "decided_by": None,
-                "decision_reason": None,
-                "id": review_id,
-                "questions": [],
-                "stage": updated_task.get("task_type") or "executor_result",
-                "status": "pending",
-                "updated_at": now,
-                "version": 1,
-            }
-        )
-    review_ids = list(updated_task.get("review_ids") or [])
-    for review in reviews or ([existing_review] if existing_review else []):
-        if review and review["id"] not in review_ids:
-            review_ids.append(review["id"])
-    updated_task["review_ids"] = review_ids
-    audit_event = record_audit_event(
-        current_store,
-        event_type="ai_task.executor_completed",
-        actor_id=actor_id,
-        subject_type="ai_task",
-        subject_id=updated_task["id"],
-        payload={
-            "ai_task_id": updated_task["id"],
-            **executor_snapshot,
-            "quality_gate_run_id": (quality_gate_run or {}).get("id"),
-            "quality_gate_status": (quality_gate_run or {}).get("status"),
-        },
-    )
-    _persist_task_state_records(
-        current_store,
-        audit_events=[audit_event],
-        reviews=reviews or None,
-        task=updated_task,
-    )
-
-
 def _sync_runner_completion_to_ai_task(
     current_store: Any,
     *,
@@ -543,6 +474,14 @@ def _sync_runner_completion_to_ai_task(
 ) -> None:
     ai_task = _load_ai_task(current_store, task.get("ai_task_id"))
     if ai_task is None:
+        return
+    if complete_rd_coding_runner_atomically(
+        current_store,
+        ai_task=ai_task,
+        coding_runner_task=task,
+        runner_id=runner_id,
+        resolve_executor_policy=_load_executor_policy_for_ai_task,
+    ):
         return
     if fence_stale_coding_runner_completion(
         current_store,
@@ -634,7 +573,7 @@ def _sync_runner_completion_to_ai_task(
             )
             return
         if loop_outcome.get("action") == "review":
-            _move_ai_task_to_executor_review(
+            move_ai_task_to_executor_review(
                 current_store,
                 ai_task=ai_task,
                 actor_id=runner_id,
@@ -652,7 +591,7 @@ def _sync_runner_completion_to_ai_task(
             runner_id=runner_id,
         ):
             return
-        _move_ai_task_to_executor_review(
+        move_ai_task_to_executor_review(
             current_store,
             ai_task=ai_task,
             actor_id=runner_id,
@@ -740,7 +679,7 @@ def _sync_runner_completion_to_ai_task(
             )
             if verifier_task.get("status") == "blocked":
                 output_json["quality_gate"] = quality_gate_run
-                _move_ai_task_to_executor_review(
+                move_ai_task_to_executor_review(
                     current_store,
                     actor_id=runner_id,
                     ai_task=ai_task,
@@ -785,7 +724,7 @@ def _sync_runner_completion_to_ai_task(
                 task=updated_task,
             )
             return
-        _move_ai_task_to_executor_review(
+        move_ai_task_to_executor_review(
             current_store,
             actor_id=runner_id,
             ai_task=ai_task,
@@ -2040,6 +1979,18 @@ def complete_ai_executor_task_response(
     # but it must not create a verifier, quality gate, Review or AI-task state
     # transition after its attempt/work-item lease was revoked.
     linked_ai_task = _load_ai_task(current_store, task.get("ai_task_id"))
+    if (
+        linked_ai_task is not None
+        and task.get("status") == "succeeded"
+        and complete_rd_coding_runner_atomically(
+            current_store,
+            ai_task=linked_ai_task,
+            coding_runner_task=task,
+            runner_id=runner_id,
+            resolve_executor_policy=_load_executor_policy_for_ai_task,
+        )
+    ):
+        return {"task": _task_public(task)}
     if linked_ai_task is not None and fence_stale_coding_runner_completion(
         current_store,
         ai_task=linked_ai_task,

@@ -154,8 +154,10 @@ def resolve_pre_merge_quality_gate_policy(
             return {
                 **deepcopy(DEFAULT_PRE_MERGE_POLICY),
                 **deepcopy(frozen_gate_config),
-                "id": frozen_gate_config.get("quality_gate_policy_id")
-                or f"rd-policy-snapshot:{frozen_execution.get('source_snapshot_id')}",
+                # A snapshot with no catalog reference still freezes the
+                # platform default payload, but must not invent an ID that
+                # violates quality_gate_runs.policy_id's foreign key.
+                "id": frozen_gate_config.get("quality_gate_policy_id") or None,
                 "version": frozen_execution.get("source_policy_version") or 1,
             }
     explicit_id = str((executor_policy or {}).get("quality_gate_policy_id") or "").strip()
@@ -265,7 +267,12 @@ def start_pre_merge_quality_gate(
     ai_task: dict[str, Any],
     coding_runner_task: dict[str, Any],
     executor_policy: dict[str, Any] | None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+    persist: bool = True,
+    return_bundle: bool = False,
+) -> (
+    tuple[dict[str, Any], dict[str, Any]]
+    | tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any]]
+):
     now = datetime.now(UTC).isoformat()
     policy = resolve_pre_merge_quality_gate_policy(
         current_store,
@@ -312,12 +319,13 @@ def start_pre_merge_quality_gate(
             "risk_level": run["risk_level"],
         },
     )
-    _save_gate_bundle(
-        current_store,
-        audit_events=[created_audit],
-        checks=checks,
-        run=run,
-    )
+    if persist:
+        _save_gate_bundle(
+            current_store,
+            audit_events=[created_audit],
+            checks=checks,
+            run=run,
+        )
     coding_result = (
         coding_runner_task.get("result_json")
         if isinstance(coding_runner_task.get("result_json"), dict)
@@ -380,6 +388,7 @@ def start_pre_merge_quality_gate(
         task_kind="quality_gate",
         timeout_seconds=int(coding_runner_task.get("timeout_seconds") or 1800),
         workspace_root=workspace_root,
+        persist=persist,
     )
     if verification_runner is None:
         now = datetime.now(UTC).isoformat()
@@ -405,13 +414,14 @@ def start_pre_merge_quality_gate(
                 "updated_at": now,
             }
         )
-        repository = getattr(current_store, "repository", None)
-        save_task = getattr(repository, "save_ai_executor_task_record", None)
-        if callable(save_task):
-            save_task(verifier_task)
-        read_memory_dict(current_store, "ai_executor_tasks")[verifier_task["id"]] = deepcopy(
-            verifier_task
-        )
+        if persist:
+            repository = getattr(current_store, "repository", None)
+            save_task = getattr(repository, "save_ai_executor_task_record", None)
+            if callable(save_task):
+                save_task(verifier_task)
+            read_memory_dict(current_store, "ai_executor_tasks")[verifier_task["id"]] = deepcopy(
+                verifier_task
+            )
     run["policy_snapshot"] = {
         **run["policy_snapshot"],
         "coding_runner_task_id": coding_runner_task["id"],
@@ -419,7 +429,10 @@ def start_pre_merge_quality_gate(
         "verifier_runner_id": verifier_task.get("runner_id") or None,
         "verifier_trust_isolation_required": True,
     }
-    _save_gate_bundle(current_store, audit_events=[], checks=checks, run=run)
+    if persist:
+        _save_gate_bundle(current_store, audit_events=[], checks=checks, run=run)
+    if return_bundle:
+        return deepcopy(run), verifier_task, checks, created_audit
     return deepcopy(run), verifier_task
 
 
