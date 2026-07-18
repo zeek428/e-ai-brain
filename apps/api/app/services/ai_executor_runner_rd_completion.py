@@ -18,6 +18,7 @@ from app.services.ai_executor_runner_persistence import (
 )
 from app.services.operational_records import record_audit_event
 from app.services.quality_gates import start_pre_merge_quality_gate
+from app.services.rd_git_delivery import record_version_git_delivery_from_runner
 from app.services.rd_work_item_execution import is_rd_collaboration_task
 from app.services.task_output_summary import readable_task_output_summary
 from app.services.task_persistence_helpers import record_audit_event as record_task_audit_event
@@ -267,6 +268,14 @@ def complete_rd_coding_runner_atomically(
     for check in quality_gate_checks:
         _memory_collection(current_store, "quality_gate_checks")[check["id"]] = dict(check)
     _memory_collection(current_store, "ai_tasks")[updated_task["id"]] = dict(updated_task)
+    # A successful Runner can create only a *local* delivery fact.  This
+    # queues a remote-push intent from frozen execution context; it deliberately
+    # does not accept a remote SHA from the Runner or advance release state.
+    record_version_git_delivery_from_runner(
+        current_store,
+        ai_task=updated_task,
+        runner_task=coding_runner_task,
+    )
     record_agent_coding_completed(
         current_store,
         coding_runner_task=coding_runner_task,

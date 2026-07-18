@@ -43,11 +43,33 @@ class ExecutionGovernanceReadRepository:
         *,
         record: dict[str, Any],
         record_type: str,
-    ) -> None:
+    ) -> dict[str, Any]:
         """Persist P0 Git/reconciliation/readiness evidence by semantic boundary."""
-        self._write_repository.save_rd_delivery_evidence_record(
+        return self._write_repository.save_rd_delivery_evidence_record(
             record=record,
             record_type=record_type,
+        )
+
+    def save_rd_git_delivery_bundle(
+        self,
+        *,
+        delivery: dict[str, Any],
+        outbox_event: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._write_repository.save_rd_git_delivery_bundle(
+            delivery=delivery,
+            outbox_event=outbox_event,
+        )
+
+    def save_rd_git_reconciliation_bundle(
+        self,
+        *,
+        reconciliation: dict[str, Any],
+        outbox_event: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        return self._write_repository.save_rd_git_reconciliation_bundle(
+            reconciliation=reconciliation,
+            outbox_event=outbox_event,
         )
 
     def list_quality_gate_policies(
@@ -291,10 +313,42 @@ class ExecutionGovernanceReadRepository:
         record_type: str,
         product_scope_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        return self.list_trusted_delivery_records(
-            product_scope_ids=product_scope_ids,
-            record_type=record_type,
-        )
+        evidence_type = {
+            "rd_git_delivery": "delivery",
+            "rd_git_delivery_reconciliation": "reconciliation",
+            "rd_ready_for_release_evidence": "readiness",
+        }.get(record_type)
+        if evidence_type is None:
+            return []
+        clauses = ["evidence_type = %s"]
+        params: list[Any] = [evidence_type]
+        if product_scope_ids is not None:
+            scope = [str(item) for item in product_scope_ids if str(item).strip()]
+            if scope:
+                clauses.append("product_id = ANY(%s)")
+                params.append(scope)
+            else:
+                clauses.append("FALSE")
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, payload_json, evidence_hash, created_at
+                    FROM rd_delivery_evidence_records
+                    WHERE {" AND ".join(clauses)}
+                    ORDER BY created_at DESC, id DESC
+                    """,
+                    tuple(params),
+                )
+                return [
+                    {
+                        **(row[1] or {}),
+                        "id": row[0],
+                        "evidence_hash": row[2],
+                        "created_at": row[3],
+                    }
+                    for row in cursor.fetchall()
+                ]
 
     def list_agent_loop_runs(
         self,

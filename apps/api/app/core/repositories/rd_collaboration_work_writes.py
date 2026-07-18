@@ -27,6 +27,121 @@ from app.core.repositories.rd_collaboration_shared import (
 
 
 class RdCollaborationWorkWriteMixin:
+    def record_rd_ready_for_release_evidence_bundle(
+        self,
+        *,
+        collaboration_run_id: str,
+        evidence: dict[str, Any],
+    ) -> dict[str, dict[str, Any]]:
+        """Atomically append the frozen delivery chain and enter ready state."""
+        return self._in_transaction(
+            lambda cursor: self._record_rd_ready_for_release_evidence_bundle_cursor(
+                cursor,
+                collaboration_run_id=collaboration_run_id,
+                evidence=evidence,
+            )
+        )
+
+    def _record_rd_ready_for_release_evidence_bundle_cursor(
+        self,
+        cursor: Any,
+        *,
+        collaboration_run_id: str,
+        evidence: dict[str, Any],
+    ) -> dict[str, dict[str, Any]]:
+        state = self._mark_rd_ready_for_release_cursor(
+            cursor,
+            collaboration_run_id=collaboration_run_id,
+        )
+        run = state["run"]
+        version = state["product_version"]
+        if (
+            evidence.get("collaboration_run_id") != collaboration_run_id
+            or evidence.get("product_id") != run["product_id"]
+            or evidence.get("product_version_id") != version["id"]
+        ):
+            raise RdCollaborationRepositoryError(
+                "RD_DELIVERY_EVIDENCE_MISMATCH",
+                "ready-for-release evidence is not bound to the locked run/version",
+            )
+        payload = dict(evidence)
+        payload.pop("evidence_hash", None)
+        payload.pop("created_at", None)
+        cursor.execute(
+            """
+            INSERT INTO rd_delivery_evidence_records (
+              id, evidence_type, product_id, collaboration_run_id,
+              product_version_id, delivery_id, predecessor_evidence_ids,
+              payload_json, evidence_hash, created_at
+            )
+            VALUES (
+              %s, 'readiness', %s, %s,
+              %s, %s, %s::jsonb, %s::jsonb,
+              'sha256:' || encode(
+                digest(convert_to(%s::jsonb::text, 'UTF8'), 'sha256'), 'hex'
+              ),
+              COALESCE(%s::timestamptz, now())
+            )
+            ON CONFLICT (id) DO NOTHING
+            RETURNING evidence_hash, created_at
+            """,
+            (
+                evidence["id"],
+                evidence["product_id"],
+                collaboration_run_id,
+                evidence["product_version_id"],
+                evidence["delivery_id"],
+                Jsonb(evidence.get("predecessor_evidence_ids") or []),
+                Jsonb(payload),
+                Jsonb(payload),
+                evidence.get("created_at"),
+            ),
+        )
+        inserted = cursor.fetchone()
+        if inserted is None:
+            cursor.execute(
+                """
+                SELECT payload_json, evidence_hash, created_at
+                FROM rd_delivery_evidence_records
+                WHERE id = %s AND evidence_type = 'readiness'
+                """,
+                (evidence["id"],),
+            )
+            existing = cursor.fetchone()
+            if existing is None or dict(existing[0] or {}) != payload:
+                raise RdCollaborationRepositoryError(
+                    "RD_DELIVERY_EVIDENCE_MISMATCH",
+                    "ready-for-release evidence id is bound to different facts",
+                )
+            evidence_hash, created_at = existing[1], existing[2]
+        else:
+            evidence_hash, created_at = inserted
+        cursor.execute(
+            """
+            UPDATE rd_collaboration_runs
+            SET delivery_evidence_id = %s,
+                delivery_evidence_hash = %s,
+                version = version + 1,
+                updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (evidence["id"], evidence_hash, collaboration_run_id),
+        )
+        persisted_run = _row_dict(cursor, cursor.fetchone())
+        if persisted_run is None:
+            raise RuntimeError("ready-for-release evidence linkage was not persisted")
+        return {
+            "evidence": {
+                **payload,
+                "id": evidence["id"],
+                "evidence_hash": evidence_hash,
+                "created_at": created_at,
+            },
+            "run": persisted_run,
+            "product_version": version,
+        }
+
     def mark_rd_ready_for_release(
         self,
         *,

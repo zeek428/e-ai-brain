@@ -478,6 +478,17 @@ def project_external_event(
             "repository_id": repository_id,
         }
         event["payload"] = payload
+        ai_brain = payload.get("ai_brain") if isinstance(payload.get("ai_brain"), dict) else {}
+        if str(ai_brain.get("rd_delivery_id") or "").strip():
+            from app.services.rd_git_delivery import (
+                reconcile_version_git_delivery_from_provider_callback,
+            )
+
+            reconcile_version_git_delivery_from_provider_callback(
+                current_store,
+                inbox_event=event,
+            )
+            return "completed", None
         return project_git_ci_event(
             current_store,
             event=event,

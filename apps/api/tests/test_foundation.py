@@ -904,8 +904,9 @@ def test_all_structured_tables_define_created_and_updated_timestamps():
         "rd_task_executor_policy_snapshot_sources",
         "rd_collaboration_run_requirements",
         "rd_scope_change_request_operations",
-        "rd_command_idempotency_records",
-        "role_feedback_records",
+            "rd_command_idempotency_records",
+            "rd_delivery_evidence_records",
+            "role_feedback_records",
     }
     missing: list[str] = []
     for migration_path in sorted(Path("app/db/migrations").glob("*.sql")):

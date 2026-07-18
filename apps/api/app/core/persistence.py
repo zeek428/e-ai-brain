@@ -411,6 +411,10 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
                     cursor,
                     "115_rd_work_item_execution_fences.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "116_rd_trusted_delivery_evidence.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -1816,6 +1820,18 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
             record_type=record_type,
         )
 
+    def list_rd_delivery_evidence_records(
+        self,
+        *,
+        product_scope_ids: list[str] | None = None,
+        record_type: str,
+    ) -> list[dict[str, Any]]:
+        """Read immutable R&D Git delivery evidence, never mutable delivery rows."""
+        return self._execution_governance_read_repository.list_rd_delivery_evidence_records(
+            product_scope_ids=product_scope_ids,
+            record_type=record_type,
+        )
+
     def list_agent_loop_runs(
         self,
         *,
@@ -3134,6 +3150,40 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
         self._execution_governance_read_repository.save_trusted_delivery_record(
             record=record,
             record_type=record_type,
+        )
+
+    def save_rd_delivery_evidence_record(
+        self,
+        *,
+        record: dict[str, Any],
+        record_type: str,
+    ) -> dict[str, Any]:
+        return self._execution_governance_read_repository.save_rd_delivery_evidence_record(
+            record=record,
+            record_type=record_type,
+        )
+
+    def save_rd_git_delivery_bundle(
+        self,
+        *,
+        delivery: dict[str, Any],
+        outbox_event: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Append local delivery fact and its mutually-bound push intent together."""
+        return self._execution_governance_read_repository.save_rd_git_delivery_bundle(
+            delivery=delivery,
+            outbox_event=outbox_event,
+        )
+
+    def save_rd_git_reconciliation_bundle(
+        self,
+        *,
+        reconciliation: dict[str, Any],
+        outbox_event: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        return self._execution_governance_read_repository.save_rd_git_reconciliation_bundle(
+            reconciliation=reconciliation,
+            outbox_event=outbox_event,
         )
 
     def save_execution_resource_grant_record(

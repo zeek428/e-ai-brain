@@ -136,8 +136,153 @@ class ExecutionGovernanceWriteRepository:
         *,
         record: dict[str, Any],
         record_type: str,
-    ) -> None:
-        self.save_trusted_delivery_record(record=record, record_type=record_type)
+    ) -> dict[str, Any]:
+        # R&D release evidence is deliberately not a mutable generic trusted
+        # record.  The dedicated append-only table is the only source that a
+        # ready-for-release transition may consume.
+        return self.append_rd_delivery_evidence_record(record=record, record_type=record_type)
+
+    @staticmethod
+    def _rd_delivery_evidence_type(record_type: str) -> str:
+        mapping = {
+            "rd_git_delivery": "delivery",
+            "rd_git_delivery_reconciliation": "reconciliation",
+            "rd_ready_for_release_evidence": "readiness",
+        }
+        try:
+            return mapping[record_type]
+        except KeyError as exc:
+            raise ValueError(f"unsupported R&D delivery evidence type: {record_type}") from exc
+
+    def _append_rd_delivery_evidence_record_cursor(
+        self,
+        cursor: Any,
+        *,
+        record: dict[str, Any],
+        record_type: str,
+    ) -> dict[str, Any]:
+        evidence_type = self._rd_delivery_evidence_type(record_type)
+        payload = dict(record)
+        payload.pop("evidence_hash", None)
+        payload.pop("created_at", None)
+        cursor.execute(
+            """
+            INSERT INTO rd_delivery_evidence_records (
+              id, evidence_type, product_id, collaboration_run_id,
+              product_version_id, delivery_id, predecessor_evidence_ids,
+              payload_json, evidence_hash, created_at
+            )
+            VALUES (
+              %s, %s, %s, %s,
+              %s, %s, %s::jsonb,
+              %s::jsonb,
+              'sha256:' || encode(
+                digest(convert_to(%s::jsonb::text, 'UTF8'), 'sha256'), 'hex'
+              ),
+              COALESCE(%s::timestamptz, now())
+            )
+            ON CONFLICT (id) DO NOTHING
+            RETURNING id, evidence_hash, created_at
+            """,
+            (
+                record["id"],
+                evidence_type,
+                record["product_id"],
+                record["collaboration_run_id"],
+                record["product_version_id"],
+                record.get("delivery_id"),
+                json.dumps(record.get("predecessor_evidence_ids") or [], ensure_ascii=False),
+                json.dumps(payload, ensure_ascii=False),
+                json.dumps(payload, ensure_ascii=False),
+                record.get("created_at"),
+            ),
+        )
+        inserted = cursor.fetchone()
+        if inserted is not None:
+            persisted = dict(record)
+            persisted["evidence_hash"] = inserted[1]
+            persisted["created_at"] = inserted[2]
+            return persisted
+        cursor.execute(
+            """
+            SELECT evidence_type, product_id, collaboration_run_id, product_version_id,
+                   delivery_id, predecessor_evidence_ids, payload_json, evidence_hash, created_at
+            FROM rd_delivery_evidence_records
+            WHERE id = %s
+            """,
+            (record["id"],),
+        )
+        existing = cursor.fetchone()
+        if existing is None:
+            raise RuntimeError("R&D delivery evidence replay lookup failed")
+        existing_payload = dict(existing[6] or {})
+        if (
+            existing[0] != evidence_type
+            or existing[1] != record["product_id"]
+            or existing[2] != record["collaboration_run_id"]
+            or existing[3] != record["product_version_id"]
+            or existing[4] != record.get("delivery_id")
+            or list(existing[5] or []) != list(record.get("predecessor_evidence_ids") or [])
+            or existing_payload != payload
+        ):
+            raise RuntimeError("R&D delivery evidence id is bound to different immutable facts")
+        return {
+            **existing_payload,
+            "id": record["id"],
+            "evidence_hash": existing[7],
+            "created_at": existing[8],
+        }
+
+    def append_rd_delivery_evidence_record(
+        self,
+        *,
+        record: dict[str, Any],
+        record_type: str,
+    ) -> dict[str, Any]:
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                return self._append_rd_delivery_evidence_record_cursor(
+                    cursor,
+                    record=record,
+                    record_type=record_type,
+                )
+
+    def save_rd_git_delivery_bundle(
+        self,
+        *,
+        delivery: dict[str, Any],
+        outbox_event: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist mutually-referencing immutable delivery and push intent together."""
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                persisted = self._append_rd_delivery_evidence_record_cursor(
+                    cursor,
+                    record=delivery,
+                    record_type="rd_git_delivery",
+                )
+                self.upsert_execution_outbox_events(cursor, {str(outbox_event["id"]): outbox_event})
+                return persisted
+
+    def save_rd_git_reconciliation_bundle(
+        self,
+        *,
+        reconciliation: dict[str, Any],
+        outbox_event: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                persisted = self._append_rd_delivery_evidence_record_cursor(
+                    cursor,
+                    record=reconciliation,
+                    record_type="rd_git_delivery_reconciliation",
+                )
+                if outbox_event is not None:
+                    self.upsert_execution_outbox_events(
+                        cursor,
+                        {str(outbox_event["id"]): outbox_event},
+                    )
+                return persisted
 
     def save_execution_resource_grant_record(
         self,

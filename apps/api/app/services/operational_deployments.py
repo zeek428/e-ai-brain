@@ -3013,6 +3013,50 @@ def _dispatch_git_writeback_outbox_event(
     read_memory_dict(current_store, "execution_outbox_events")[event["id"]] = event
 
 
+def _dispatch_rd_git_delivery_outbox_event(
+    current_store: Any,
+    *,
+    event: dict[str, Any],
+    worker_id: str,
+) -> None:
+    """Route a frozen delivery fact to its owning Runner, never to deployment."""
+    from app.services.rd_git_delivery import dispatch_rd_git_delivery_push_from_outbox
+
+    result = dispatch_rd_git_delivery_push_from_outbox(current_store, event=event)
+    now = datetime.now(UTC).isoformat()
+    event.update(
+        {
+            "last_error": None,
+            "lease_owner": None,
+            "lease_until": None,
+            "payload": {
+                **dict(event.get("payload") or {}),
+                "push_runner_task_id": result["runner_task"]["id"],
+            },
+            "processed_at": now,
+            "status": "completed",
+            "updated_at": now,
+        }
+    )
+    audit = record_audit_event(
+        current_store,
+        event_type="rd_git_delivery.push_queued",
+        actor_id=worker_id,
+        subject_type="rd_git_delivery",
+        subject_id=str(event.get("aggregate_id") or event["id"]),
+        payload={
+            "outbox_event_id": event["id"],
+            "push_runner_task_id": result["runner_task"]["id"],
+            "source_runner_task_id": (event.get("payload") or {}).get("source_runner_task_id"),
+        },
+    )
+    repository = getattr(current_store, "repository", None)
+    save_event = getattr(repository, "save_execution_outbox_event_record", None)
+    if callable(save_event):
+        save_event(event, audit_event=audit)
+    read_memory_dict(current_store, "execution_outbox_events")[event["id"]] = event
+
+
 def _record_generic_outbox_failure(
     current_store: Any,
     *,
@@ -3125,6 +3169,12 @@ def process_execution_outbox_events(
                 )
             elif event.get("event_type") == "git_writeback_requested":
                 _dispatch_git_writeback_outbox_event(
+                    current_store,
+                    event=event,
+                    worker_id=worker_id,
+                )
+            elif event.get("event_type") == "rd.git_delivery.push_requested":
+                _dispatch_rd_git_delivery_outbox_event(
                     current_store,
                     event=event,
                     worker_id=worker_id,

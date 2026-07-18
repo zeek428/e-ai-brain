@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from threading import Event, Thread
 
@@ -33,6 +35,7 @@ def _seed_dispatchable_work_item(
     repository: PostgresSnapshotRepository,
     *,
     prefix: str,
+    git_config: dict[str, object] | None = None,
     quality_gate_policy_id: str | None = None,
     with_verifier: bool = False,
 ) -> dict[str, str]:
@@ -65,7 +68,7 @@ def _seed_dispatchable_work_item(
     )
     version_snapshot["payload_json"] = {
         "autonomy_config": {"mode": "single_pass", "timeout_seconds": 60},
-        "git_config": {"workspace_root": "/srv/rd-work"},
+        "git_config": {"workspace_root": "/srv/rd-work", **(git_config or {})},
         "quality_gate_config": {
             "code_change_review_mode": "manual_review",
             **(
@@ -431,6 +434,189 @@ def test_postgres_coding_completion_creates_gate_verifier_and_task_projection_to
     assert persisted_task["current_step"] == "quality_gate_running"
     assert len(gates) == 1
     assert len([task for task in runner_tasks if task["task_kind"] == "quality_gate"]) == 1
+
+
+def test_postgres_coding_runner_queues_push_and_only_signed_inbox_callback_reconciles(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production Runner -> Outbox -> signed Inbox path has no deploy step."""
+    from app.services.external_event_inbox import (
+        process_external_event_inbox_events,
+        receive_external_event,
+    )
+    from app.services.operational_deployments import process_execution_outbox_events
+
+    prefix = "work-item-git-delivery-e2e"
+    repository_id = f"{prefix}-repository"
+    now = datetime.now(UTC)
+    approval = {
+        "approval_id": f"{prefix}-git-push-approval",
+        "approved": True,
+        "approved_at": now.isoformat(),
+        "approved_by": "user_admin",
+        "approved_operations": ["git_push_or_merge"],
+        "expires_at": (now + timedelta(hours=1)).isoformat(),
+        "mode": "platform_human_approval",
+        "policy_version": "runner_safety_v1",
+    }
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix=prefix,
+        with_verifier=True,
+        git_config={
+            "provider": "gitlab",
+            "push_approval": approval,
+            "repository_id": repository_id,
+        },
+    )
+    project_path = f"example/{prefix}"
+    with repository._connect(autocommit=False) as connection:
+        connection.execute(
+            """
+            INSERT INTO product_git_repositories (
+              id, product_id, repo_type, name, remote_url, git_provider,
+              project_path, default_branch, status
+            ) VALUES (%s, %s, 'service', %s, %s, 'gitlab', %s, 'main', 'active')
+            """,
+            (
+                repository_id,
+                ids["product_id"],
+                repository_id,
+                f"https://git.example.test/{project_path}.git",
+                project_path,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO product_version_branch_configs (
+              id, product_id, version_id, repository_id, base_branch, working_branch
+            ) VALUES (%s, %s, %s, %s, 'main', 'release/rd-e2e')
+            """,
+            (f"{prefix}-branch", ids["product_id"], f"{prefix}-version", repository_id),
+        )
+
+    runtime = PostgresRuntimeStore(repository)
+    dispatched = dispatch_ai_task_for_work_item(
+        runtime,
+        collaboration_run_id=ids["run_id"],
+        work_item_id=ids["work_item_id"],
+    )
+    coding_runner = repository.list_ai_executor_tasks(ai_task_id=dispatched["task"]["id"])[0]
+    local_sha = "local-commit-from-frozen-runner"
+    coding_runner.update(
+        {
+            "status": "succeeded",
+            "finished_at": now.isoformat(),
+            "result_json": {
+                "summary": "implementation complete",
+                "git_delivery": {
+                    "local_commit_sha": local_sha,
+                    "working_branch": f"rd/{ids['run_id']}/{ids['work_item_id']}",
+                },
+            },
+        }
+    )
+    _sync_runner_completion_to_ai_task(
+        runtime,
+        task=coding_runner,
+        runner_id=coding_runner["runner_id"],
+    )
+
+    deliveries = repository.list_rd_delivery_evidence_records(record_type="rd_git_delivery")
+    assert len(deliveries) == 1
+    delivery = deliveries[0]
+    assert delivery["local_commit_sha"] == local_sha
+    assert delivery.get("remote_commit_sha") is None
+    assert delivery["repository_id"] == repository_id
+    assert delivery["working_branch"] == f"rd/{ids['run_id']}/{ids['work_item_id']}"
+    outbox = repository.list_execution_outbox_events(
+        aggregate_id=delivery["id"],
+        aggregate_type="rd_git_delivery",
+        status="pending",
+    )
+    assert len(outbox) == 1
+    assert outbox[0]["payload"]["delivery_id"] == delivery["id"]
+    assert outbox[0]["payload"]["local_commit_sha"] == local_sha
+
+    processed_push = process_execution_outbox_events(runtime, worker_id="rd-delivery-worker")
+    push_events = repository.list_execution_outbox_events(
+        aggregate_id=delivery["id"],
+        aggregate_type="rd_git_delivery",
+    )
+    assert processed_push == 1, {
+        key: push_events[0].get(key)
+        for key in ("status", "last_error", "payload", "attempt_count")
+    }
+    push_task = next(
+        task
+        for task in repository.list_ai_executor_tasks(ai_task_id=dispatched["task"]["id"])
+        if task["task_kind"] == "git_push"
+    )
+    assert push_task["input_payload"]["local_commit_sha"] == local_sha
+    assert "remote_commit_sha" not in push_task["input_payload"]
+    assert push_task["task_kind"] == "git_push"
+    assert "do not amend, reset, rebase, merge, deploy" in push_task["instruction"].lower()
+    assert repository.list_execution_outbox_events(
+        aggregate_type="deployment_request"
+    ) == []
+
+    repository.save_plugin_record(
+        {
+            "id": "plugin_standard_gitlab",
+            "code": "gitlab",
+            "name": "GitLab callback",
+            "protocol": "http",
+            "status": "active",
+            "created_by": "user_admin",
+        }
+    )
+    repository.save_plugin_connection_record(
+        {
+            "id": f"{prefix}-gitlab-connection",
+            "plugin_id": "plugin_standard_gitlab",
+            "name": "GitLab callback",
+            "endpoint_url": "https://git.example.test/hooks",
+            "auth_config": {"webhook_secret_ref": "env:RD_GITLAB_E2E_WEBHOOK_SECRET"},
+            "status": "active",
+            "created_by": "user_admin",
+        }
+    )
+    monkeypatch.setenv("RD_GITLAB_E2E_WEBHOOK_SECRET", "rd-delivery-e2e-secret")
+    body = json.dumps(
+        {
+            "project": {"path_with_namespace": project_path},
+            "after": local_sha,
+            "ai_brain": {"rd_delivery_id": delivery["id"]},
+        }
+    ).encode()
+    callback = receive_external_event(
+        runtime,
+        body=body,
+        connection_id=f"{prefix}-gitlab-connection",
+        headers={
+            "x-gitlab-event-uuid": f"{prefix}-provider-callback",
+            "x-gitlab-event": "Push Hook",
+            "x-gitlab-token": "rd-delivery-e2e-secret",
+        },
+        provider="gitlab",
+    )
+    assert callback["signature_status"] == "verified"
+    processed_callback = process_external_event_inbox_events(runtime, worker_id="rd-inbox-worker")
+    inbox_events = repository.list_external_event_inbox()
+    assert processed_callback == 1, {
+        key: inbox_events[0].get(key)
+        for key in ("status", "error_message", "signature_status", "payload")
+    }
+
+    reconciliations = repository.list_rd_delivery_evidence_records(
+        record_type="rd_git_delivery_reconciliation"
+    )
+    assert len(reconciliations) == 1
+    assert reconciliations[0]["delivery_id"] == delivery["id"]
+    assert reconciliations[0]["remote_commit_sha"] == local_sha
+    assert reconciliations[0]["provider_callback_event_id"] == callback["id"]
+    assert repository.list_external_event_inbox(status="completed")[0]["id"] == callback["id"]
 
 
 def test_postgres_cancel_after_accepted_completion_cancels_verifier_runner(

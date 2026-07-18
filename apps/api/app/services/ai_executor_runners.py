@@ -472,6 +472,11 @@ def _sync_runner_completion_to_ai_task(
     task: dict[str, Any],
     runner_id: str,
 ) -> None:
+    # Remote push completion is intentionally not a release transition and its
+    # reported SHA is not trusted.  Only the signed provider callback projector
+    # can reconcile immutable delivery evidence.
+    if task.get("task_kind") == "git_push":
+        return
     ai_task = _load_ai_task(current_store, task.get("ai_task_id"))
     if ai_task is None:
         return

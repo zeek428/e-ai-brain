@@ -15,6 +15,7 @@ from psycopg import sql
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "app" / "db" / "migrations"
 MIGRATION_109 = MIGRATIONS_DIR / "109_requirement_driven_rd_collaboration.sql"
+MIGRATION_116 = MIGRATIONS_DIR / "116_rd_trusted_delivery_evidence.sql"
 DEFAULT_POSTGRES_ADMIN_URL = "postgresql://ai_brain:ai_brain_password@127.0.0.1:5432/postgres"
 
 
@@ -177,23 +178,54 @@ def _seed_collaboration_scope(
             ids["version"],
         ),
     )
-    connection.execute(
+    has_assessment_product_id = connection.execute(
         """
-        INSERT INTO requirement_assessments (
-          id, requirement_id, requirement_revision,
-          initial_strategy_snapshot_id, final_strategy_snapshot_id,
-          strategy_snapshot_id, status, created_by
+        SELECT EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'requirement_assessments'
+            AND column_name = 'product_id'
         )
-        VALUES (%s, %s, 1, %s, %s, %s, 'accepted', 'user_admin')
-        """,
-        (
-            ids["assessment"],
-            ids["requirement"],
-            ids["base_snapshot"],
-            ids["base_snapshot"],
-            ids["base_snapshot"],
-        ),
-    )
+        """
+    ).fetchone()[0]
+    if has_assessment_product_id:
+        connection.execute(
+            """
+            INSERT INTO requirement_assessments (
+              id, requirement_id, product_id, requirement_revision,
+              initial_strategy_snapshot_id, final_strategy_snapshot_id,
+              strategy_snapshot_id, status, created_by
+            )
+            VALUES (%s, %s, %s, 1, %s, %s, %s, 'accepted', 'user_admin')
+            """,
+            (
+                ids["assessment"],
+                ids["requirement"],
+                ids["product"],
+                ids["base_snapshot"],
+                ids["base_snapshot"],
+                ids["base_snapshot"],
+            ),
+        )
+    else:
+        connection.execute(
+            """
+            INSERT INTO requirement_assessments (
+              id, requirement_id, requirement_revision,
+              initial_strategy_snapshot_id, final_strategy_snapshot_id,
+              strategy_snapshot_id, status, created_by
+            )
+            VALUES (%s, %s, 1, %s, %s, %s, 'accepted', 'user_admin')
+            """,
+            (
+                ids["assessment"],
+                ids["requirement"],
+                ids["base_snapshot"],
+                ids["base_snapshot"],
+                ids["base_snapshot"],
+            ),
+        )
     connection.execute(
         """
         INSERT INTO rd_task_executor_policy_snapshots (
@@ -600,6 +632,39 @@ def test_fresh_historical_migration_chain_reaches_109_and_109_replays(
             "rd_collaboration_runs",
             "rd_task_executor_policy_snapshots",
         )
+
+
+def test_migration_116_allows_ready_for_release_for_version_and_run(
+    postgres_admin_url: str,
+) -> None:
+    """The durable delivery transition must be legal in a freshly upgraded DB."""
+    with _temporary_database(postgres_admin_url) as database_url:
+        _apply_historical_migrations(database_url, through=115)
+        # The run's version-resolved policy source trigger is deferred, so seed
+        # its immutable source coverage and the target-state transition in one
+        # real PostgreSQL transaction.
+        with psycopg.connect(database_url) as connection:
+            _apply_migration(connection, MIGRATION_116)
+            ids = _seed_collaboration_scope(connection, prefix="ready-status", run_status="running")
+            connection.execute(
+                "UPDATE product_versions SET status = 'ready_for_release' WHERE id = %s",
+                (ids["version"],),
+            )
+            connection.execute(
+                "UPDATE rd_collaboration_runs SET status = 'ready_for_release' WHERE id = %s",
+                (ids["run"],),
+            )
+            persisted = connection.execute(
+                """
+                SELECT version.status, run.status
+                FROM product_versions version
+                JOIN rd_collaboration_runs run ON run.product_version_id = version.id
+                WHERE run.id = %s
+                """,
+                (ids["run"],),
+            ).fetchone()
+
+    assert persisted == ("ready_for_release", "ready_for_release")
 
 
 def test_migration_109_normalizes_rows_from_previous_operation_constraint(

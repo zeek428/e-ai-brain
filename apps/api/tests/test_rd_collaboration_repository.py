@@ -806,6 +806,58 @@ def _seed_startable_collaboration_version(
     return {**ids, "policy": policy, "base_snapshot": base}
 
 
+def test_postgres_rd_delivery_facts_are_immutable_and_bundle_rolls_back(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="delivery-facts")
+    run = seeded["run"]
+    delivery = {
+        "id": "delivery-facts-delivery",
+        "product_id": seeded["product"],
+        "collaboration_run_id": run["id"],
+        "product_version_id": seeded["version"],
+        "work_item_id": "delivery-facts-work-item",
+        "repository_id": "delivery-facts-repository",
+        "provider": "gitlab",
+        "working_branch": "rd/delivery-facts/work",
+        "version_branch": "release/v1",
+        "target_branch": "main",
+        "local_commit_sha": "local-sha-1",
+        "workspace_isolation": {"status": "isolated", "worktree_path": "/tmp/delivery"},
+        "outbox_event_id": "delivery-facts-outbox",
+    }
+    persisted = repository.save_rd_delivery_evidence_record(
+        record=delivery,
+        record_type="rd_git_delivery",
+    )
+    assert persisted["evidence_hash"].startswith("sha256:")
+
+    with repository._connect(autocommit=True) as connection:
+        with pytest.raises(psycopg.Error):
+            connection.execute(
+                "UPDATE rd_delivery_evidence_records SET payload_json = '{}'::jsonb WHERE id = %s",
+                (delivery["id"],),
+            )
+
+    bad_delivery = {**delivery, "id": "delivery-facts-rollback", "outbox_event_id": "bad-outbox"}
+    with pytest.raises(psycopg.Error):
+        repository.save_rd_git_delivery_bundle(
+            delivery=bad_delivery,
+            outbox_event={
+                "id": "bad-outbox",
+                "aggregate_type": "rd_git_delivery",
+                "aggregate_id": bad_delivery["id"],
+                "event_type": "rd.git_delivery.push_requested",
+                "idempotency_key": "bad-outbox",
+                "payload": {"delivery_id": bad_delivery["id"]},
+                "status": "not-a-valid-outbox-status",
+            },
+        )
+
+    records = repository.list_rd_delivery_evidence_records(record_type="rd_git_delivery")
+    assert [record["id"] for record in records] == [delivery["id"]]
+
+
 def _decision_record(
     ids: dict[str, object],
     *,
