@@ -581,6 +581,28 @@ def persist_work_item_plan(
         reviewer = seat_by_role[str(item["reviewer_role_code"])]
         persisted_id = f"{collaboration_run_id}:plan:{plan_version}:item:{item['id']}"
         ids_by_proposal_id[item["id"]] = persisted_id
+        input_contract = deepcopy(item.get("input_contract") or {})
+        # P1 experience is a feature-gated, cited read-only attachment.  It
+        # never changes the frozen strategy, seat, gates, budget or target.
+        from app.services.rd_role_experiences import retrieve_approved_role_experiences
+
+        experience_context = retrieve_approved_role_experiences(
+            store,
+            current_policy_snapshot_id=str(run.get("strategy_snapshot_id") or ""),
+            scope={
+                "brain_app_id": run.get("brain_app_id", "rd_brain"),
+                "product_id": run.get("product_id"),
+                "role_code": owner.get("role_code"),
+                "work_item_type": item.get("work_item_type", "implementation"),
+                "scenario": item.get("scenario", item.get("objective", item.get("title", ""))),
+                "risk_level": item.get("risk_level", "medium"),
+                "repository_trust_domain": item.get("repository_trust_domain"),
+                "tool_trust_domain": item.get("tool_trust_domain"),
+            },
+            user=actor,
+        )
+        if experience_context:
+            input_contract["approved_role_experience_context"] = experience_context
         persisted_items.append(
             {
                 "id": persisted_id,
@@ -596,7 +618,7 @@ def persist_work_item_plan(
                 "objective": item.get("objective", item.get("title", item["id"])),
                 "owner_seat_id": owner["id"],
                 "reviewer_seat_id": reviewer["id"],
-                "input_contract": deepcopy(item.get("input_contract") or {}),
+                "input_contract": input_contract,
                 "output_contract": deepcopy(item.get("output_contract") or {}),
                 "acceptance_criteria": deepcopy(item.get("acceptance_criteria") or []),
                 # A plan becomes runnable as part of the same write that

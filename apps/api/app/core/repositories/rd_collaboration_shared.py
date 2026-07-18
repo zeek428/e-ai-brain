@@ -1720,6 +1720,11 @@ class RdCollaborationTransaction:
             require_independent_reviewer=require_independent_reviewer,
         )
 
+    def decide_role_experience_command(self, **kwargs: Any) -> dict[str, Any]:
+        # Commands opened by a higher-level aggregate transaction retain the
+        # same durability and idempotency boundary as direct repository calls.
+        return self._repository.decide_role_experience_command(**kwargs)
+
     def save_collaboration_event(self, event: dict[str, Any]) -> dict[str, Any]:
         return self._repository._insert_event_cursor(self.cursor, event)
 

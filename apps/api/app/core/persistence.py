@@ -419,6 +419,10 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
                     cursor,
                     "117_rd_external_callback_facts.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "118_rd_role_experience_governance.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)

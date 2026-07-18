@@ -3159,6 +3159,101 @@ def test_experience_version_sources_and_reviewer_producer_separation(
     assert approved["review_version"] == 2
 
 
+def test_postgres_experience_decision_command_is_idempotent_and_db_filtered(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="experience-command")
+    repository.save_rd_collaboration_event_record(
+        {
+            "id": "experience-command-event",
+            "collaboration_run_id": seeded["run"]["id"],
+            "event_type": "feedback.created",
+            "event_key": "experience-command-event",
+            "subject_type": "collaboration_run",
+            "subject_id": seeded["run"]["id"],
+            "payload_json": {},
+        }
+    )
+    feedback = repository.save_role_feedback_once(
+        {
+            "id": "experience-command-feedback",
+            "brain_app_id": "rd_brain",
+            "product_id": seeded["product"],
+            "collaboration_run_id": seeded["run"]["id"],
+            "feedback_kind": "review",
+            "source_event_id": "experience-command-event",
+            "feedback_fingerprint": "experience-command-fingerprint",
+            "role_code": "developer",
+            "human_user_id": "user_admin",
+            "strategy_snapshot_id": seeded["version_snapshot"]["id"],
+            "producer_subject_type": "service",
+            "producer_subject_id": "quality_gate",
+        }
+    )
+    experience = repository.save_rd_role_experience_record(
+        {
+            "id": "experience-command",
+            "experience_key": "developer:command",
+            "brain_app_id": "rd_brain",
+            "product_scope": [seeded["product"]],
+            "role_code": "developer",
+            "work_item_type": "implementation",
+            "scenario": "command",
+            "risk_scope": {"maximum": "high"},
+            "repository_trust_domains": ["repo:payments"],
+            "tool_trust_domains": ["tool:ci"],
+            "content": {"guidance": "evidence"},
+            "strategy_snapshot_id": seeded["version_snapshot"]["id"],
+            "confidence": 0.9,
+            "status": "pending",
+        },
+        sources=[
+            {
+                "id": "experience-command-source",
+                "experience_id": "experience-command",
+                "role_feedback_record_id": feedback["id"],
+                "strategy_snapshot_id": seeded["version_snapshot"]["id"],
+            }
+        ],
+    )
+    kwargs = {
+        "experience_id": experience["id"],
+        "decision": "approve",
+        "comment": "independent review",
+        "expected_review_version": 1,
+        "reviewer_subject_id": "user_reviewer",
+        "reviewer_role_code": "rd_owner",
+        "reviewer_seat_id": None,
+        "require_independent_reviewer": True,
+        "idempotency_key": "approve-command",
+        "request_hash": "sha256:command",
+        "audit_event": {
+            "id": "experience-command-audit",
+            "event_type": "rd_role_experience.approved",
+            "actor_id": "user_reviewer",
+            "subject_type": "rd_role_experience",
+            "subject_id": experience["id"],
+            "payload": {},
+        },
+    }
+    approved = repository.decide_role_experience_command(**kwargs)
+    assert approved["status"] == "approved"
+    assert repository.decide_role_experience_command(**kwargs)["review_version"] == 2
+    rows, total = repository.list_rd_role_experience_records_page(
+        filters={
+            "brain_app_id": "rd_brain",
+            "product_id": seeded["product"],
+            "role_code": "developer",
+            "status": "approved",
+            "repository_trust_domain": "repo:payments",
+        },
+        product_scope_ids=[seeded["product"]],
+        page=1,
+        page_size=10,
+    )
+    assert total == 1 and rows[0]["id"] == experience["id"]
+
+
 def test_database_constraints_reject_invalid_identity_dependency_and_plan_duplicates(
     repository: PostgresSnapshotRepository,
 ) -> None:

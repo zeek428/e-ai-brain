@@ -571,6 +571,81 @@ class RdCollaborationReadRepository(RdCollaborationWriteRepository):
             order_by=("version", "id"),
         )
 
+    def list_rd_role_experience_records_page(
+        self,
+        *,
+        filters: dict[str, Any],
+        product_scope_ids: list[str] | None,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Filter experience in PostgreSQL before any source metadata is read."""
+        clauses: list[str] = []
+        params: list[Any] = []
+        for field in (
+            "brain_app_id",
+            "role_code",
+            "work_item_type",
+            "scenario",
+            "status",
+            "version",
+        ):
+            if filters.get(field) is not None:
+                clauses.append(f"experience.{field} = %s")
+                params.append(filters[field])
+        if filters.get("product_id"):
+            clauses.append("experience.product_scope @> jsonb_build_array(%s::text)")
+            params.append(filters["product_id"])
+        if product_scope_ids is not None:
+            clauses.append(
+                "NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text("
+                "experience.product_scope) p WHERE NOT p = ANY(%s))"
+            )
+            params.append(product_scope_ids)
+        if filters.get("risk_level"):
+            clauses.append("experience.risk_scope ->> 'maximum' = %s")
+            params.append(filters["risk_level"])
+        if filters.get("repository_trust_domain"):
+            clauses.append("experience.repository_trust_domains @> jsonb_build_array(%s::text)")
+            params.append(filters["repository_trust_domain"])
+        if filters.get("tool_trust_domain"):
+            clauses.append("experience.tool_trust_domains @> jsonb_build_array(%s::text)")
+            params.append(filters["tool_trust_domain"])
+        if filters.get("minimum_confidence") is not None:
+            clauses.append("experience.confidence >= %s")
+            params.append(filters["minimum_confidence"])
+        if filters.get("evidence_subject_id"):
+            clauses.append(
+                "EXISTS (SELECT 1 FROM rd_role_experience_sources source "
+                "JOIN role_feedback_records feedback "
+                "ON feedback.id = source.role_feedback_record_id "
+                "WHERE source.experience_id = experience.id AND "
+                "(feedback.producer_subject_id = %s OR feedback.human_user_id = %s "
+                "OR feedback.ai_employee_id = %s))"
+            )
+            params.extend([filters["evidence_subject_id"]] * 3)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"SELECT count(*) FROM rd_role_experience_records experience{where}",
+                    tuple(params),
+                )
+                total = int(cursor.fetchone()[0])
+                cursor.execute(
+                    f"SELECT experience.* FROM rd_role_experience_records experience{where} "
+                    "ORDER BY experience.confidence DESC, experience.id ASC LIMIT %s OFFSET %s",
+                    tuple(params + [page_size, (page - 1) * page_size]),
+                )
+                return (
+                    [
+                        row
+                        for item in cursor.fetchall()
+                        if (row := _row_dict(cursor, item)) is not None
+                    ],
+                    total,
+                )
+
     def list_rd_role_experience_sources(
         self,
         experience_id: str,

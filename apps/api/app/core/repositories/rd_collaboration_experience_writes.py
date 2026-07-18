@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 # Aggregate modules intentionally share one serialization/transaction vocabulary.
 # ruff: noqa: F401
 from collections.abc import Callable, Iterable, Sequence
@@ -292,6 +294,79 @@ class RdCollaborationExperienceWriteMixin:
             )
         )
 
+    def decide_role_experience_command(
+        self,
+        *,
+        experience_id: str,
+        decision: str,
+        comment: str | None,
+        expected_review_version: int,
+        reviewer_subject_id: str,
+        reviewer_role_code: str | None,
+        reviewer_seat_id: str | None,
+        require_independent_reviewer: bool,
+        idempotency_key: str,
+        request_hash: str,
+        audit_event: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        def operation(cursor: Any) -> dict[str, Any]:
+            with nullcontext(cursor) as current:
+                current.execute(
+                    """
+                    SELECT request_hash, response_json FROM rd_role_experience_decisions
+                    WHERE experience_id = %s AND idempotency_key = %s
+                    """,
+                    (experience_id, idempotency_key),
+                )
+                existing = current.fetchone()
+                if existing is not None:
+                    if existing[0] != request_hash:
+                        raise self._idempotency_conflict(
+                            "experience decision idempotency key is bound to a different request",
+                            experience_id=experience_id,
+                        )
+                    return dict(existing[1])
+                persisted = self._decide_role_experience_cursor(
+                    current,
+                    experience_id=experience_id,
+                    decision=decision,
+                    expected_review_version=expected_review_version,
+                    reviewer_subject_type="human_user",
+                    reviewer_subject_id=reviewer_subject_id,
+                    reviewer_role_code=reviewer_role_code,
+                    reviewer_seat_id=reviewer_seat_id,
+                    require_independent_reviewer=require_independent_reviewer,
+                )
+                current.execute(
+                    """
+                    INSERT INTO rd_role_experience_decisions (
+                      id, experience_id, decision, comment, reviewer_user_id,
+                      expected_review_version, resulting_review_version, idempotency_key,
+                      request_hash, response_json
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        str(uuid4()),
+                        experience_id,
+                        decision,
+                        comment,
+                        reviewer_subject_id,
+                        expected_review_version,
+                        persisted["review_version"],
+                        idempotency_key,
+                        request_hash,
+                        Jsonb(json.loads(json.dumps(persisted, default=str))),
+                    ),
+                )
+                if audit_event is not None:
+                    callback = self._upsert_audit_events
+                    if callback is None:
+                        raise RuntimeError("audit persistence callback is not configured")
+                    callback(current, [audit_event])
+                return persisted
+
+        return self._in_transaction(operation)
+
     def _decide_role_experience_cursor(
         self,
         cursor: Any,
@@ -334,6 +409,16 @@ class RdCollaborationExperienceWriteMixin:
                 current_review_version = int(experience["review_version"])
                 if current_review_version != int(expected_review_version):
                     raise RdCollaborationVersionConflictError(current_review_version)
+                valid_states = {
+                    "approve": {"pending"},
+                    "reject": {"pending"},
+                    "retire": {"approved"},
+                }
+                if experience.get("status") not in valid_states.get(decision, set()):
+                    raise RdCollaborationRepositoryError(
+                        "RD_EXPERIENCE_STATE_INVALID",
+                        "experience decision is not valid for its current lifecycle state",
+                    )
                 cursor.execute(
                     """
                     SELECT feedback.producer_subject_type,

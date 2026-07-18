@@ -194,6 +194,14 @@ class RdCollaborationRepository(Protocol):
     def list_role_feedback_records(self, collaboration_run_id: str) -> list[dict[str, Any]]: ...
     def get_rd_role_experience_record(self, record_id: str) -> dict[str, Any] | None: ...
     def list_rd_role_experience_records(self, experience_key: str) -> list[dict[str, Any]]: ...
+    def list_rd_role_experience_records_page(
+        self,
+        *,
+        filters: dict[str, Any],
+        product_scope_ids: list[str] | None,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[dict[str, Any]], int]: ...
     def list_rd_role_experience_sources(self, experience_id: str) -> list[dict[str, Any]]: ...
     def get_rd_role_experience_source(self, record_id: str) -> dict[str, Any] | None: ...
 
@@ -420,6 +428,21 @@ class RdCollaborationRepository(Protocol):
         reviewer_role_code: str | None,
         reviewer_seat_id: str | None,
         require_independent_reviewer: bool,
+    ) -> dict[str, Any]: ...
+    def decide_role_experience_command(
+        self,
+        *,
+        experience_id: str,
+        decision: str,
+        comment: str | None,
+        expected_review_version: int,
+        reviewer_subject_id: str,
+        reviewer_role_code: str | None,
+        reviewer_seat_id: str | None,
+        require_independent_reviewer: bool,
+        idempotency_key: str,
+        request_hash: str,
+        audit_event: dict[str, Any] | None,
     ) -> dict[str, Any]: ...
 
 
