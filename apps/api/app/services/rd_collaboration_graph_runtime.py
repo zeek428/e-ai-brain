@@ -1,7 +1,7 @@
 """Bridge committed collaboration events to the durable LangGraph cursor.
 
-The repository command is the atomic boundary for Inbox/event, audit, Outbox
-and feedback.  The graph checkpoint is intentionally written afterwards.  A
+The repository command is the atomic boundary for Inbox/event, audit and
+feedback.  The graph checkpoint is intentionally written afterwards.  A
 checkpoint failure therefore leaves one committed event that can be observed
 idempotently on the next resume rather than repeating an external side effect.
 """
@@ -279,18 +279,6 @@ class RdCollaborationGraphRuntime:
             "recorded_by": "collaboration_orchestrator",
         }
 
-    def _outbox_record(self, *, run: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
-        event_id = str(event["id"])
-        return {
-            "id": f"graph-outbox:{run['id']}:{event_id}",
-            "aggregate_type": "rd_collaboration_run",
-            "aggregate_id": run["id"],
-            "event_type": "rd_collaboration.graph_event_committed",
-            "idempotency_key": f"rd-collaboration-graph:{run['id']}:{event_id}",
-            "payload_json": {"event_id": event_id, "event_type": event["event_type"]},
-            "status": "pending",
-        }
-
     def _audit_record(self, *, run: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": f"graph-audit:{run['id']}:{event['id']}",
@@ -332,14 +320,12 @@ class RdCollaborationGraphRuntime:
                 subject_id=subject_id,
             )
             feedback = self._feedback_record(run=run, event=event)
-            outbox = self._outbox_record(run=run, event=event)
             audit = self._audit_record(run=run, event=event)
             # Validate all facts before mutating the in-memory test double, then
             # publish them together to mirror the repository transaction.
             if not run.get("product_id") or not run.get("strategy_snapshot_id"):
                 raise ValueError("Collaboration run provenance is unavailable")
             _records(self.store, "rd_collaboration_events")[event["id"]] = event
-            _records(self.store, "execution_outbox_events")[outbox["id"]] = outbox
             _records(self.store, "audit_events")[audit["id"]] = audit
             _records(self.store, "role_feedback_records")[feedback["id"]] = feedback
             return deepcopy(event)
@@ -364,13 +350,11 @@ class RdCollaborationGraphRuntime:
             subject_id=subject_id,
         )
         feedback = self._feedback_record(run=run, event=event)
-        outbox = self._outbox_record(run=run, event=event)
         audit = self._audit_record(run=run, event=event)
 
         def operation(transaction: Any) -> dict[str, Any]:
             persisted_event = transaction.save_collaboration_event(event)
             transaction.save_audit_event(audit)
-            transaction.save_outbox_event(outbox)
             transaction.save_role_feedback_once(feedback)
             return {
                 "result_type": "rd_collaboration_event",

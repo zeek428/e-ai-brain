@@ -4,7 +4,7 @@ The work-item scheduler owns the transactional state transition and writes its
 ``rd_collaboration_events`` fact first.  This projector is deliberately the
 next, retryable step: it feeds that immutable fact to ``RdCollaborationGraphRuntime``
 without trying to repeat the scheduler command.  The runtime then writes its
-own idempotent audit/outbox/feedback bundle before it advances the LangGraph
+own idempotent audit/feedback bundle before it advances the LangGraph
 checkpoint.
 """
 
@@ -138,6 +138,13 @@ def process_rd_collaboration_graph_events(
     idempotent domain bundle, then the graph reducer ignores an already-seen
     event id.  Revisiting facts is intentional: it heals a prior checkpoint
     failure without re-running the scheduler's atomic work-item transition.
+
+    The batch limit applies to *uncheckpointed* facts, rather than to the
+    first source rows.  Otherwise a run with a long settled history would
+    repeatedly examine the same first page and starve every newer pending
+    event.  A concurrent worker may still persist one selected event first;
+    the runtime's idempotent domain command and graph reducer make that replay
+    safe.
     """
     if limit <= 0:
         return 0
@@ -145,7 +152,8 @@ def process_rd_collaboration_graph_events(
     current_runtime = runtime or _build_runtime(current_store)
     persisted = 0
     try:
-        for event in _source_events(current_store)[:limit]:
+        pending_events: list[dict[str, Any]] = []
+        for event in _source_events(current_store):
             collaboration_run_id = str(event.get("collaboration_run_id") or "").strip()
             projected_event_id = _projected_event_id(event)
             if collaboration_run_id and current_runtime.is_event_checkpointed(
@@ -153,6 +161,10 @@ def process_rd_collaboration_graph_events(
                 event_id=projected_event_id,
             ):
                 continue
+            pending_events.append(event)
+            if len(pending_events) >= limit:
+                break
+        for event in pending_events:
             result = project_committed_rd_collaboration_event(
                 current_store,
                 event=event,

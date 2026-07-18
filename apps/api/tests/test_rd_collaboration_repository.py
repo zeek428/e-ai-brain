@@ -240,7 +240,7 @@ def test_postgres_domain_event_retries_after_checkpoint_failure_without_duplicat
     assert replay["checkpoint_status"] == "persisted"
     assert [event["id"] for event in events] == ["graph-retry-event"]
     assert len(feedback) == 1
-    assert len(outbox) == 1
+    assert len(outbox) == 0
     assert len(audit) == 1
 
 
@@ -2179,7 +2179,7 @@ def test_execution_worker_projects_committed_work_item_event_to_postgres_graph_c
                 status=None,
             )
         )
-        == 1
+        == 0
     )
     assert (
         len(

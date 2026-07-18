@@ -241,10 +241,10 @@ plan_work_items
 - `ai_task_graph` 和 `rd_collaboration_graph` 编译时统一装配 PostgreSQL Checkpointer。
 - 每个 Graph Run 使用稳定 `thread_id`，Checkpoint 按图版本和业务主体隔离。
 - 等待人工、工作项、Runner、质量门禁或部署结果时执行真实中断，不用进程内等待或轮询保持上下文。
-- 人工决策和协同事件携带幂等事件 ID，先写入持久化 Inbox/`rd_collaboration_events`，再通过 Outbox 唤醒 Graph Run，并从最后成功 Checkpoint 恢复。
-- PostgreSQL 领域表和事件 Inbox 是业务事实源。消费事件、推进业务状态、审计和待派发 Outbox 在领域事务中原子提交；官方 Checkpointer 可以使用独立连接提交执行游标，不宣称与领域事务跨连接原子提交。
+- 人工决策和协同事件携带幂等事件 ID，先写入持久化 Inbox/`rd_collaboration_events`。内部协同图投影工作者轮询未写入 Checkpoint 的不可变协同事件，唤醒 Graph Run 并从最后成功 Checkpoint 恢复；此内部投影不写入 `execution_outbox_events`。Runner、Git 和部署等外部副作用仍通过 Outbox 派发。
+- PostgreSQL 领域表和事件 Inbox 是业务事实源。消费事件、推进业务状态、审计和需要外部副作用的待派发 Outbox 在领域事务中原子提交；官方 Checkpointer 可以使用独立连接提交执行游标，不宣称与领域事务跨连接原子提交。
 - Graph 节点每次恢复都重新读取领域状态，只提交带幂等键的领域命令。若业务事务已成功而 Checkpoint 写入失败，重复恢复会读取已完成命令并安全前进；若 Checkpoint 已写而业务命令失败，事件仍保持可重试且节点不会把 Checkpoint 当作业务完成证据。
-- 同一事件 ID、领域命令幂等键和 Outbox 幂等键形成三层去重；重复事件只返回已有结果，不重复派发 Runner、Git 或部署副作用。
+- 同一事件 ID、领域命令幂等键和（需要外部派发时的）Outbox 幂等键形成三层去重；重复事件只返回已有结果，不重复派发 Runner、Git 或部署副作用。
 - Checkpoint 恢复失败、图版本不兼容或事件缺失时进入人工接管，不允许从头静默重跑。
 
 ### 不直接复用的部分
