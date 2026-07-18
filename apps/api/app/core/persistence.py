@@ -415,6 +415,10 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
                     cursor,
                     "116_rd_trusted_delivery_evidence.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "117_rd_external_callback_facts.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -1923,6 +1927,9 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
             provider=provider,
             status=status,
         )
+
+    def get_external_event_inbox(self, event_id: str) -> dict[str, Any] | None:
+        return self._execution_governance_read_repository.get_external_event_inbox(event_id)
 
     def count_rd_task_executor_policies(
         self,

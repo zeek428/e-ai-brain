@@ -97,8 +97,7 @@ def _event_headers(provider: str, headers: Mapping[str, str]) -> tuple[str, str]
         )
     if provider == "gitlab":
         return (
-            normalized.get("x-gitlab-event-uuid")
-            or normalized.get("x-request-id", ""),
+            normalized.get("x-gitlab-event-uuid") or normalized.get("x-request-id", ""),
             normalized.get("x-gitlab-event", ""),
         )
     return (
@@ -110,8 +109,7 @@ def _event_headers(provider: str, headers: Mapping[str, str]) -> tuple[str, str]
 def _sanitize_payload(value: Any, *, key: str = "") -> Any:
     normalized_key = key.lower().replace("-", "_")
     if normalized_key in SENSITIVE_PAYLOAD_KEYS or any(
-        normalized_key.endswith(f"_{suffix}")
-        for suffix in ("password", "secret", "token")
+        normalized_key.endswith(f"_{suffix}") for suffix in ("password", "secret", "token")
     ):
         return "[REDACTED]"
     if isinstance(value, dict):
@@ -124,6 +122,53 @@ def _sanitize_payload(value: Any, *, key: str = "") -> Any:
     if isinstance(value, str):
         return value[:10000]
     return value
+
+
+def _callback_repository_ref(provider: str, payload: dict[str, Any]) -> str | None:
+    """Return the Git ref carried by a provider callback in a stable form."""
+    if provider not in {"github", "gitlab"}:
+        return None
+    push = payload.get("push") if isinstance(payload.get("push"), dict) else {}
+    value = str(payload.get("ref") or push.get("ref") or "").strip()
+    return value.removeprefix("refs/heads/") or None
+
+
+def _persisted_callback_context(
+    current_store: Any,
+    *,
+    connection_id: str,
+    provider: str,
+    payload: dict[str, Any],
+    request_config: dict[str, Any],
+) -> dict[str, Any]:
+    """Bind a newly verified callback to configured product/repository facts.
+
+    This context is written once with the signed Inbox payload.  Projectors may
+    update event processing state, but must not create or alter this binding.
+    """
+    context: dict[str, Any] = {
+        "connection_id": connection_id,
+        "environment": request_config.get("environment"),
+        "product_id": request_config.get("product_id"),
+        "version_id": request_config.get("version_id"),
+    }
+    if provider in {"github", "gitlab"}:
+        from app.services.external_event_projectors import map_external_event_product
+
+        mapped_product_id, repository_id = map_external_event_product(
+            current_store,
+            payload=payload,
+            provider=provider,
+        )
+        context.update(
+            {
+                "product_id": mapped_product_id or context.get("product_id"),
+                "repository_id": repository_id,
+                "repository_provider": provider if repository_id else None,
+                "repository_ref": _callback_repository_ref(provider, payload),
+            }
+        )
+    return context
 
 
 def _list_events(
@@ -188,9 +233,7 @@ def receive_external_event(
             "Webhook delivery and event headers are required",
         )
     auth_config = (
-        connection.get("auth_config")
-        if isinstance(connection.get("auth_config"), dict)
-        else {}
+        connection.get("auth_config") if isinstance(connection.get("auth_config"), dict) else {}
     )
     secret_ref = str(auth_config.get("webhook_secret_ref") or "").strip()
     signature_status = verify_external_event_signature(
@@ -250,6 +293,7 @@ def receive_external_event(
         if isinstance(connection.get("request_config"), dict)
         else {}
     )
+    sanitized_payload = _sanitize_payload(decoded)
     event = {
         "id": current_store.new_id("external_event"),
         "provider": provider,
@@ -258,13 +302,14 @@ def receive_external_event(
         "signature_status": signature_status,
         "payload_hash": payload_hash,
         "payload": {
-            **_sanitize_payload(decoded),
-            "_context": {
-                "connection_id": connection_id,
-                "environment": request_config.get("environment"),
-                "product_id": request_config.get("product_id"),
-                "version_id": request_config.get("version_id"),
-            },
+            **sanitized_payload,
+            "_context": _persisted_callback_context(
+                current_store,
+                connection_id=connection_id,
+                provider=provider,
+                payload=sanitized_payload,
+                request_config=request_config,
+            ),
         },
         "status": "pending",
         "attempt_count": 0,
@@ -404,11 +449,9 @@ def _require_external_event_operations_access(user: dict[str, Any]) -> None:
 def _public_event(event: dict[str, Any]) -> dict[str, Any]:
     payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
     context = payload.get("_context") if isinstance(payload.get("_context"), dict) else {}
-    return {
-        key: value
-        for key, value in event.items()
-        if key not in {"payload", "lease_owner"}
-    } | {"context": dict(context)}
+    return {key: value for key, value in event.items() if key not in {"payload", "lease_owner"}} | {
+        "context": dict(context)
+    }
 
 
 def list_external_events_response(

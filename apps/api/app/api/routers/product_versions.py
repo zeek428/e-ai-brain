@@ -477,6 +477,17 @@ def advance_product_version_status(
     from_status = version.get("status", "planning")
     target_status = payload.target_status
     validate_version_status_transition(from_status, target_status)
+    if not payload.preview_only:
+        from app.services.rd_git_delivery import (
+            require_rd_delivery_finalization_for_version_transition,
+        )
+
+        require_rd_delivery_finalization_for_version_transition(
+            current_store,
+            from_status=from_status,
+            target_status=target_status,
+            version_id=version_id,
+        )
     impact = build_version_advance_impact(
         current_store,
         target_status=target_status,

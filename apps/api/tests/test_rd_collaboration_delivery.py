@@ -50,18 +50,34 @@ def _delivery_store(*, delivery_target: str = "ready_for_release") -> MemoryStor
     return store
 
 
-def _trusted_callback(*, delivery_id: str, remote_commit_sha: str) -> dict[str, object]:
-    return {
-        "id": f"webhook:{delivery_id}:{remote_commit_sha}",
+def _persist_verified_callback(
+    store: MemoryStore,
+    *,
+    delivery_id: str,
+    remote_commit_sha: str,
+    working_branch: str,
+    repository_id: str = "repo-1",
+    product_id: str = "product-1",
+) -> dict[str, object]:
+    callback = {
+        "id": f"webhook:{delivery_id}:{remote_commit_sha}:{working_branch}",
         "provider": "gitlab",
         "signature_status": "verified",
         "payload_hash": "sha256:verified-webhook",
         "payload": {
-            "delivery_id": delivery_id,
-            "remote_commit_sha": remote_commit_sha,
-            "reconciliation_status": "reconciled",
+            "after": remote_commit_sha,
+            "ref": f"refs/heads/{working_branch}",
+            "ai_brain": {"rd_delivery_id": delivery_id},
+            "_context": {
+                "product_id": product_id,
+                "repository_id": repository_id,
+                "repository_provider": "gitlab",
+                "repository_ref": working_branch,
+            },
         },
     }
+    store.external_event_inbox[str(callback["id"])] = callback
+    return callback
 
 
 def _record_verified_delivery(store: MemoryStore) -> dict[str, object]:
@@ -83,16 +99,16 @@ def _record_verified_delivery(store: MemoryStore) -> dict[str, object]:
         },
     )
     assert delivery["outbox"]["event_type"] == "rd.git_delivery.push_requested"
-    return verify_version_git_delivery(
+    callback = _persist_verified_callback(
         store,
         delivery_id=str(delivery["delivery"]["id"]),
         remote_commit_sha="local-sha-1",
-        merge_request_id="42",
-        reconciliation_status="reconciled",
-        trusted_callback=_trusted_callback(
-            delivery_id=str(delivery["delivery"]["id"]),
-            remote_commit_sha="local-sha-1",
-        ),
+        working_branch="rd/run-1/coding-1",
+    )
+    return verify_version_git_delivery(
+        store,
+        inbox_event_id=str(callback["id"]),
+        inbox_event_payload_hash=str(callback["payload_hash"]),
     )
 
 
@@ -144,7 +160,7 @@ def test_coding_delivery_requires_an_isolated_worktree_and_creates_push_outbox()
 
 def test_reconciliation_rejects_caller_supplied_remote_sha_without_verified_callback() -> None:
     store = _delivery_store()
-    delivery = record_version_git_delivery(
+    record_version_git_delivery(
         store,
         collaboration_run_id="run-1",
         work_item_id="coding-1",
@@ -165,12 +181,81 @@ def test_reconciliation_rejects_caller_supplied_remote_sha_without_verified_call
     with pytest.raises(error_type) as exc:
         verify_version_git_delivery(
             store,
-            delivery_id=str(delivery["delivery"]["id"]),
-            remote_commit_sha="local-sha-1",
-            reconciliation_status="reconciled",
+            inbox_event_id="missing-persisted-callback",
+            inbox_event_payload_hash="sha256:missing-persisted-callback",
         )
 
     assert exc.value.detail["code"] == "RD_GIT_DELIVERY_CALLBACK_UNTRUSTED"
+
+
+def test_reconciliation_rejects_a_forged_verified_callback_dict() -> None:
+    """Only a persisted Inbox fact may attest to a remote Git callback."""
+    store = _delivery_store()
+    record_version_git_delivery(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="coding-1",
+        repository_id="repo-1",
+        provider="gitlab",
+        working_branch="rd/run-1/coding-1",
+        version_branch="release/v1",
+        target_branch="main",
+        local_commit_sha="local-sha-1",
+        workspace_isolation={
+            "worktree_path": "/tmp/rd/run-1/coding-1",
+            "branch": "rd/run-1/coding-1",
+            "status": "isolated",
+        },
+    )
+
+    with pytest.raises(
+        type(api_error(403, "RD_GIT_DELIVERY_CALLBACK_UNTRUSTED", "missing"))
+    ) as rejected:
+        verify_version_git_delivery(
+            store,
+            inbox_event_id="forged-verified-callback",
+            inbox_event_payload_hash="sha256:verified-webhook",
+        )
+
+    assert rejected.value.detail["code"] == "RD_GIT_DELIVERY_CALLBACK_UNTRUSTED"
+
+
+def test_reconciliation_rejects_persisted_callback_from_another_repository_or_branch() -> None:
+    store = _delivery_store()
+    delivery = record_version_git_delivery(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="coding-1",
+        repository_id="repo-1",
+        provider="gitlab",
+        working_branch="rd/run-1/coding-1",
+        version_branch="release/v1",
+        target_branch="main",
+        local_commit_sha="local-sha-1",
+        workspace_isolation={
+            "worktree_path": "/tmp/rd/run-1/coding-1",
+            "branch": "rd/run-1/coding-1",
+            "status": "isolated",
+        },
+    )
+    wrong_binding = _persist_verified_callback(
+        store,
+        delivery_id=str(delivery["delivery"]["id"]),
+        remote_commit_sha="local-sha-1",
+        repository_id="repo-other",
+        working_branch="rd/run-1/another-work-item",
+    )
+
+    with pytest.raises(
+        type(api_error(409, "RD_DELIVERY_EVIDENCE_MISMATCH", "missing"))
+    ) as rejected:
+        verify_version_git_delivery(
+            store,
+            inbox_event_id=str(wrong_binding["id"]),
+            inbox_event_payload_hash=str(wrong_binding["payload_hash"]),
+        )
+
+    assert rejected.value.detail["code"] == "RD_DELIVERY_EVIDENCE_MISMATCH"
 
 
 def test_runner_delivery_outbox_and_signed_provider_callback_form_the_only_remote_path() -> None:
@@ -242,21 +327,14 @@ def test_runner_delivery_outbox_and_signed_provider_callback_form_the_only_remot
     assert push_task["input_payload"]["local_commit_sha"] == "local-sha-1"
     assert "remote_commit_sha" not in push_task["input_payload"]
 
-    status, error = project_external_event(
+    callback = _persist_verified_callback(
         store,
-        event={
-            "id": "verified-callback-1",
-            "provider": "gitlab",
-            "delivery_id": "provider-delivery-1",
-            "payload_hash": "sha256:provider-payload",
-            "signature_status": "verified",
-            "payload": {
-                "project": {"path_with_namespace": "group/delivery"},
-                "after": "local-sha-1",
-                "ai_brain": {"rd_delivery_id": created["delivery"]["id"]},
-            },
-        },
+        delivery_id=str(created["delivery"]["id"]),
+        remote_commit_sha="local-sha-1",
+        working_branch="rd/run-1/coding-1",
     )
+    callback["payload"]["project"] = {"path_with_namespace": "group/delivery"}
+    status, error = project_external_event(store, event=callback)
 
     assert (status, error) == ("completed", None)
     reconciled = _materialized_delivery(store, str(created["delivery"]["id"]))
@@ -297,15 +375,16 @@ def test_ready_evidence_requires_reconciled_remote_and_version_integration_tests
         local_commit_sha="local-sha-1",
         test_evidence={"suite": "version-integration", "status": "passed", "run_id": "ci-1"},
     )
-    verify_version_git_delivery(
+    integration_callback = _persist_verified_callback(
         store,
         delivery_id=str(integration["delivery"]["id"]),
         remote_commit_sha="local-sha-1",
-        reconciliation_status="reconciled",
-        trusted_callback=_trusted_callback(
-            delivery_id=str(integration["delivery"]["id"]),
-            remote_commit_sha="local-sha-1",
-        ),
+        working_branch="release/v1",
+    )
+    verify_version_git_delivery(
+        store,
+        inbox_event_id=str(integration_callback["id"]),
+        inbox_event_payload_hash=str(integration_callback["payload_hash"]),
     )
 
     evidence = record_ready_for_release_evidence(store, collaboration_run_id="run-1")
@@ -336,18 +415,19 @@ def test_remote_sha_mismatch_and_stale_evidence_cannot_enter_ready_for_release()
         },
     )
 
+    mismatched_callback = _persist_verified_callback(
+        store,
+        delivery_id=str(delivery["delivery"]["id"]),
+        remote_commit_sha="another-sha",
+        working_branch="rd/run-1/coding-1",
+    )
     with pytest.raises(
         type(api_error(409, "RD_DELIVERY_EVIDENCE_MISMATCH", "mismatch"))
     ) as mismatch:
         verify_version_git_delivery(
             store,
-            delivery_id=str(delivery["delivery"]["id"]),
-            remote_commit_sha="another-sha",
-            reconciliation_status="reconciled",
-            trusted_callback=_trusted_callback(
-                delivery_id=str(delivery["delivery"]["id"]),
-                remote_commit_sha="another-sha",
-            ),
+            inbox_event_id=str(mismatched_callback["id"]),
+            inbox_event_payload_hash=str(mismatched_callback["payload_hash"]),
         )
     assert mismatch.value.detail["code"] == "RD_DELIVERY_EVIDENCE_MISMATCH"
 
@@ -364,17 +444,18 @@ def test_remote_sha_mismatch_and_stale_evidence_cannot_enter_ready_for_release()
         local_commit_sha="local-sha-1",
         test_evidence={"suite": "version-integration", "status": "passed"},
     )
-    integration_verified = verify_version_git_delivery(
+    integration_callback = _persist_verified_callback(
         store,
         delivery_id=str(integration["delivery"]["id"]),
         remote_commit_sha="local-sha-1",
-        reconciliation_status="reconciled",
-        trusted_callback=_trusted_callback(
-            delivery_id=str(integration["delivery"]["id"]),
-            remote_commit_sha="local-sha-1",
-        ),
+        working_branch="release/v1",
     )
     store.rd_git_deliveries[str(verified["delivery"]["id"])]["evidence_stale"] = True
+    integration_verified = verify_version_git_delivery(
+        store,
+        inbox_event_id=str(integration_callback["id"]),
+        inbox_event_payload_hash=str(integration_callback["payload_hash"]),
+    )
 
     with pytest.raises(type(api_error(409, "RD_DELIVERY_EVIDENCE_INCOMPLETE", "stale"))) as stale:
         record_ready_for_release_evidence(store, collaboration_run_id="run-1")
@@ -400,15 +481,16 @@ def test_ready_target_finalizes_without_deployment_but_deployed_target_remains_n
         local_commit_sha="local-sha-1",
         test_evidence={"suite": "version-integration", "status": "passed"},
     )
-    verify_version_git_delivery(
+    ready_callback = _persist_verified_callback(
         ready_store,
         delivery_id=str(integration["delivery"]["id"]),
         remote_commit_sha="local-sha-1",
-        reconciliation_status="reconciled",
-        trusted_callback=_trusted_callback(
-            delivery_id=str(integration["delivery"]["id"]),
-            remote_commit_sha="local-sha-1",
-        ),
+        working_branch="release/v1",
+    )
+    verify_version_git_delivery(
+        ready_store,
+        inbox_event_id=str(ready_callback["id"]),
+        inbox_event_payload_hash=str(ready_callback["payload_hash"]),
     )
     record_ready_for_release_evidence(ready_store, collaboration_run_id="run-1")
 
@@ -433,15 +515,16 @@ def test_ready_target_finalizes_without_deployment_but_deployed_target_remains_n
         local_commit_sha="local-sha-1",
         test_evidence={"suite": "version-integration", "status": "passed"},
     )
-    verify_version_git_delivery(
+    deployed_callback = _persist_verified_callback(
         deployed_store,
         delivery_id=str(deployed_integration["delivery"]["id"]),
         remote_commit_sha="local-sha-1",
-        reconciliation_status="reconciled",
-        trusted_callback=_trusted_callback(
-            delivery_id=str(deployed_integration["delivery"]["id"]),
-            remote_commit_sha="local-sha-1",
-        ),
+        working_branch="release/v1",
+    )
+    verify_version_git_delivery(
+        deployed_store,
+        inbox_event_id=str(deployed_callback["id"]),
+        inbox_event_payload_hash=str(deployed_callback["payload_hash"]),
     )
     record_ready_for_release_evidence(deployed_store, collaboration_run_id="run-1")
     pending = finalize_ready_for_release_target(deployed_store, collaboration_run_id="run-1")

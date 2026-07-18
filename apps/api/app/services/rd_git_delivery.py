@@ -243,6 +243,102 @@ def _outbox_event(store: Any, event_id: str) -> dict[str, Any] | None:
     return dict(event) if event is not None else None
 
 
+def _persisted_verified_inbox_callback(
+    store: Any,
+    *,
+    inbox_event_id: str,
+    inbox_event_payload_hash: str,
+) -> dict[str, Any]:
+    """Load the provider callback from its durable Inbox fact, never caller input.
+
+    PostgreSQL is the source of truth whenever a repository-backed runtime is
+    present.  MemoryStore is deliberately supported only for isolated unit
+    tests, where its Inbox dictionary represents the persisted fact.
+    """
+    repository = _repository(store)
+    event: dict[str, Any] | None = None
+    if repository is not None:
+        get_event = getattr(repository, "get_external_event_inbox", None)
+        if not callable(get_event):
+            raise api_error(
+                403,
+                "RD_GIT_DELIVERY_CALLBACK_UNTRUSTED",
+                "The delivery callback cannot be loaded from the durable Inbox",
+            )
+        loaded = get_event(inbox_event_id)
+        event = dict(loaded) if isinstance(loaded, dict) else None
+    else:
+        candidate = read_memory_dict(store, "external_event_inbox").get(inbox_event_id)
+        event = dict(candidate) if isinstance(candidate, dict) else None
+    if (
+        event is None
+        or event.get("signature_status") != "verified"
+        or str(event.get("payload_hash") or "") != inbox_event_payload_hash
+    ):
+        raise api_error(
+            403,
+            "RD_GIT_DELIVERY_CALLBACK_UNTRUSTED",
+            "Remote Git reconciliation requires a persisted verified callback",
+        )
+    return event
+
+
+def _callback_ref(payload: dict[str, Any]) -> str:
+    context = payload.get("_context") if isinstance(payload.get("_context"), dict) else {}
+    return (
+        str(
+            context.get("repository_ref")
+            or payload.get("ref")
+            or (payload.get("push") or {}).get("ref")
+            or ""
+        )
+        .strip()
+        .removeprefix("refs/heads/")
+    )
+
+
+def _callback_delivery_control(event: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    control = payload.get("ai_brain") if isinstance(payload.get("ai_brain"), dict) else {}
+    return dict(payload), dict(control)
+
+
+def require_rd_delivery_finalization_for_version_transition(
+    store: Any,
+    *,
+    from_status: str,
+    target_status: str,
+    version_id: str,
+) -> None:
+    """Fence the legacy version endpoint from advancing a v2 delivery run.
+
+    The collaboration delivery service is the only owner of the
+    testing -> ready_for_release transition when a version has a v2 run.  Its
+    evidence bundle and finalization command execute against locked records;
+    a generic product-version request cannot supply equivalent proof.
+    """
+    if from_status != "testing" or target_status != "ready_for_release":
+        return
+    repository = _repository(store)
+    list_runs = getattr(repository, "list_rd_collaboration_runs", None)
+    if callable(list_runs):
+        runs = [dict(run) for run in list_runs(product_version_id=version_id)]
+    else:
+        runs = [
+            dict(run)
+            for run in read_memory_dict(store, "rd_collaboration_runs").values()
+            if str(run.get("product_version_id") or "") == version_id
+        ]
+    if not runs:
+        return
+    raise api_error(
+        409,
+        "RD_DELIVERY_FINALIZATION_REQUIRED",
+        "R&D collaboration versions enter ready-for-release only through trusted delivery "
+        "finalization",
+    )
+
+
 def _delivery_outbox(store: Any, *, delivery: dict[str, Any]) -> dict[str, Any]:
     material = {
         "delivery_id": delivery["id"],
@@ -552,9 +648,7 @@ def record_version_git_delivery_from_runner(
         working_branch=working_branch,
         version_branch=str(branch_config.get("working_branch") or ""),
         target_branch=str(
-            branch_config.get("base_branch")
-            or branch_config.get("repository_default_branch")
-            or ""
+            branch_config.get("base_branch") or branch_config.get("repository_default_branch") or ""
         ),
         local_commit_sha=local_commit_sha,
         workspace_isolation=isolation,
@@ -574,57 +668,58 @@ def record_version_git_delivery_from_runner(
 def verify_version_git_delivery(
     store: Any,
     *,
-    delivery_id: str,
-    remote_commit_sha: str,
-    reconciliation_status: str,
-    merge_request_id: str | None = None,
-    pull_request_id: str | None = None,
-    trusted_callback: dict[str, Any] | None = None,
+    inbox_event_id: str,
+    inbox_event_payload_hash: str,
 ) -> dict[str, Any]:
-    """Append reconciliation from a verified provider callback only.
-
-    This is intentionally not an API-shaped method: callers must pass the
-    immutable Inbox fact emitted after webhook signature verification.  The
-    redundant scalar arguments remain for compatibility with internal callers,
-    but are checked against that trusted callback rather than accepted as a
-    source of remote Git truth.
-    """
-    callback = dict(trusted_callback or {})
-    callback_payload = (
-        callback.get("payload") if isinstance(callback.get("payload"), dict) else callback
+    """Append reconciliation using only a durable signature-verified Inbox fact."""
+    callback = _persisted_verified_inbox_callback(
+        store,
+        inbox_event_id=inbox_event_id,
+        inbox_event_payload_hash=inbox_event_payload_hash,
     )
-    if callback.get("signature_status") != "verified":
-        raise api_error(
-            403,
-            "RD_GIT_DELIVERY_CALLBACK_UNTRUSTED",
-            "Remote Git reconciliation requires a verified provider callback",
-        )
-    callback_delivery_id = str(callback_payload.get("delivery_id") or "").strip()
-    callback_sha = str(callback_payload.get("remote_commit_sha") or "").strip()
-    callback_status = str(callback_payload.get("reconciliation_status") or "").strip()
-    if (
-        callback_delivery_id != delivery_id
-        or callback_sha != remote_commit_sha
-        or callback_status != reconciliation_status
-    ):
+    callback_payload, control = _callback_delivery_control(callback)
+    delivery_id = str(control.get("rd_delivery_id") or "").strip()
+    remote_commit_sha = str(
+        control.get("remote_commit_sha")
+        or callback_payload.get("after")
+        or callback_payload.get("commit_sha")
+        or ""
+    ).strip()
+    if not delivery_id or not remote_commit_sha:
         raise api_error(
             409,
             "RD_DELIVERY_EVIDENCE_MISMATCH",
-            "Callback facts do not match the requested Git reconciliation",
+            "Persisted Git callback is missing its delivery id or remote commit",
         )
     deliveries = _records(store, record_type=DELIVERY_RECORD_TYPE, collection="rd_git_deliveries")
     delivery = next((record for record in deliveries if record.get("id") == delivery_id), None)
     if delivery is None:
         raise api_error(404, "NOT_FOUND", "Git delivery record not found")
+    context = (
+        callback_payload.get("_context")
+        if isinstance(callback_payload.get("_context"), dict)
+        else {}
+    )
+    callback_ref = _callback_ref(callback_payload)
     if str(callback.get("provider") or "") != str(delivery.get("provider") or ""):
         raise api_error(
             409,
             "RD_DELIVERY_EVIDENCE_MISMATCH",
             "Verified callback provider does not match the frozen delivery repository",
         )
-    if reconciliation_status != "reconciled" or remote_commit_sha != delivery.get(
-        "local_commit_sha"
+    if (
+        str(context.get("product_id") or "") != str(delivery.get("product_id") or "")
+        or str(context.get("repository_id") or "") != str(delivery.get("repository_id") or "")
+        or str(context.get("repository_provider") or callback.get("provider") or "")
+        != str(delivery.get("provider") or "")
+        or callback_ref != str(delivery.get("working_branch") or "")
     ):
+        raise api_error(
+            409,
+            "RD_DELIVERY_EVIDENCE_MISMATCH",
+            "Verified callback is not bound to the frozen repository and work-item branch",
+        )
+    if remote_commit_sha != delivery.get("local_commit_sha"):
         raise api_error(
             409,
             "RD_DELIVERY_EVIDENCE_MISMATCH",
@@ -648,18 +743,14 @@ def verify_version_git_delivery(
         "created_at": now,
         "predecessor_evidence_ids": [delivery_id],
         "delivery_evidence_hash": delivery.get("evidence_hash"),
-        "merge_request_id": (
-            callback_payload.get("merge_request_id")
-            or merge_request_id
-            or delivery.get("merge_request_id")
-        ),
-        "pull_request_id": (
-            callback_payload.get("pull_request_id")
-            or pull_request_id
-            or delivery.get("pull_request_id")
-        ),
-        "provider_callback_event_id": callback.get("id") or callback.get("delivery_id"),
+        "merge_request_id": (control.get("merge_request_id") or delivery.get("merge_request_id")),
+        "pull_request_id": (control.get("pull_request_id") or delivery.get("pull_request_id")),
+        "provider_callback_event_id": callback["id"],
         "provider_callback_payload_hash": callback.get("payload_hash"),
+        "provider_callback_signature_status": callback.get("signature_status"),
+        "provider_callback_product_id": context.get("product_id"),
+        "provider_callback_repository_id": context.get("repository_id"),
+        "provider_callback_ref": callback_ref,
     }
     outbox_id = delivery.get("outbox_event_id")
     outbox = _outbox_event(store, str(outbox_id))
@@ -682,9 +773,22 @@ def verify_version_git_delivery(
         outbox=completed_outbox,
     )
     verified = _materialize_delivery(store, delivery)
+    readiness: dict[str, Any] | None = None
+    try:
+        readiness = record_ready_for_release_evidence(
+            store,
+            collaboration_run_id=str(delivery["collaboration_run_id"]),
+            finalize_ready_target=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - incomplete chains await later callbacks.
+        detail = getattr(exc, "detail", None)
+        code = detail.get("code") if isinstance(detail, dict) else None
+        if code != "RD_DELIVERY_EVIDENCE_INCOMPLETE":
+            raise
     return {
         "delivery": deepcopy(verified),
         "reconciliation": deepcopy(persisted_reconciliation),
+        "readiness": deepcopy(readiness) if readiness is not None else None,
     }
 
 
@@ -699,54 +803,14 @@ def reconcile_version_git_delivery_from_provider_callback(
     requires a namespaced AI Brain block.  No endpoint accepts a delivery id or
     remote SHA directly; both originate from the signed, immutable Inbox row.
     """
-    if inbox_event.get("signature_status") != "verified":
-        raise api_error(
-            403,
-            "RD_GIT_DELIVERY_CALLBACK_UNTRUSTED",
-            "Git delivery callback was not signature verified",
-        )
     payload = inbox_event.get("payload") if isinstance(inbox_event.get("payload"), dict) else {}
     control = payload.get("ai_brain") if isinstance(payload.get("ai_brain"), dict) else {}
-    delivery_id = str(control.get("rd_delivery_id") or "").strip()
-    if not delivery_id:
+    if not str(control.get("rd_delivery_id") or "").strip():
         return None
-    remote_commit_sha = str(
-        control.get("remote_commit_sha")
-        or payload.get("after")
-        or payload.get("commit_sha")
-        or ""
-    ).strip()
-    if not remote_commit_sha:
-        raise api_error(
-            422,
-            "RD_DELIVERY_EVIDENCE_MISMATCH",
-            "Verified Git callback is missing a remote commit SHA",
-        )
     return verify_version_git_delivery(
         store,
-        delivery_id=delivery_id,
-        remote_commit_sha=remote_commit_sha,
-        reconciliation_status="reconciled",
-        merge_request_id=(
-            str(control.get("merge_request_id") or "").strip() or None
-        ),
-        pull_request_id=(
-            str(control.get("pull_request_id") or "").strip() or None
-        ),
-        trusted_callback={
-            "id": inbox_event.get("id"),
-            "provider": inbox_event.get("provider"),
-            "delivery_id": inbox_event.get("delivery_id"),
-            "payload_hash": inbox_event.get("payload_hash"),
-            "signature_status": inbox_event.get("signature_status"),
-            "payload": {
-                "delivery_id": delivery_id,
-                "remote_commit_sha": remote_commit_sha,
-                "reconciliation_status": "reconciled",
-                "merge_request_id": control.get("merge_request_id"),
-                "pull_request_id": control.get("pull_request_id"),
-            },
-        },
+        inbox_event_id=str(inbox_event.get("id") or ""),
+        inbox_event_payload_hash=str(inbox_event.get("payload_hash") or ""),
     )
 
 
@@ -1043,7 +1107,12 @@ def _persist_ready_status(
     return run, version
 
 
-def record_ready_for_release_evidence(store: Any, *, collaboration_run_id: str) -> dict[str, Any]:
+def record_ready_for_release_evidence(
+    store: Any,
+    *,
+    collaboration_run_id: str,
+    finalize_ready_target: bool = False,
+) -> dict[str, Any]:
     """Verify immutable remote/test evidence and enter, but do not finish, ready state."""
     run = _run(store, collaboration_run_id)
     version = _version(store, str(run["product_version_id"]))
@@ -1074,12 +1143,40 @@ def record_ready_for_release_evidence(store: Any, *, collaboration_run_id: str) 
         "verified_only": True,
         "created_at": _now(),
     }
+    existing_evidence = next(
+        (
+            record
+            for record in _records(
+                store,
+                record_type=READINESS_RECORD_TYPE,
+                collection="rd_ready_for_release_evidence",
+            )
+            if record.get("id") == evidence["id"]
+        ),
+        None,
+    )
+    if existing_evidence is not None:
+        if finalize_ready_target and run.get("status") != "completed":
+            run, version = _persist_ready_status(
+                store,
+                collaboration_run_id=collaboration_run_id,
+                finalize=True,
+            )
+        return {
+            "evidence": deepcopy(existing_evidence),
+            "run": deepcopy(run),
+            "product_version": deepcopy(version),
+        }
     # In PostgreSQL mode the collaboration repository owns this state
     # transition and evidence insert as one database transaction.
     repository = _repository(store)
     save_bundle = getattr(repository, "record_rd_ready_for_release_evidence_bundle", None)
     if callable(save_bundle):
-        persisted = save_bundle(collaboration_run_id=collaboration_run_id, evidence=evidence)
+        persisted = save_bundle(
+            collaboration_run_id=collaboration_run_id,
+            evidence=evidence,
+            finalize_ready_target=finalize_ready_target,
+        )
         evidence = dict(persisted["evidence"])
         run = dict(persisted["run"])
         version = dict(persisted["product_version"])
@@ -1096,6 +1193,12 @@ def record_ready_for_release_evidence(store: Any, *, collaboration_run_id: str) 
             record_type=READINESS_RECORD_TYPE,
             collection="rd_ready_for_release_evidence",
         )
+        if finalize_ready_target:
+            run, version = _persist_ready_status(
+                store,
+                collaboration_run_id=collaboration_run_id,
+                finalize=True,
+            )
     return {
         "evidence": deepcopy(evidence),
         "run": deepcopy(run),
@@ -1106,7 +1209,9 @@ def record_ready_for_release_evidence(store: Any, *, collaboration_run_id: str) 
 def finalize_ready_for_release_target(store: Any, *, collaboration_run_id: str) -> dict[str, Any]:
     """Finalize only the frozen ready-for-release target; deployment stays non-terminal."""
     run = _run(store, collaboration_run_id)
-    _version(store, str(run["product_version_id"]))
+    version = _version(store, str(run["product_version_id"]))
+    if run.get("status") == "completed":
+        return {"run": deepcopy(run), "product_version": deepcopy(version)}
     _assert_frozen_readiness_chain(store, run=run)
     run, version = _persist_ready_status(
         store, collaboration_run_id=collaboration_run_id, finalize=True

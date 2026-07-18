@@ -32,6 +32,7 @@ class RdCollaborationWorkWriteMixin:
         *,
         collaboration_run_id: str,
         evidence: dict[str, Any],
+        finalize_ready_target: bool = False,
     ) -> dict[str, dict[str, Any]]:
         """Atomically append the frozen delivery chain and enter ready state."""
         return self._in_transaction(
@@ -39,6 +40,7 @@ class RdCollaborationWorkWriteMixin:
                 cursor,
                 collaboration_run_id=collaboration_run_id,
                 evidence=evidence,
+                finalize_ready_target=finalize_ready_target,
             )
         )
 
@@ -48,6 +50,7 @@ class RdCollaborationWorkWriteMixin:
         *,
         collaboration_run_id: str,
         evidence: dict[str, Any],
+        finalize_ready_target: bool,
     ) -> dict[str, dict[str, Any]]:
         state = self._mark_rd_ready_for_release_cursor(
             cursor,
@@ -131,6 +134,25 @@ class RdCollaborationWorkWriteMixin:
         persisted_run = _row_dict(cursor, cursor.fetchone())
         if persisted_run is None:
             raise RuntimeError("ready-for-release evidence linkage was not persisted")
+        if (
+            finalize_ready_target
+            and str(persisted_run.get("delivery_target") or "ready_for_release")
+            == "ready_for_release"
+        ):
+            cursor.execute(
+                """
+                UPDATE rd_collaboration_runs
+                SET status = 'completed', completion_reason = 'ready_for_release',
+                    completed_at = now(), version = version + 1, updated_at = now()
+                WHERE id = %s AND status = 'ready_for_release'
+                RETURNING *
+                """,
+                (collaboration_run_id,),
+            )
+            completed_run = _row_dict(cursor, cursor.fetchone())
+            if completed_run is None:
+                raise RuntimeError("ready-for-release target completion was not persisted")
+            persisted_run = completed_run
         return {
             "evidence": {
                 **payload,

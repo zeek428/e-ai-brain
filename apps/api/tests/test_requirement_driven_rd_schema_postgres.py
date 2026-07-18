@@ -16,6 +16,7 @@ from psycopg import sql
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "app" / "db" / "migrations"
 MIGRATION_109 = MIGRATIONS_DIR / "109_requirement_driven_rd_collaboration.sql"
 MIGRATION_116 = MIGRATIONS_DIR / "116_rd_trusted_delivery_evidence.sql"
+MIGRATION_117 = MIGRATIONS_DIR / "117_rd_external_callback_facts.sql"
 DEFAULT_POSTGRES_ADMIN_URL = "postgresql://ai_brain:ai_brain_password@127.0.0.1:5432/postgres"
 
 
@@ -665,6 +666,38 @@ def test_migration_116_allows_ready_for_release_for_version_and_run(
             ).fetchone()
 
     assert persisted == ("ready_for_release", "ready_for_release")
+
+
+def test_migration_117_keeps_verified_callback_facts_immutable(
+    postgres_admin_url: str,
+) -> None:
+    with _temporary_database(postgres_admin_url) as database_url:
+        _apply_historical_migrations(database_url, through=116)
+        with psycopg.connect(database_url) as connection:
+            _apply_migration(connection, MIGRATION_117)
+            connection.execute(
+                """
+                INSERT INTO external_event_inbox (
+                  id, provider, event_type, delivery_id, signature_status,
+                  payload_hash, payload_json
+                ) VALUES (
+                  'callback-fact-1', 'gitlab', 'Push Hook', 'provider-event-1', 'verified',
+                  'sha256:callback-fact', '{"_context":{"repository_ref":"rd/1"}}'::jsonb
+                )
+                """
+            )
+            connection.execute(
+                "UPDATE external_event_inbox SET status = 'completed' WHERE id = 'callback-fact-1'"
+            )
+            with pytest.raises(psycopg.errors.RaiseException, match="callback fact is immutable"):
+                connection.execute(
+                    """
+                    UPDATE external_event_inbox
+                    SET payload_json = '{"_context":{"repository_ref":"main"}}'::jsonb
+                    WHERE id = 'callback-fact-1'
+                    """
+                )
+            connection.rollback()
 
 
 def test_migration_109_normalizes_rows_from_previous_operation_constraint(

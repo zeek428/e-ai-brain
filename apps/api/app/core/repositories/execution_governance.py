@@ -619,6 +619,24 @@ class ExecutionGovernanceReadRepository:
                 )
                 return [self._external_event_from_row(row) for row in cursor.fetchall()]
 
+    def get_external_event_inbox(self, event_id: str) -> dict[str, Any] | None:
+        """Load a durable Inbox fact by its immutable id for trust-boundary checks."""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, provider, event_type, delivery_id,
+                           signature_status, payload_hash, payload_json, status,
+                           attempt_count, lease_owner, lease_until, error_message,
+                           received_at, processed_at, updated_at
+                    FROM external_event_inbox
+                    WHERE id = %s
+                    """,
+                    (event_id,),
+                )
+                row = cursor.fetchone()
+                return self._external_event_from_row(row) if row is not None else None
+
     def save_quality_gate_policy_record(self, *args: Any, **kwargs: Any) -> None:
         self._write_repository.save_quality_gate_policy_record(*args, **kwargs)
 

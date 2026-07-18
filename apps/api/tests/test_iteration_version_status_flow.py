@@ -208,6 +208,30 @@ def test_version_ready_for_release_and_deploying_are_distinct_delivery_stages():
     assert deploying.json()["data"]["version"]["status"] == "deploying"
 
 
+def test_collaboration_version_ready_transition_requires_trusted_delivery_finalization():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers, "version-flow-rd-delivery-fence")
+    version = create_version(headers, product["id"], "2026-08-rd", status="testing")
+    app.state.store.rd_collaboration_runs["rd-run-version-fence"] = {
+        "id": "rd-run-version-fence",
+        "brain_app_id": "rd_brain",
+        "delivery_target": "ready_for_release",
+        "product_id": product["id"],
+        "product_version_id": version["id"],
+        "status": "verifying",
+    }
+
+    response = client.post(
+        f"/api/product-versions/{version['id']}/advance-status",
+        json={"reason": "尝试绕过交付证据", "target_status": "ready_for_release"},
+        headers=headers,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "RD_DELIVERY_FINALIZATION_REQUIRED"
+
+
 def test_ready_for_release_then_deploying_blocks_unfinished_requirements():
     app.state.store.reset()
     headers = auth_headers()

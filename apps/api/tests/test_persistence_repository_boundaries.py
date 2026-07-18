@@ -249,6 +249,7 @@ def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkey
     assert "077_ai_agent_packages.sql" in applied_migrations
     assert "078_ai_executor_approval_requests.sql" in applied_migrations
     assert "116_rd_trusted_delivery_evidence.sql" in applied_migrations
+    assert "117_rd_external_callback_facts.sql" in applied_migrations
     assert "115_rd_work_item_execution_fences.sql" in applied_migrations
     assert "079_plugin_invocation_log_nullable_config_refs.sql" in applied_migrations
     assert "083_viewer_menu_task_boundary.sql" in applied_migrations

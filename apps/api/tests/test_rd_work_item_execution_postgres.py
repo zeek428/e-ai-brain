@@ -446,6 +446,7 @@ def test_postgres_coding_runner_queues_push_and_only_signed_inbox_callback_recon
         receive_external_event,
     )
     from app.services.operational_deployments import process_execution_outbox_events
+    from app.services.rd_git_delivery import record_version_git_delivery
 
     prefix = "work-item-git-delivery-e2e"
     repository_id = f"{prefix}-repository"
@@ -545,8 +546,7 @@ def test_postgres_coding_runner_queues_push_and_only_signed_inbox_callback_recon
         aggregate_type="rd_git_delivery",
     )
     assert processed_push == 1, {
-        key: push_events[0].get(key)
-        for key in ("status", "last_error", "payload", "attempt_count")
+        key: push_events[0].get(key) for key in ("status", "last_error", "payload", "attempt_count")
     }
     push_task = next(
         task
@@ -557,9 +557,7 @@ def test_postgres_coding_runner_queues_push_and_only_signed_inbox_callback_recon
     assert "remote_commit_sha" not in push_task["input_payload"]
     assert push_task["task_kind"] == "git_push"
     assert "do not amend, reset, rebase, merge, deploy" in push_task["instruction"].lower()
-    assert repository.list_execution_outbox_events(
-        aggregate_type="deployment_request"
-    ) == []
+    assert repository.list_execution_outbox_events(aggregate_type="deployment_request") == []
 
     repository.save_plugin_record(
         {
@@ -587,6 +585,7 @@ def test_postgres_coding_runner_queues_push_and_only_signed_inbox_callback_recon
         {
             "project": {"path_with_namespace": project_path},
             "after": local_sha,
+            "ref": f"refs/heads/rd/{ids['run_id']}/{ids['work_item_id']}",
             "ai_brain": {"rd_delivery_id": delivery["id"]},
         }
     ).encode()
@@ -616,7 +615,115 @@ def test_postgres_coding_runner_queues_push_and_only_signed_inbox_callback_recon
     assert reconciliations[0]["delivery_id"] == delivery["id"]
     assert reconciliations[0]["remote_commit_sha"] == local_sha
     assert reconciliations[0]["provider_callback_event_id"] == callback["id"]
+    assert reconciliations[0]["provider_callback_product_id"] == ids["product_id"]
+    assert reconciliations[0]["provider_callback_repository_id"] == repository_id
+    assert reconciliations[0]["provider_callback_ref"] == (
+        f"rd/{ids['run_id']}/{ids['work_item_id']}"
+    )
     assert repository.list_external_event_inbox(status="completed")[0]["id"] == callback["id"]
+    persisted_callback = repository.get_external_event_inbox(callback["id"])
+    assert persisted_callback is not None
+    assert persisted_callback["payload"]["_context"] == {
+        "connection_id": f"{prefix}-gitlab-connection",
+        "environment": None,
+        "product_id": ids["product_id"],
+        "repository_id": repository_id,
+        "repository_provider": "gitlab",
+        "repository_ref": f"rd/{ids['run_id']}/{ids['work_item_id']}",
+        "version_id": None,
+    }
+
+    # A signed event with the same delivery id and SHA but another branch must
+    # not advance this delivery or create readiness evidence.
+    wrong_ref_callback = receive_external_event(
+        runtime,
+        body=json.dumps(
+            {
+                "project": {"path_with_namespace": project_path},
+                "after": local_sha,
+                "ref": "refs/heads/main",
+                "ai_brain": {"rd_delivery_id": delivery["id"]},
+            }
+        ).encode(),
+        connection_id=f"{prefix}-gitlab-connection",
+        headers={
+            "x-gitlab-event-uuid": f"{prefix}-provider-callback-wrong-ref",
+            "x-gitlab-event": "Push Hook",
+            "x-gitlab-token": "rd-delivery-e2e-secret",
+        },
+        provider="gitlab",
+    )
+    assert process_external_event_inbox_events(runtime, worker_id="rd-inbox-worker") == 0
+    wrong_ref = repository.get_external_event_inbox(wrong_ref_callback["id"])
+    assert wrong_ref is not None and wrong_ref["status"] == "failed"
+    assert repository.get_rd_collaboration_run(ids["run_id"])["status"] == "running"
+
+    integration_work_item_id = f"{prefix}-integration-work-item"
+    repository.save_rd_work_item_record(
+        {
+            "id": integration_work_item_id,
+            "collaboration_run_id": ids["run_id"],
+            "plan_version": 1,
+            "work_item_type": "integration",
+            "title": "version integration",
+            "objective": "record trusted version integration evidence",
+            "owner_seat_id": f"{prefix}-owner",
+            "reviewer_seat_id": f"{prefix}-reviewer",
+            "status": "completed",
+            "idempotency_key": integration_work_item_id,
+        }
+    )
+    with repository._connect(autocommit=False) as connection:
+        connection.execute(
+            "UPDATE rd_collaboration_runs SET status = 'integrating' WHERE id = %s",
+            (ids["run_id"],),
+        )
+    integration = record_version_git_delivery(
+        runtime,
+        collaboration_run_id=ids["run_id"],
+        work_item_id=integration_work_item_id,
+        repository_id=repository_id,
+        provider="gitlab",
+        working_branch="release/rd-e2e",
+        version_branch="release/rd-e2e",
+        target_branch="main",
+        local_commit_sha=local_sha,
+        test_evidence={"suite": "version-integration", "status": "passed"},
+    )
+    integration_callback = receive_external_event(
+        runtime,
+        body=json.dumps(
+            {
+                "project": {"path_with_namespace": project_path},
+                "after": local_sha,
+                "ref": "refs/heads/release/rd-e2e",
+                "ai_brain": {"rd_delivery_id": integration["delivery"]["id"]},
+            }
+        ).encode(),
+        connection_id=f"{prefix}-gitlab-connection",
+        headers={
+            "x-gitlab-event-uuid": f"{prefix}-integration-callback",
+            "x-gitlab-event": "Push Hook",
+            "x-gitlab-token": "rd-delivery-e2e-secret",
+        },
+        provider="gitlab",
+    )
+    assert process_external_event_inbox_events(runtime, worker_id="rd-inbox-worker") == 1
+    assert repository.get_external_event_inbox(integration_callback["id"])["status"] == "completed"
+    completed_run = repository.get_rd_collaboration_run(ids["run_id"])
+    assert completed_run is not None
+    assert completed_run["status"] == "completed"
+    assert completed_run["completion_reason"] == "ready_for_release"
+    assert repository.get_product_version(f"{prefix}-version")["status"] == "ready_for_release"
+    assert (
+        len(
+            repository.list_rd_delivery_evidence_records(
+                record_type="rd_ready_for_release_evidence"
+            )
+        )
+        == 1
+    )
+    assert repository.list_execution_outbox_events(aggregate_type="deployment_request") == []
 
 
 def test_postgres_cancel_after_accepted_completion_cancels_verifier_runner(

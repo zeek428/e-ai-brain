@@ -285,6 +285,7 @@ class RdCollaborationRepository(Protocol):
         *,
         collaboration_run_id: str,
         evidence: dict[str, Any],
+        finalize_ready_target: bool = False,
     ) -> dict[str, dict[str, Any]]: ...
     def save_decision_request_record(self, record: dict[str, Any]) -> dict[str, Any]: ...
     def save_work_item_attempt_bundle(
@@ -1129,6 +1130,8 @@ class ExecutionGovernanceRepository(Protocol):
         provider: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]: ...
+
+    def get_external_event_inbox(self, event_id: str) -> dict[str, Any] | None: ...
 
     def save_quality_gate_policy_record(
         self,
