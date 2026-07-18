@@ -28,6 +28,42 @@ from app.services.rd_policy_resolution import PolicyResolutionError, merge_polic
 
 
 class RdCollaborationScopeWriteMixin:
+    def activate_product_version_for_collaboration(
+        self,
+        *,
+        product_version_id: str,
+    ) -> dict[str, Any]:
+        return self._in_transaction(
+            lambda cursor: self._activate_product_version_for_collaboration_cursor(
+                cursor,
+                product_version_id=product_version_id,
+            )
+        )
+
+    def _activate_product_version_for_collaboration_cursor(
+        self,
+        cursor: Any,
+        *,
+        product_version_id: str,
+    ) -> dict[str, Any]:
+        cursor.execute(
+            """
+            UPDATE product_versions
+            SET status = CASE WHEN status = 'planning' THEN 'active' ELSE status END,
+                updated_at = now()
+            WHERE id = %s AND status IN ('planning', 'active', 'testing')
+            RETURNING *
+            """,
+            (product_version_id,),
+        )
+        version = _row_dict(cursor, cursor.fetchone())
+        if version is None:
+            raise RdCollaborationRepositoryError(
+                "RD_SCOPE_FROZEN",
+                "product version cannot start a collaboration run",
+            )
+        return version
+
     @staticmethod
     def _iteration_repository_ids(payload: Any) -> set[str]:
         git_config = payload.get("git_config") if isinstance(payload, dict) else None

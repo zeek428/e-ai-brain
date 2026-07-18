@@ -61,6 +61,88 @@ class RdCollaborationWorkWriteMixin:
     def save_rd_work_item_dependency_record(self, record: dict[str, Any]) -> dict[str, Any]:
         return self._save_simple("rd_work_item_dependencies", record)
 
+    def save_rd_work_item_plan_bundle(
+        self,
+        *,
+        collaboration_run_id: str,
+        expected_run_version: int,
+        work_items: list[dict[str, Any]],
+        dependencies: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return self._in_transaction(
+            lambda cursor: self._save_rd_work_item_plan_bundle_cursor(
+                cursor,
+                collaboration_run_id=collaboration_run_id,
+                expected_run_version=expected_run_version,
+                work_items=work_items,
+                dependencies=dependencies,
+            )
+        )
+
+    def _save_rd_work_item_plan_bundle_cursor(
+        self,
+        cursor: Any,
+        *,
+        collaboration_run_id: str,
+        expected_run_version: int,
+        work_items: list[dict[str, Any]],
+        dependencies: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        cursor.execute(
+            "SELECT * FROM rd_collaboration_runs WHERE id = %s FOR UPDATE",
+            (collaboration_run_id,),
+        )
+        run = _row_dict(cursor, cursor.fetchone())
+        if run is None or run["status"] not in {"draft", "planning", "running"}:
+            raise RdCollaborationRepositoryError(
+                "RD_WORK_ITEM_STATE_INVALID", "collaboration run cannot accept a work-item plan"
+            )
+        if int(run["version"]) != int(expected_run_version):
+            raise RdCollaborationVersionConflictError(int(run["version"]))
+        plan_version = int(run["plan_version"]) + 1
+        if any(int(item.get("plan_version") or -1) != plan_version for item in work_items) or any(
+            int(dependency.get("plan_version") or -1) != plan_version for dependency in dependencies
+        ):
+            raise RdCollaborationRepositoryError(
+                "RD_PLAN_INVALID", "work item plan version does not match the locked run"
+            )
+        ids = {str(item["id"]) for item in work_items}
+        if len(ids) != len(work_items) or any(
+            dependency.get("predecessor_work_item_id") not in ids
+            or dependency.get("successor_work_item_id") not in ids
+            for dependency in dependencies
+        ):
+            raise RdCollaborationRepositoryError(
+                "RD_PLAN_INVALID", "work-item dependency escapes the immutable plan"
+            )
+        persisted_items = [
+            self._save_rd_work_item_record_cursor(cursor, item)
+            for item in sorted(work_items, key=lambda item: str(item["id"]))
+        ]
+        persisted_dependencies = [
+            self._save_simple_cursor(cursor, "rd_work_item_dependencies", dependency)
+            for dependency in sorted(dependencies, key=lambda item: str(item["id"]))
+        ]
+        cursor.execute(
+            """
+            UPDATE rd_collaboration_runs
+            SET plan_version = %s,
+                status = CASE WHEN status IN ('draft', 'planning') THEN 'running' ELSE status END,
+                version = version + 1, updated_at = now()
+            WHERE id = %s AND version = %s
+            RETURNING *
+            """,
+            (plan_version, collaboration_run_id, expected_run_version),
+        )
+        persisted_run = _row_dict(cursor, cursor.fetchone())
+        if persisted_run is None:
+            raise RdCollaborationVersionConflictError(int(run["version"]))
+        return {
+            "run": persisted_run,
+            "work_items": persisted_items,
+            "dependencies": persisted_dependencies,
+        }
+
     def save_rd_collaboration_event_record(self, record: dict[str, Any]) -> dict[str, Any]:
         return self._in_transaction(lambda cursor: self._insert_event_cursor(cursor, record))
 

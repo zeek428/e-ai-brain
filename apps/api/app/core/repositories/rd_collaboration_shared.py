@@ -1415,6 +1415,16 @@ class RdCollaborationTransaction:
             sources=sources,
         )
 
+    def activate_product_version_for_collaboration(
+        self,
+        *,
+        product_version_id: str,
+    ) -> dict[str, Any]:
+        return self._repository._activate_product_version_for_collaboration_cursor(
+            self.cursor,
+            product_version_id=product_version_id,
+        )
+
     def restart_terminal_collaboration_run(
         self,
         *,
@@ -1514,6 +1524,22 @@ class RdCollaborationTransaction:
             self.cursor,
             "rd_work_item_dependencies",
             record,
+        )
+
+    def save_rd_work_item_plan_bundle(
+        self,
+        *,
+        collaboration_run_id: str,
+        expected_run_version: int,
+        work_items: list[dict[str, Any]],
+        dependencies: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return self._repository._save_rd_work_item_plan_bundle_cursor(
+            self.cursor,
+            collaboration_run_id=collaboration_run_id,
+            expected_run_version=expected_run_version,
+            work_items=work_items,
+            dependencies=dependencies,
         )
 
     def save_rd_collaboration_event_record(
