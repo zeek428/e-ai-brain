@@ -39,7 +39,7 @@ class TaskWriteRepository:
                   current_step, error_code, error_message, created_by, created_at, updated_at
                 )
                 VALUES (
-                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb,
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb,
                   %s::jsonb, %s, %s, %s, %s,
                   COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
@@ -63,6 +63,11 @@ class TaskWriteRepository:
                   error_message = EXCLUDED.error_message,
                   created_by = EXCLUDED.created_by,
                   updated_at = EXCLUDED.updated_at
+                WHERE NOT (
+                  ai_tasks.work_item_id IS NOT NULL
+                  AND ai_tasks.status = 'cancelled'
+                  AND EXCLUDED.status <> 'cancelled'
+                )
                 """,
                 (
                     task["id"],
@@ -211,6 +216,16 @@ class TaskWriteRepository:
                   questions = EXCLUDED.questions,
                   decided_at = EXCLUDED.decided_at,
                   updated_at = EXCLUDED.updated_at
+                WHERE NOT (
+                  human_reviews.status = 'cancelled'
+                  AND EXCLUDED.status <> 'cancelled'
+                  AND EXISTS (
+                    SELECT 1
+                    FROM ai_tasks AS linked_task
+                    WHERE linked_task.id = human_reviews.ai_task_id
+                      AND linked_task.work_item_id IS NOT NULL
+                  )
+                )
                 """,
                 (
                     review["id"],

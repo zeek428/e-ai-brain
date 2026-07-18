@@ -2028,6 +2028,124 @@ def test_high_risk_cancel_continue_fences_old_attempt_and_requires_new_attempt(
     assert reclaimed["lease_owner"] == "worker-new"
 
 
+def test_high_risk_cancel_rejects_late_task_and_review_persistence_writes(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="cancel-stale-persistence")
+    work_item_id = "cancel-stale-persistence-work"
+    task_id = "cancel-stale-persistence-task"
+    review_id = "cancel-stale-persistence-review"
+    attempt_id = "cancel-stale-persistence-attempt"
+    repository.save_rd_work_item_record(
+        {
+            "id": work_item_id,
+            "collaboration_run_id": seeded["run"]["id"],
+            "plan_version": 1,
+            "work_item_type": "implementation",
+            "title": "fenced delivery",
+            "objective": "fenced delivery",
+            "status": "ready",
+            "risk_level": "high",
+            "idempotency_key": work_item_id,
+        }
+    )
+    claimed = repository.claim_ready_work_item(
+        work_item_id,
+        lease_owner="worker-old",
+        attempt={
+            "id": attempt_id,
+            "work_item_id": work_item_id,
+            "attempt_no": 1,
+            "idempotency_key": attempt_id,
+            "status": "running",
+        },
+    )
+    with repository._connect(autocommit=False) as connection:
+        connection.execute(
+            """
+            INSERT INTO ai_tasks (
+              id, brain_app_id, requirement_id, task_type, title, status,
+              product_id, version_id, created_by, collaboration_run_id, work_item_id
+            ) VALUES (%s, 'rd_brain', %s, 'development_planning', 'fenced delivery', 'running',
+                      %s, %s, 'user_admin', %s, %s)
+            """,
+            (
+                task_id,
+                seeded["requirement"],
+                seeded["product"],
+                seeded["version"],
+                seeded["run"]["id"],
+                work_item_id,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO human_reviews (id, ai_task_id, stage, status)
+            VALUES (%s, %s, 'execution', 'pending')
+            """,
+            (review_id, task_id),
+        )
+
+    decision = _decision_record(
+        seeded,
+        decision_id="cancel-stale-persistence-decision",
+        subject_type="rd_work_item",
+        subject_id=work_item_id,
+    )
+    cancelled = repository.cancel_work_item_bundle(
+        work_item_id=work_item_id,
+        expected_version=int(claimed["version"]),
+        high_risk=True,
+        decision_request=decision,
+    )
+    assert cancelled["work_item"]["status"] == "waiting_human"
+
+    stale_task = repository.load_ai_tasks()["ai_tasks"][task_id]
+    stale_task.update(
+        {
+            "status": "completed",
+            "current_step": "completed",
+            "output_json": {"late_worker": True},
+        }
+    )
+    stale_review = repository.load_workflow_runtime()["human_reviews"][review_id]
+    stale_review.update(
+        {
+            "status": "approved",
+            "decision_reason": "late worker completion",
+        }
+    )
+
+    repository.save_task_state_records(
+        task=stale_task,
+        audit_events=[],
+        reviews=[stale_review],
+    )
+    repository.save_review_decision_records(
+        task=stale_task,
+        review=stale_review,
+        graph_run=None,
+        checkpoint=None,
+        audit_events=[],
+    )
+
+    with repository._connect() as connection:
+        task_status = connection.execute(
+            "SELECT status FROM ai_tasks WHERE id = %s", (task_id,)
+        ).fetchone()[0]
+        review_status = connection.execute(
+            "SELECT status FROM human_reviews WHERE id = %s", (review_id,)
+        ).fetchone()[0]
+    assert task_status == "cancelled"
+    assert review_status == "cancelled"
+    assert repository.get_rd_work_item_attempt(attempt_id)["status"] == "waiting_human"
+    persisted_item = repository.get_rd_work_item(work_item_id)
+    assert persisted_item["status"] == "waiting_human"
+    assert persisted_item["lease_owner"] is None
+    assert persisted_item["suspended_decision_request_id"] == decision["id"]
+    assert repository.get_rd_collaboration_run(seeded["run"]["id"])["status"] == "running"
+
+
 def test_low_risk_cancellation_fences_linked_task_review_and_external_work(
     repository: PostgresSnapshotRepository,
 ) -> None:
