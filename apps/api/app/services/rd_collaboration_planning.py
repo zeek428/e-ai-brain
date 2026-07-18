@@ -15,7 +15,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.api.deps import api_error
+from app.services.rd_ai_employees import qualify_ai_actor
 from app.services.rd_policy_resolution import PolicyResolutionError, merge_policy_payloads
+from app.services.rd_role_definitions import qualify_human_actor
 
 
 def _invalid(message: str, *, reason: str, **details: Any) -> None:
@@ -280,7 +282,49 @@ def _exact_scope(
         raise api_error(
             409, "RD_SCOPE_CHANGE_INVALID", "Product version has no scoped requirements"
         )
-    assessments = [_accepted_assessment(store, requirement) for requirement in requirements]
+    repository = getattr(store, "repository", None)
+    list_provenance = getattr(repository, "list_rd_product_version_requirement_provenance", None)
+    provenance_rows = (
+        list_provenance(str(version["id"]))
+        if callable(list_provenance)
+        else [
+            value
+            for value in _records(store, "rd_product_version_requirement_provenance").values()
+            if value.get("product_version_id") == version["id"]
+        ]
+    )
+    provenance_by_requirement = {str(row["requirement_id"]): row for row in provenance_rows}
+    assessments: list[dict[str, Any]] = []
+    for requirement in requirements:
+        provenance = provenance_by_requirement.get(str(requirement["id"]))
+        if provenance is None:
+            assessments.append(_accepted_assessment(store, requirement))
+            continue
+        list_assessments = getattr(repository, "list_requirement_assessments", None)
+        values = (
+            list_assessments(str(requirement["id"]))
+            if callable(list_assessments)
+            else _records(store, "requirement_assessments").values()
+        )
+        matches = [
+            item
+            for item in values
+            if item.get("id") == provenance.get("assessment_id")
+            and item.get("requirement_id") == requirement["id"]
+            and item.get("status") == "accepted"
+            and int(item.get("requirement_revision") or 1)
+            == int(provenance.get("requirement_revision") or 0)
+            and item.get("final_strategy_snapshot_id")
+            == provenance.get("final_strategy_snapshot_id")
+        ]
+        if len(matches) != 1:
+            raise api_error(
+                409,
+                "ASSESSMENT_PROVENANCE_INVALID",
+                "Current version scope points to an unavailable accepted assessment",
+                {"requirement_id": requirement["id"], "retryable": False},
+            )
+        assessments.append(dict(matches[0]))
     snapshots = [
         _snapshot(store, str(assessment["final_strategy_snapshot_id"]))
         for assessment in assessments
@@ -349,6 +393,125 @@ def _run_response(
     }
 
 
+def _run_seat_records(
+    store: Any,
+    *,
+    run: dict[str, Any],
+    resolved_snapshot: dict[str, Any],
+    actor: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Resolve every active policy binding into one immutable run seat.
+
+    Role bindings are configuration; a work plan must instead point at a
+    concrete human account or AI employee/executor pair.  Resolve before the
+    run is written so a missing or ambiguous assignment aborts the same start
+    transaction rather than leaving a run that no planner can execute.
+    """
+    payload = resolved_snapshot.get("payload_json") or {}
+    bindings = sorted(
+        [
+            dict(binding)
+            for binding in payload.get("role_bindings") or []
+            if binding.get("status") == "active"
+        ],
+        key=lambda binding: str(binding.get("role_code") or ""),
+    )
+    if not bindings:
+        return []
+    if any(not str(binding.get("role_code") or "").strip() for binding in bindings):
+        raise api_error(409, "RD_ROLE_ASSIGNMENT_REQUIRED", "Active role binding has no role code")
+    if len({str(binding["role_code"]) for binding in bindings}) != len(bindings):
+        raise api_error(409, "RD_ROLE_ASSIGNMENT_REQUIRED", "Role binding is ambiguous")
+
+    repository = getattr(store, "repository", None)
+    list_roles = getattr(repository, "list_rd_role_definitions", None)
+    roles = (
+        list_roles(brain_app_id=run["brain_app_id"], status="active")
+        if callable(list_roles)
+        else list(_records(store, "rd_role_definitions").values())
+    )
+    roles_by_code = {str(role.get("code")): role for role in roles}
+    get_candidate = getattr(repository, "get_assessment_candidate_user", None)
+    get_employee = getattr(repository, "get_rd_ai_employee", None)
+    get_profile = getattr(repository, "get_rd_executor_profile", None)
+    seats: list[dict[str, Any]] = []
+    for binding in bindings:
+        role_code = str(binding["role_code"])
+        role = roles_by_code.get(role_code)
+        candidates: list[tuple[str, str, str | None]] = []
+        actor_mode = str(binding.get("actor_mode") or "")
+        if actor_mode in {"human", "hybrid"}:
+            for user_id in binding.get("candidate_human_user_ids") or []:
+                candidate_id = str(user_id or "").strip()
+                if not candidate_id:
+                    continue
+                candidate = (
+                    get_candidate(candidate_id)
+                    if callable(get_candidate)
+                    else actor
+                    if candidate_id == str(actor.get("id") or "")
+                    else None
+                )
+                if (repository is None and candidate_id == str(actor.get("id") or "")) or (
+                    role is not None
+                    and isinstance(candidate, dict)
+                    and qualify_human_actor(
+                        candidate, role_definition=role, product_id=str(run["product_id"])
+                    )
+                ):
+                    candidates.append(("human_user", candidate_id, None))
+        if actor_mode in {"ai", "hybrid"}:
+            profile_id = binding.get("primary_executor_profile_id")
+            profile = (
+                get_profile(profile_id)
+                if callable(get_profile)
+                else _records(store, "rd_executor_profiles").get(str(profile_id))
+            )
+            for employee_id in binding.get("candidate_ai_employee_ids") or []:
+                candidate_id = str(employee_id or "").strip()
+                employee = (
+                    get_employee(candidate_id)
+                    if callable(get_employee)
+                    else _records(store, "rd_ai_employees").get(candidate_id)
+                )
+                if (
+                    role is not None
+                    and isinstance(employee, dict)
+                    and isinstance(profile, dict)
+                    and qualify_ai_actor(
+                        employee, profile, role_definition=role, policy_binding=binding
+                    )
+                ):
+                    candidates.append(("ai_employee", candidate_id, str(profile["id"])))
+        if len(candidates) != 1:
+            raise api_error(
+                409,
+                "RD_ROLE_ASSIGNMENT_REQUIRED",
+                "Each active collaboration role must resolve to exactly one qualified seat",
+                {"role_code": role_code, "retryable": False},
+            )
+        subject_type, subject_id, executor_profile_id = candidates[0]
+        seats.append(
+            {
+                "id": f"{run['id']}:seat:{role_code}",
+                "collaboration_run_id": run["id"],
+                "role_code": role_code,
+                "subject_type": subject_type,
+                "human_user_id": subject_id if subject_type == "human_user" else None,
+                "ai_employee_id": subject_id if subject_type == "ai_employee" else None,
+                "executor_profile_id": executor_profile_id,
+                "responsibility_scope": {
+                    "policy_id": resolved_snapshot.get("policy_id"),
+                    "policy_version": resolved_snapshot.get("policy_version"),
+                    "role_binding": binding.get("id") or role_code,
+                },
+                "capacity": 1,
+                "status": "active",
+            }
+        )
+    return seats
+
+
 def persist_work_item_plan(
     store: Any,
     *,
@@ -398,6 +561,9 @@ def persist_work_item_plan(
     plan_version = int(run.get("plan_version") or 0) + 1
     persisted_items: list[dict[str, Any]] = []
     ids_by_proposal_id: dict[str, str] = {}
+    dependent_item_ids = {
+        str(dependency["successor_work_item_id"]) for dependency in plan["dependencies"]
+    }
     for item in plan["work_items"]:
         owner = seat_by_role[str(item["owner_role_code"])]
         reviewer = seat_by_role[str(item["reviewer_role_code"])]
@@ -416,7 +582,12 @@ def persist_work_item_plan(
                 "input_contract": deepcopy(item.get("input_contract") or {}),
                 "output_contract": deepcopy(item.get("output_contract") or {}),
                 "acceptance_criteria": deepcopy(item.get("acceptance_criteria") or []),
-                "status": "draft",
+                # A plan becomes runnable as part of the same write that
+                # activates the run.  Only roots may be claimed; successors
+                # are explicitly blocked until their predecessor transition
+                # promotes them.  Leaving every row in draft made a newly
+                # persisted plan impossible to claim in the PostgreSQL path.
+                "status": "blocked" if item["id"] in dependent_item_ids else "ready",
                 "risk_level": item.get("risk_level", "medium"),
                 "priority": int(item.get("priority") or 100),
                 "idempotency_key": f"plan:{plan_version}:{item['id']}",
@@ -499,6 +670,22 @@ def start_collaboration_run(
         if callable(list_runs)
         else _records(store, "rd_collaboration_runs").values()
     )
+    version_runs = [run for run in runs if run.get("product_version_id") == product_version_id]
+    if version.get("status") != "planning":
+        code = "RD_RUN_RESTART_REQUIRED" if version_runs else "RD_RUN_START_NOT_ALLOWED"
+        raise api_error(
+            409,
+            code,
+            "Only a planning version without a prior run can start collaboration",
+            {"retryable": False},
+        )
+    if version_runs:
+        raise api_error(
+            409,
+            "RD_RUN_RESTART_REQUIRED",
+            "A product version with prior collaboration provenance must use restart",
+            {"retryable": False, "run_id": version_runs[0]["id"]},
+        )
     existing_runs = [
         run
         for run in runs
@@ -547,12 +734,14 @@ def start_collaboration_run(
         }
         for requirement, assessment in zip(requirements, assessments, strict=True)
     ]
+    seat_records = _run_seat_records(store, run=run, resolved_snapshot=resolved, actor=actor)
     if repository is not None:
         return _start_collaboration_run_repository(
             store,
             repository=repository,
             run=run,
             scope_rows=scope_rows,
+            seat_records=seat_records,
             resolved_snapshot=resolved,
             assessments=assessments,
             request_id=request_id,
@@ -562,6 +751,8 @@ def start_collaboration_run(
     _records(store, "rd_collaboration_runs")[run["id"]] = run
     for row in scope_rows:
         _records(store, "rd_collaboration_run_requirements")[row["id"]] = row
+    for seat in seat_records:
+        _records(store, "rd_run_seats")[seat["id"]] = seat
     version["status"] = "active"
     response = _run_response(
         run,
@@ -587,6 +778,7 @@ def _start_collaboration_run_repository(
     repository: Any,
     run: dict[str, Any],
     scope_rows: list[dict[str, Any]],
+    seat_records: list[dict[str, Any]],
     resolved_snapshot: dict[str, Any],
     assessments: list[dict[str, Any]],
     request_id: str,
@@ -620,6 +812,8 @@ def _start_collaboration_run_repository(
             run=run,
             scope_rows=scope_rows,
         )
+        for seat in seat_records:
+            transaction.save_rd_run_seat_record(seat)
         response = _run_response(
             persisted["run"],
             snapshot=resolved_snapshot,
@@ -732,6 +926,7 @@ def restart_terminal_collaboration_run(
         }
         for requirement, assessment in zip(requirements, assessments, strict=True)
     ]
+    seat_records = _run_seat_records(store, run=run, resolved_snapshot=resolved, actor=actor)
     if repository is not None:
         return _restart_collaboration_run_repository(
             store,
@@ -739,6 +934,7 @@ def restart_terminal_collaboration_run(
             terminal_run_id=terminal_run_id,
             run=run,
             scope_rows=scope_rows,
+            seat_records=seat_records,
             resolved_snapshot=resolved,
             assessments=assessments,
             request_id=request_id,
@@ -748,6 +944,8 @@ def restart_terminal_collaboration_run(
     _records(store, "rd_collaboration_runs")[run["id"]] = run
     for row in scope_rows:
         _records(store, "rd_collaboration_run_requirements")[row["id"]] = row
+    for seat in seat_records:
+        _records(store, "rd_run_seats")[seat["id"]] = seat
     response = {
         **_run_response(
             run, snapshot=resolved, source_count=len(scope_rows), idempotent_replay=False
@@ -773,6 +971,7 @@ def _restart_collaboration_run_repository(
     terminal_run_id: str,
     run: dict[str, Any],
     scope_rows: list[dict[str, Any]],
+    seat_records: list[dict[str, Any]],
     resolved_snapshot: dict[str, Any],
     assessments: list[dict[str, Any]],
     request_id: str,
@@ -804,6 +1003,8 @@ def _restart_collaboration_run_repository(
             run={**run, "strategy_snapshot_id": merged["id"]},
             scope_rows=scope_rows,
         )
+        for seat in seat_records:
+            transaction.save_rd_run_seat_record(seat)
         response = {
             **_run_response(
                 persisted,

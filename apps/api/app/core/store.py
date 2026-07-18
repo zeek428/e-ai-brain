@@ -93,6 +93,9 @@ class MemoryStore:
     requirement_assessment_opinions: dict[str, dict[str, Any]] = field(default_factory=dict)
     rd_collaboration_runs: dict[str, dict[str, Any]] = field(default_factory=dict)
     rd_collaboration_run_requirements: dict[str, dict[str, Any]] = field(default_factory=dict)
+    rd_product_version_requirement_provenance: dict[str, dict[str, Any]] = field(
+        default_factory=dict,
+    )
     rd_scope_change_requests: dict[str, dict[str, Any]] = field(default_factory=dict)
     rd_scope_change_request_operations: dict[str, dict[str, Any]] = field(
         default_factory=dict,

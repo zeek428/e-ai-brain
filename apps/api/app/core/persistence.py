@@ -399,6 +399,10 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
                     cursor,
                     "112_rd_requirement_entry_adapters.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "113_rd_version_scope_provenance.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)

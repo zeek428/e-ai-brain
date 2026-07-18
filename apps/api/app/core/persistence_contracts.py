@@ -256,6 +256,7 @@ class RdCollaborationRepository(Protocol):
         decision: str,
         decided_by: str,
         expected_decision_version: int,
+        actor_role_codes: list[str] | None = None,
         cancellation_outbox_events: list[dict[str, Any]] | None = None,
         failure_injection: Callable[[str], None] | None = None,
     ) -> dict[str, Any]: ...
@@ -324,6 +325,7 @@ class RdCollaborationRepository(Protocol):
         comment: str | None,
         decided_by: str,
         expected_version: int,
+        actor_role_codes: list[str] | None = None,
     ) -> dict[str, Any]: ...
     def answer_decision_request(
         self,

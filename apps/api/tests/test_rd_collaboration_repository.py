@@ -1356,6 +1356,57 @@ def test_scope_change_request_is_idempotent_pauses_run_and_reject_resumes_it(
     assert result["product_version"]["scope_version"] == 1
 
 
+def test_invalid_scope_change_is_rejected_before_it_creates_a_pause(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="scope-preflight")
+    decision = _decision_record(
+        seeded,
+        decision_id="scope-preflight-decision",
+        subject_type="rd_scope_change_request",
+        subject_id="scope-preflight-request",
+    )
+    request = {
+        "id": "scope-preflight-request",
+        "product_version_id": seeded["version"],
+        "request_id": "scope-preflight-key",
+        "source_run_id": seeded["run"]["id"],
+        "expected_scope_version": 1,
+        "expected_run_generation": 1,
+        "operations_json": [
+            {
+                "op": "replace_requirement_snapshot",
+                "requirement_id": "missing-requirement",
+                "requirement_revision": 1,
+                "assessment_id": "missing-assessment",
+                "final_strategy_snapshot_id": seeded["base_snapshot"]["id"],
+            }
+        ],
+        "operations_hash": "scope-preflight-hash",
+        "reason": "invalid replacement",
+        "decision_request_id": decision["id"],
+        "requested_by": "user_admin",
+    }
+
+    with pytest.raises(RdCollaborationRepositoryError) as invalid:
+        repository.create_scope_change_request(
+            request=request,
+            operations=[
+                {
+                    "id": "scope-preflight-operation",
+                    "scope_change_request_id": request["id"],
+                    "position": 0,
+                    **request["operations_json"][0],
+                }
+            ],
+            decision_request=decision,
+        )
+
+    assert invalid.value.code == "RD_SCOPE_CHANGE_INVALID"
+    assert repository.get_rd_collaboration_run(str(seeded["run"]["id"]))["status"] == "running"
+    assert repository.get_rd_scope_change_request(request["id"]) is None
+
+
 def test_concurrent_scope_change_same_request_replays_and_different_request_fences(
     repository: PostgresSnapshotRepository,
 ) -> None:
@@ -1724,6 +1775,87 @@ def test_high_risk_cancel_continue_fences_old_attempt_and_requires_new_attempt(
     assert reclaimed["lease_owner"] == "worker-new"
 
 
+def test_low_risk_cancellation_fences_linked_task_review_and_external_work(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="cancel-linked")
+    repository.save_rd_work_item_record(
+        {
+            "id": "cancel-linked-work",
+            "collaboration_run_id": seeded["run"]["id"],
+            "plan_version": 1,
+            "work_item_type": "implementation",
+            "title": "cancel linked delivery",
+            "objective": "cancel linked delivery",
+            "status": "ready",
+            "risk_level": "low",
+            "idempotency_key": "cancel-linked-work",
+        }
+    )
+    with repository._connect(autocommit=False) as connection:
+        connection.execute(
+            """
+            INSERT INTO ai_tasks (
+              id, brain_app_id, requirement_id, task_type, title, status,
+              product_id, version_id, created_by, collaboration_run_id, work_item_id
+            ) VALUES (%s, 'rd_brain', %s, 'development_planning', 'linked', 'running',
+                      %s, %s, 'user_admin', %s, %s)
+            """,
+            (
+                "cancel-linked-task",
+                seeded["requirement"],
+                seeded["product"],
+                seeded["version"],
+                seeded["run"]["id"],
+                "cancel-linked-work",
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO human_reviews (id, ai_task_id, stage, status)
+            VALUES ('cancel-linked-review', 'cancel-linked-task', 'execution', 'pending')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO execution_outbox_events (
+              id, aggregate_type, aggregate_id, event_type, idempotency_key, status
+            ) VALUES (
+              'cancel-linked-processing', 'ai_task', 'cancel-linked-task',
+              'runner.execute', 'cancel-linked-processing', 'processing'
+            )
+            """
+        )
+
+    result = repository.cancel_work_item_bundle(
+        work_item_id="cancel-linked-work",
+        expected_version=1,
+        high_risk=False,
+    )
+
+    assert result["work_item"]["status"] == "cancelled"
+    with repository._connect() as connection:
+        task_status = connection.execute(
+            "SELECT status FROM ai_tasks WHERE id = 'cancel-linked-task'"
+        ).fetchone()[0]
+        review_status = connection.execute(
+            "SELECT status FROM human_reviews WHERE id = 'cancel-linked-review'"
+        ).fetchone()[0]
+        outbox_types = {
+            row[0]
+            for row in connection.execute(
+                "SELECT event_type FROM execution_outbox_events "
+                "WHERE aggregate_id = 'cancel-linked-work' "
+                "OR id LIKE 'outbox:work-item:cancel-linked-work:%'"
+            ).fetchall()
+        }
+    assert task_status == "cancelled"
+    assert review_status == "cancelled"
+    assert {"rd.work_item.cancel_runner", "rd.work_item.reconcile_cancellation"}.issubset(
+        outbox_types
+    )
+
+
 def test_idempotent_command_replays_immutable_response_and_rolls_back_failure(
     repository: PostgresSnapshotRepository,
 ) -> None:
@@ -1884,6 +2016,59 @@ def test_suspend_and_decide_run_uses_optimistic_version_and_validates_input(
             decided_by="user_admin",
             expected_version=1,
         )
+
+
+def test_decision_apply_enforces_the_frozen_actor_selector_in_postgres(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="decision-selector")
+    decision = _decision_record(seeded, decision_id="selector-decision")
+    repository.save_decision_request_record(decision)
+    repository.suspend_collaboration_run(
+        collaboration_run_id=str(seeded["run"]["id"]),
+        decision_request_id="selector-decision",
+        expected_version=1,
+    )
+
+    with pytest.raises(RdCollaborationRepositoryError) as denied:
+        repository.apply_decision_bundle(
+            decision_request_id="selector-decision",
+            selected_option_code="continue",
+            input_json={"modules": ["payments"]},
+            comment=None,
+            decided_by="cross-product-user",
+            actor_role_codes=["rd_owner"],
+            expected_version=1,
+        )
+
+    assert denied.value.code == "PERMISSION_DENIED"
+    assert repository.get_decision_request("selector-decision")["status"] == "pending"
+
+
+def test_decision_apply_allows_admin_selector_override_in_postgres(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="decision-admin-selector")
+    decision = _decision_record(seeded, decision_id="admin-selector-decision")
+    repository.save_decision_request_record(decision)
+    repository.suspend_collaboration_run(
+        collaboration_run_id=str(seeded["run"]["id"]),
+        decision_request_id="admin-selector-decision",
+        expected_version=1,
+    )
+
+    result = repository.apply_decision_bundle(
+        decision_request_id="admin-selector-decision",
+        selected_option_code="continue",
+        input_json={"modules": ["payments"]},
+        comment=None,
+        decided_by="user_reviewer",
+        actor_role_codes=["admin"],
+        expected_version=1,
+    )
+
+    assert result["decision_request"]["status"] == "approved"
+    assert result["run"]["status"] == "running"
 
 
 def test_request_more_info_and_answer_selector_reopens_pending_without_resuming(

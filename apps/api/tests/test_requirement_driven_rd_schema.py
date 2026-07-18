@@ -73,6 +73,31 @@ def test_requirement_driven_collaboration_migration_is_registered():
     assert MIGRATION_NAME in persistence_source
 
 
+def test_scope_provenance_migration_persists_replacement_selection_for_restart():
+    persistence_source = (
+        Path(__file__).resolve().parents[1] / "app" / "core" / "persistence.py"
+    ).read_text(encoding="utf-8")
+    assert "113_rd_version_scope_provenance.sql" in persistence_source
+
+    sql = (MIGRATIONS_DIR / "113_rd_version_scope_provenance.sql").read_text(encoding="utf-8")
+    body = _table_body(sql, "rd_product_version_requirement_provenance")
+    _assert_columns(
+        sql,
+        "rd_product_version_requirement_provenance",
+        {
+            "product_version_id",
+            "requirement_id",
+            "requirement_revision",
+            "assessment_id",
+            "final_strategy_snapshot_id",
+            "applied_scope_change_request_id",
+        },
+    )
+    normalized = _normalized(body)
+    assert "primary key (product_version_id, requirement_id)" in normalized
+    assert "unique (product_version_id, assessment_id)" in normalized
+
+
 def test_migration_creates_the_complete_unified_collaboration_schema(migration_sql: str):
     for table_name in (
         "rd_role_definitions",

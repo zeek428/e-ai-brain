@@ -51,7 +51,7 @@ class RdCollaborationScopeWriteMixin:
             UPDATE product_versions
             SET status = CASE WHEN status = 'planning' THEN 'active' ELSE status END,
                 updated_at = now()
-            WHERE id = %s AND status IN ('planning', 'active', 'testing')
+            WHERE id = %s AND status = 'planning'
             RETURNING *
             """,
             (product_version_id,),
@@ -530,6 +530,25 @@ class RdCollaborationScopeWriteMixin:
                         "RD_SCOPE_VERSION_CONFLICT",
                         "scope version is stale",
                         details={"current_scope_version": version["scope_version"]},
+                    )
+                cursor.execute(
+                    """
+                    SELECT id FROM rd_collaboration_runs
+                    WHERE product_version_id = %s
+                    ORDER BY id
+                    FOR KEY SHARE
+                    """,
+                    (run["product_version_id"],),
+                )
+                prior_run_ids = {str(row[0]) for row in cursor.fetchall()}
+                # An exact create replay reaches the immutable insert below so it
+                # retains its normal idempotency-conflict semantics.  Any other
+                # provenance on the version must use the explicit restart path.
+                if prior_run_ids - {str(run["id"])}:
+                    raise RdCollaborationRepositoryError(
+                        "RD_RUN_RESTART_REQUIRED",
+                        "a product version with prior collaboration provenance must restart",
+                        details={"run_id": sorted(prior_run_ids - {str(run["id"])})[0]},
                     )
                 if snapshot is not None:
                     persisted_snapshot = self._insert_snapshot(cursor, snapshot)
@@ -1072,6 +1091,12 @@ class RdCollaborationScopeWriteMixin:
                             "next_action": "resolve_existing_decision",
                         },
                     )
+                self._validate_scope_operations_for_creation(
+                    cursor,
+                    product_id=str(run["product_id"]),
+                    product_version_id=str(version["id"]),
+                    operations=canonical_operations,
+                )
                 self._scope_decision(
                     cursor,
                     decision=frozen_decision,
@@ -1121,6 +1146,91 @@ class RdCollaborationScopeWriteMixin:
                     )
                 return persisted_request
 
+    def _validate_scope_operations_for_creation(
+        self,
+        cursor: Any,
+        *,
+        product_id: str,
+        product_version_id: str,
+        operations: Iterable[dict[str, Any]],
+    ) -> None:
+        """Reject an invalid proposed scope before it can pause a run.
+
+        Applying the same checks only after a human approves meant malformed
+        requests could create a decision and suspend delivery even though no
+        possible approval could succeed.  All checks use the locked version
+        transaction, so no invalid decision/request/paused state is persisted.
+        """
+        for index, operation in enumerate(operations):
+            kind = str(operation["op"])
+            if kind in {"add_requirement", "replace_requirement_snapshot"}:
+                cursor.execute(
+                    """
+                    SELECT requirement.version_id
+                    FROM requirement_assessments assessment
+                    JOIN requirements requirement ON requirement.id = assessment.requirement_id
+                    WHERE assessment.id = %s
+                      AND assessment.requirement_id = %s
+                      AND assessment.requirement_revision = %s
+                      AND assessment.final_strategy_snapshot_id = %s
+                      AND assessment.status = 'accepted'
+                      AND requirement.product_id = %s
+                    FOR KEY SHARE
+                    """,
+                    (
+                        operation["assessment_id"],
+                        operation["requirement_id"],
+                        operation["requirement_revision"],
+                        operation["final_strategy_snapshot_id"],
+                        product_id,
+                    ),
+                )
+                row = cursor.fetchone()
+                if (
+                    row is None
+                    or (kind == "replace_requirement_snapshot" and row[0] != product_version_id)
+                    or (kind == "add_requirement" and row[0] not in {None, product_version_id})
+                ):
+                    raise RdCollaborationRepositoryError(
+                        "RD_SCOPE_CHANGE_INVALID",
+                        "scope operation does not reference a valid current version provenance",
+                        details={"operation_index": index},
+                    )
+            elif kind == "remove_requirement":
+                cursor.execute(
+                    """
+                    SELECT id FROM requirements
+                    WHERE id = %s AND product_id = %s AND version_id = %s
+                    FOR KEY SHARE
+                    """,
+                    (operation["requirement_id"], product_id, product_version_id),
+                )
+                if cursor.fetchone() is None:
+                    raise RdCollaborationRepositoryError(
+                        "RD_SCOPE_CHANGE_INVALID",
+                        "removed requirement is not in the current version scope",
+                        details={"operation_index": index},
+                    )
+            elif kind == "update_repository_baseline":
+                cursor.execute(
+                    """
+                    SELECT branch.branch_config_version
+                    FROM product_version_branch_configs branch
+                    JOIN product_git_repositories repository ON repository.id = branch.repository_id
+                    WHERE branch.version_id = %s AND branch.repository_id = %s
+                      AND branch.product_id = %s AND repository.product_id = %s
+                    FOR KEY SHARE
+                    """,
+                    (product_version_id, operation["repository_id"], product_id, product_id),
+                )
+                row = cursor.fetchone()
+                if row is None or int(row[0]) != int(operation["branch_config_version"]):
+                    raise RdCollaborationRepositoryError(
+                        "RD_SCOPE_CHANGE_INVALID",
+                        "repository baseline is not a current version branch configuration",
+                        details={"operation_index": index},
+                    )
+
     def _scope_change_result(
         self,
         cursor: Any,
@@ -1156,6 +1266,7 @@ class RdCollaborationScopeWriteMixin:
         *,
         product_id: str,
         product_version_id: str,
+        scope_change_request_id: str,
         operations: Iterable[dict[str, Any]],
     ) -> None:
         for operation in operations:
@@ -1212,6 +1323,30 @@ class RdCollaborationScopeWriteMixin:
                             "requirement cannot be added to this product version",
                             details={"operation_index": operation["position"]},
                         )
+                cursor.execute(
+                    """
+                    INSERT INTO rd_product_version_requirement_provenance (
+                      product_version_id, requirement_id, requirement_revision,
+                      assessment_id, final_strategy_snapshot_id,
+                      applied_scope_change_request_id
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (product_version_id, requirement_id) DO UPDATE
+                    SET requirement_revision = EXCLUDED.requirement_revision,
+                        assessment_id = EXCLUDED.assessment_id,
+                        final_strategy_snapshot_id = EXCLUDED.final_strategy_snapshot_id,
+                        applied_scope_change_request_id = EXCLUDED.applied_scope_change_request_id,
+                        updated_at = now()
+                    """,
+                    (
+                        product_version_id,
+                        operation["requirement_id"],
+                        operation["requirement_revision"],
+                        operation["assessment_id"],
+                        operation["final_strategy_snapshot_id"],
+                        scope_change_request_id,
+                    ),
+                )
             elif kind == "remove_requirement":
                 cursor.execute(
                     """
@@ -1228,6 +1363,13 @@ class RdCollaborationScopeWriteMixin:
                         "requirement is not in the current product version",
                         details={"operation_index": operation["position"]},
                     )
+                cursor.execute(
+                    """
+                    DELETE FROM rd_product_version_requirement_provenance
+                    WHERE product_version_id = %s AND requirement_id = %s
+                    """,
+                    (product_version_id, operation["requirement_id"]),
+                )
             elif kind == "update_repository_baseline":
                 cursor.execute(
                     """
@@ -1273,6 +1415,7 @@ class RdCollaborationScopeWriteMixin:
         decision: str,
         decided_by: str,
         expected_decision_version: int,
+        actor_role_codes: list[str] | None = None,
         cancellation_outbox_events: list[dict[str, Any]] | None = None,
         failure_injection: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
@@ -1283,6 +1426,7 @@ class RdCollaborationScopeWriteMixin:
                 decision=decision,
                 decided_by=decided_by,
                 expected_decision_version=expected_decision_version,
+                actor_role_codes=actor_role_codes or [],
                 cancellation_outbox_events=cancellation_outbox_events,
                 failure_injection=failure_injection,
             )
@@ -1296,6 +1440,7 @@ class RdCollaborationScopeWriteMixin:
         decision: str,
         decided_by: str,
         expected_decision_version: int,
+        actor_role_codes: list[str],
         cancellation_outbox_events: list[dict[str, Any]] | None = None,
         failure_injection: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
@@ -1375,6 +1520,28 @@ class RdCollaborationScopeWriteMixin:
                             decision_request_id=decision_row["id"],
                         )
                     return self._scope_change_result(cursor, request)
+                selector = decision_row.get("decision_actor_selector") or {}
+                if selector:
+                    cursor.execute(
+                        """
+                        SELECT id FROM rd_run_seats
+                        WHERE collaboration_run_id = %s AND status = 'active'
+                          AND (human_user_id = %s OR ai_employee_id = %s)
+                        ORDER BY id
+                        """,
+                        (run["id"], decided_by, decided_by),
+                    )
+                    actor_seat_ids = [str(row[0]) for row in cursor.fetchall()]
+                    if not self._selector_matches(
+                        selector,
+                        actor_id=decided_by,
+                        actor_role_codes=actor_role_codes,
+                        actor_seat_ids=actor_seat_ids,
+                    ):
+                        raise RdCollaborationRepositoryError(
+                            "PERMISSION_DENIED",
+                            "scope decision actor does not match the frozen selector",
+                        )
                 _, option_mapping = self._scope_decision(
                     cursor,
                     decision=decision_row,
@@ -1669,6 +1836,7 @@ class RdCollaborationScopeWriteMixin:
                     cursor,
                     product_id=run["product_id"],
                     product_version_id=run["product_version_id"],
+                    scope_change_request_id=request["id"],
                     operations=canonical_operations,
                 )
                 cursor.execute(

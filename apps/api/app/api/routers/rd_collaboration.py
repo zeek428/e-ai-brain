@@ -10,6 +10,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import CurrentUser, api_error, require_any_permission_or_roles, store
 from app.core.trace import envelope, get_trace_id
+from app.services.rd_collaboration_access import (
+    require_decision_scope,
+    require_requirement_scope,
+    require_run_scope,
+    require_scope_change_scope,
+    require_version_scope,
+    require_work_item_scope,
+)
 from app.services.rd_collaboration_decisions import answer_decision_request, apply_decision
 from app.services.rd_collaboration_planning import (
     persist_work_item_plan,
@@ -154,8 +162,10 @@ def start_run(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require(user, "delivery.rd_collaboration.plan")
+    current_store = store(request)
+    require_version_scope(current_store, user, version_id)
     result = start_collaboration_run(
-        store(request),
+        current_store,
         product_version_id=version_id,
         request_id=payload.request_id,
         scope_version=payload.scope_version,
@@ -173,8 +183,10 @@ def restart_run(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require(user, "delivery.rd_collaboration.plan")
+    current_store = store(request)
+    require_version_scope(current_store, user, version_id)
     result = restart_terminal_collaboration_run(
-        store(request),
+        current_store,
         product_version_id=version_id,
         terminal_run_id=payload.terminal_run_id,
         request_id=payload.request_id,
@@ -195,8 +207,10 @@ def create_scope_change(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require(user, "delivery.rd_collaboration.plan")
+    current_store = store(request)
+    require_version_scope(current_store, user, version_id)
     result = create_scope_change_request(
-        store(request),
+        current_store,
         product_version_id=version_id,
         request_id=payload.request_id,
         expected_scope_version=payload.expected_scope_version,
@@ -233,6 +247,7 @@ def get_scope_change(
 ) -> dict[str, Any]:
     _require(user, "delivery.rd_collaboration.read")
     current_store = store(request)
+    require_scope_change_scope(current_store, user, scope_change_request_id)
     item = _get(
         current_store,
         "rd_scope_change_requests",
@@ -267,6 +282,7 @@ def requirement_run(
 ) -> dict[str, Any]:
     _require(user, "delivery.rd_collaboration.read")
     current_store = store(request)
+    require_requirement_scope(current_store, user, requirement_id)
     repository = getattr(current_store, "repository", None)
     list_runs = getattr(repository, "list_rd_collaboration_runs", None)
     runs = (
@@ -290,6 +306,7 @@ def requirement_run(
 def get_run(run_id: str, request: Request, user: dict[str, Any] = CurrentUser) -> dict[str, Any]:
     _require(user, "delivery.rd_collaboration.read")
     current_store = store(request)
+    require_run_scope(current_store, user, run_id)
     run = _get(current_store, "rd_collaboration_runs", run_id, "get_rd_collaboration_run")
     if run is None:
         raise api_error(404, "NOT_FOUND", "Collaboration run not found")
@@ -313,6 +330,7 @@ def list_work_items(
     run_id: str, request: Request, user: dict[str, Any] = CurrentUser
 ) -> dict[str, Any]:
     _require(user, "delivery.rd_collaboration.read")
+    require_run_scope(store(request), user, run_id)
     return envelope(
         {
             "items": _list(store(request), "rd_work_items", run_id, "list_rd_work_items"),
@@ -337,6 +355,7 @@ def validate_plan(
 ) -> dict[str, Any]:
     _require(user, "delivery.rd_collaboration.plan")
     current_store = store(request)
+    require_run_scope(current_store, user, run_id)
     plan = persist_work_item_plan(
         current_store,
         collaboration_run_id=run_id,
@@ -354,6 +373,7 @@ def claim(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require(user, "delivery.rd_collaboration.work")
+    require_work_item_scope(store(request), user, work_item_id)
     result = claim_work_item(
         store(request),
         work_item_id=work_item_id,
@@ -373,6 +393,7 @@ def submit(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require(user, "delivery.rd_collaboration.work")
+    require_work_item_scope(store(request), user, work_item_id)
     _ = user
     result = complete_attempt(
         store(request),
@@ -395,6 +416,7 @@ def review(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require(user, "delivery.rd_collaboration.work")
+    require_work_item_scope(store(request), user, work_item_id)
     result = review_work_item(
         store(request),
         work_item_id=work_item_id,
@@ -416,6 +438,7 @@ def cancel(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require(user, "delivery.rd_collaboration.plan")
+    require_work_item_scope(store(request), user, work_item_id)
     result = cancel_work_item(
         store(request),
         work_item_id=work_item_id,
@@ -438,9 +461,7 @@ def decide(
 ) -> dict[str, Any]:
     _require(user, "delivery.decision_requests.decide")
     current_store = store(request)
-    decision_record = _get(
-        current_store, "decision_requests", decision_request_id, "get_decision_request"
-    )
+    decision_record = require_decision_scope(current_store, user, decision_request_id)
     if decision_record and decision_record.get("subject_type") == "rd_scope_change_request":
         scope = apply_scope_change_decision(
             current_store,
@@ -472,6 +493,7 @@ def answer(
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
     _require(user, "delivery.decision_requests.answer")
+    require_decision_scope(store(request), user, decision_request_id)
     result = answer_decision_request(
         store(request),
         decision_request_id=decision_request_id,

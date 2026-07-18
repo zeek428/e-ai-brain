@@ -304,6 +304,15 @@ class RdCollaborationReadRepository(RdCollaborationWriteRepository):
             order_by=("requirement_id", "id"),
         )
 
+    def list_rd_product_version_requirement_provenance(
+        self, product_version_id: str
+    ) -> list[dict[str, Any]]:
+        return self._list(
+            "rd_product_version_requirement_provenance",
+            filters={"product_version_id": product_version_id},
+            order_by=("requirement_id",),
+        )
+
     def get_requirement_assessment(self, record_id: str) -> dict[str, Any] | None:
         return self._get("requirement_assessments", record_id)
 

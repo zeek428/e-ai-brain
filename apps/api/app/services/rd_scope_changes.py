@@ -117,6 +117,27 @@ def _validate_requirement_operation(
             "Scope operation does not reference a current accepted assessment",
             {"field": "assessment_id", "retryable": False},
         )
+    version_id = version.get("id")
+    if (
+        operation["op"] == "replace_requirement_snapshot"
+        and requirement.get("version_id") != version_id
+    ):
+        raise api_error(
+            422,
+            "RD_SCOPE_CHANGE_INVALID",
+            "Replacement requirement is not in the current version scope",
+            {"field": "requirement_id", "retryable": False},
+        )
+    if operation["op"] == "add_requirement" and requirement.get("version_id") not in {
+        None,
+        version_id,
+    }:
+        raise api_error(
+            422,
+            "RD_SCOPE_CHANGE_INVALID",
+            "Added requirement is already scoped to another version",
+            {"field": "requirement_id", "retryable": False},
+        )
 
 
 def _response(
@@ -205,6 +226,15 @@ def create_scope_change_request(
         )
     for operation in canonical_operations:
         _validate_requirement_operation(store, version=version, operation=operation)
+        if operation["op"] == "remove_requirement":
+            requirement = _records(store, "requirements").get(str(operation["requirement_id"]))
+            if requirement is None or requirement.get("version_id") != version.get("id"):
+                raise api_error(
+                    422,
+                    "RD_SCOPE_CHANGE_INVALID",
+                    "Removed requirement is not in the current version scope",
+                    {"field": "requirement_id", "retryable": False},
+                )
     existing = next(
         (
             item
@@ -342,6 +372,7 @@ def apply_scope_change_decision(
                 decision=decision,
                 decided_by=str(actor["id"]),
                 expected_decision_version=version,
+                actor_role_codes=[str(role) for role in actor.get("roles") or []],
             )
             return {
                 "result_type": "rd_scope_change_request",
@@ -457,10 +488,36 @@ def apply_scope_change_decision(
         if operation["op"] == "add_requirement":
             requirement = _records(store, "requirements")[operation["requirement_id"]]
             requirement.update({"version_id": version_row["id"], "status": "planned"})
+            _records(store, "rd_product_version_requirement_provenance")[
+                f"{version_row['id']}:{requirement['id']}"
+            ] = {
+                "product_version_id": version_row["id"],
+                "requirement_id": requirement["id"],
+                "requirement_revision": operation["requirement_revision"],
+                "assessment_id": operation["assessment_id"],
+                "final_strategy_snapshot_id": operation["final_strategy_snapshot_id"],
+                "applied_scope_change_request_id": request["id"],
+            }
+        elif operation["op"] == "replace_requirement_snapshot":
+            requirement = _records(store, "requirements")[operation["requirement_id"]]
+            requirement["assessment_revision"] = operation["requirement_revision"]
+            _records(store, "rd_product_version_requirement_provenance")[
+                f"{version_row['id']}:{requirement['id']}"
+            ] = {
+                "product_version_id": version_row["id"],
+                "requirement_id": requirement["id"],
+                "requirement_revision": operation["requirement_revision"],
+                "assessment_id": operation["assessment_id"],
+                "final_strategy_snapshot_id": operation["final_strategy_snapshot_id"],
+                "applied_scope_change_request_id": request["id"],
+            }
         elif operation["op"] == "remove_requirement":
             requirement = _records(store, "requirements").get(operation["requirement_id"])
             if requirement:
                 requirement.update({"version_id": None, "status": "approved"})
+                _records(store, "rd_product_version_requirement_provenance").pop(
+                    f"{version_row['id']}:{requirement['id']}", None
+                )
     run.update(
         {
             "status": "cancelled",

@@ -1474,6 +1474,7 @@ class RdCollaborationTransaction:
         decision: str,
         decided_by: str,
         expected_decision_version: int,
+        actor_role_codes: list[str] | None = None,
         cancellation_outbox_events: list[dict[str, Any]] | None = None,
         failure_injection: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
@@ -1483,6 +1484,7 @@ class RdCollaborationTransaction:
             decision=decision,
             decided_by=decided_by,
             expected_decision_version=expected_decision_version,
+            actor_role_codes=actor_role_codes or [],
             cancellation_outbox_events=cancellation_outbox_events,
             failure_injection=failure_injection,
         )
@@ -1592,6 +1594,7 @@ class RdCollaborationTransaction:
         comment: str | None,
         decided_by: str,
         expected_version: int,
+        actor_role_codes: list[str] | None = None,
     ) -> dict[str, Any]:
         return self._repository._apply_decision_bundle_cursor(
             self.cursor,
@@ -1600,6 +1603,7 @@ class RdCollaborationTransaction:
             input_json=input_json,
             comment=comment,
             decided_by=decided_by,
+            actor_role_codes=actor_role_codes or [],
             expected_version=expected_version,
         )
 

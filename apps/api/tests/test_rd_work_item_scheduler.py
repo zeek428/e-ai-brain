@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.core.store import MemoryStore
+from app.services.rd_collaboration_planning import persist_work_item_plan
 from app.services.rd_command_replay_secrets import scrub_expired_command_replay_secrets
 from app.services.rd_work_item_scheduler import (
     cancel_work_item,
@@ -40,6 +41,67 @@ def test_scheduler_does_not_release_item_before_dependencies_are_approved() -> N
     items = ready_work_items(store, collaboration_run_id="run-1")
 
     assert "integration-item" not in {item["id"] for item in items}
+
+
+def test_persisted_plan_activates_only_root_work_items_for_claiming() -> None:
+    store = MemoryStore()
+    store.rd_collaboration_runs["run-plan"] = {
+        "id": "run-plan",
+        "status": "planning",
+        "version": 1,
+        "plan_version": 0,
+    }
+    store.rd_run_seats.update(
+        {
+            "seat-dev": {
+                "id": "seat-dev",
+                "collaboration_run_id": "run-plan",
+                "role_code": "developer",
+                "subject_type": "human_user",
+                "human_user_id": "user-dev",
+                "capacity": 1,
+                "status": "active",
+            },
+            "seat-test": {
+                "id": "seat-test",
+                "collaboration_run_id": "run-plan",
+                "role_code": "tester",
+                "subject_type": "human_user",
+                "human_user_id": "user-test",
+                "capacity": 1,
+                "status": "active",
+            },
+        }
+    )
+
+    persisted = persist_work_item_plan(
+        store,
+        collaboration_run_id="run-plan",
+        actor={"id": "user-owner"},
+        proposal={
+            "work_items": [
+                {
+                    "id": "design",
+                    "owner_role_code": "developer",
+                    "reviewer_role_code": "tester",
+                },
+                {
+                    "id": "implement",
+                    "owner_role_code": "developer",
+                    "reviewer_role_code": "tester",
+                },
+            ],
+            "dependencies": [
+                {
+                    "predecessor_work_item_id": "design",
+                    "successor_work_item_id": "implement",
+                }
+            ],
+        },
+    )
+
+    states = {item["title"]: item["status"] for item in persisted["work_items"]}
+    assert states == {"design": "ready", "implement": "blocked"}
 
 
 def test_claim_replays_the_same_lease_before_expiry_without_new_attempt() -> None:

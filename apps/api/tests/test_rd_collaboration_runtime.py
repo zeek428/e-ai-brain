@@ -13,6 +13,7 @@ from app.services.rd_collaboration_decisions import (
 )
 from app.services.rd_collaboration_planning import (
     persist_work_item_plan,
+    restart_terminal_collaboration_run,
     start_collaboration_run,
     validate_work_item_plan,
 )
@@ -178,7 +179,17 @@ def test_start_freezes_exact_accepted_requirement_scope_and_replays_request() ->
         "id": "snapshot-1",
         "policy_id": "policy-1",
         "policy_version": 2,
-        "payload_json": {"delivery_target": "ready_for_release"},
+        "payload_json": {
+            "delivery_target": "ready_for_release",
+            "role_bindings": [
+                {
+                    "role_code": "developer",
+                    "actor_mode": "human",
+                    "candidate_human_user_ids": ["user-owner"],
+                    "status": "active",
+                }
+            ],
+        },
     }
 
     first = start_collaboration_run(
@@ -204,6 +215,35 @@ def test_start_freezes_exact_accepted_requirement_scope_and_replays_request() ->
     assert replay["run"]["id"] == first["run"]["id"]
     assert replay["idempotent_replay"] is True
     assert store.product_versions["version-1"]["status"] == "active"
+    assert [seat["role_code"] for seat in store.rd_run_seats.values()] == ["developer"]
+    assert next(iter(store.rd_run_seats.values()))["human_user_id"] == "user-owner"
+
+
+def test_start_requires_planning_version_and_never_reuses_terminal_generation() -> None:
+    store = MemoryStore()
+    store.product_versions["version-1"] = {
+        "id": "version-1",
+        "product_id": "product-1",
+        "scope_version": 1,
+        "status": "active",
+    }
+    store.rd_collaboration_runs["terminal-run"] = {
+        "id": "terminal-run",
+        "product_version_id": "version-1",
+        "status": "cancelled",
+        "run_generation": 4,
+    }
+
+    with pytest.raises(type(api_error(409, "RD_RUN_RESTART_REQUIRED", "invalid"))) as exc_info:
+        start_collaboration_run(
+            store,
+            product_version_id="version-1",
+            request_id="new-start",
+            scope_version=1,
+            actor={"id": "user-owner", "roles": ["rd_owner"]},
+        )
+
+    assert exc_info.value.detail["code"] == "RD_RUN_RESTART_REQUIRED"
 
 
 def test_approved_scope_change_fences_old_run_and_increments_scope_once() -> None:
@@ -283,6 +323,95 @@ def test_approved_scope_change_fences_old_run_and_increments_scope_once() -> Non
     assert store.product_versions["version-1"]["scope_version"] == 4
     assert store.rd_work_items["work-1"]["status"] == "cancelled"
     assert replay["idempotent_replay"] is True
+
+
+def test_replacement_scope_provenance_is_used_by_the_restarted_generation() -> None:
+    store = MemoryStore()
+    store.product_versions["version-replace"] = {
+        "id": "version-replace",
+        "product_id": "product-replace",
+        "scope_version": 1,
+        "status": "active",
+    }
+    store.rd_collaboration_runs["run-replace"] = {
+        "id": "run-replace",
+        "brain_app_id": "rd_brain",
+        "product_id": "product-replace",
+        "product_version_id": "version-replace",
+        "strategy_snapshot_id": "snapshot-original",
+        "run_generation": 1,
+        "scope_version": 1,
+        "status": "running",
+        "version": 1,
+    }
+    store.requirements["requirement-replace"] = {
+        "id": "requirement-replace",
+        "product_id": "product-replace",
+        "version_id": "version-replace",
+        "assessment_revision": 1,
+        "status": "planned",
+    }
+    for assessment_id, snapshot_id in (
+        ("assessment-original", "snapshot-original"),
+        ("assessment-replacement", "snapshot-replacement"),
+    ):
+        store.requirement_assessments[assessment_id] = {
+            "id": assessment_id,
+            "requirement_id": "requirement-replace",
+            "requirement_revision": 1,
+            "final_strategy_snapshot_id": snapshot_id,
+            "status": "accepted",
+        }
+    for snapshot_id in ("snapshot-original", "snapshot-replacement"):
+        store.rd_task_executor_policy_snapshots[snapshot_id] = {
+            "id": snapshot_id,
+            "policy_id": "policy-replace",
+            "policy_version": 1,
+            "payload_json": {"delivery_target": "ready_for_release"},
+        }
+
+    scope = create_scope_change_request(
+        store,
+        product_version_id="version-replace",
+        request_id="replace-scope",
+        expected_scope_version=1,
+        expected_run_generation=1,
+        source_run_id="run-replace",
+        reason="replace accepted assessment",
+        operations=[
+            {
+                "op": "replace_requirement_snapshot",
+                "requirement_id": "requirement-replace",
+                "requirement_revision": 1,
+                "assessment_id": "assessment-replacement",
+                "final_strategy_snapshot_id": "snapshot-replacement",
+            }
+        ],
+        actor={"id": "user-owner", "roles": ["rd_owner"]},
+    )
+    apply_scope_change_decision(
+        store,
+        scope_change_request_id=scope["scope_change_request"]["id"],
+        decision="approve_apply_and_restart",
+        actor={"id": "user-owner", "roles": ["rd_owner"]},
+        version=1,
+        idempotency_key="approve-replacement",
+    )
+
+    restarted = restart_terminal_collaboration_run(
+        store,
+        product_version_id="version-replace",
+        terminal_run_id="run-replace",
+        request_id="restart-replacement",
+        scope_version=2,
+        actor={"id": "user-owner", "roles": ["rd_owner"]},
+    )
+
+    scope_row = next(iter(store.rd_collaboration_run_requirements.values()))
+    assert restarted["run"]["supersedes_run_id"] == "run-replace"
+    assert scope_row["collaboration_run_id"] == restarted["run"]["id"]
+    assert scope_row["assessment_id"] == "assessment-replacement"
+    assert scope_row["final_strategy_snapshot_id"] == "snapshot-replacement"
 
 
 def test_feedback_keeps_producer_seat_attribution_distinct_from_executor() -> None:
@@ -390,7 +519,23 @@ def test_start_route_returns_versioned_snapshot_contract_and_trace_id() -> None:
         "id": "snapshot-route",
         "policy_id": "policy-route",
         "policy_version": 1,
-        "payload_json": {"delivery_target": "ready_for_release"},
+        "payload_json": {
+            "delivery_target": "ready_for_release",
+            "role_bindings": [
+                {
+                    "role_code": "developer",
+                    "actor_mode": "human",
+                    "candidate_human_user_ids": ["user_admin"],
+                    "status": "active",
+                },
+                {
+                    "role_code": "tester",
+                    "actor_mode": "human",
+                    "candidate_human_user_ids": ["user_admin"],
+                    "status": "active",
+                },
+            ],
+        },
     }
 
     response = client.post(
@@ -402,3 +547,76 @@ def test_start_route_returns_versioned_snapshot_contract_and_trace_id() -> None:
     assert response.status_code == 201
     assert response.json()["data"]["strategy_snapshot_kind"] == "version_resolved"
     assert response.json()["trace_id"]
+    run_id = response.json()["data"]["id"]
+    planned = client.post(
+        f"/api/delivery/rd-collaboration-runs/{run_id}/plan",
+        json={
+            "work_items": [
+                {
+                    "id": "route-root",
+                    "owner_role_code": "developer",
+                    "reviewer_role_code": "tester",
+                }
+            ],
+            "dependencies": [],
+        },
+        headers=headers,
+    )
+    assert planned.status_code == 200
+    work_item = planned.json()["data"]["work_items"][0]
+    assert work_item["status"] == "ready"
+    claimed = client.post(
+        f"/api/delivery/rd-work-items/{work_item['id']}/claim",
+        json={"expected_version": 1, "lease_seconds": 60, "idempotency_key": "claim-route-root"},
+        headers=headers,
+    )
+    assert claimed.status_code == 200
+    assert claimed.json()["data"]["work_item"]["status"] == "running"
+
+
+def test_collaboration_routes_enforce_aggregate_product_scope() -> None:
+    client = TestClient(app)
+    app.state.store.reset()
+    admin = client.post(
+        "/api/auth/login",
+        json={"username": "admin@example.com", "password": "admin123"},
+    )
+    admin_headers = {"Authorization": f"Bearer {admin.json()['data']['access_token']}"}
+    created = client.post(
+        "/api/users",
+        headers=admin_headers,
+        json={
+            "username": "collaboration-scope@example.com",
+            "password": "scope123",
+            "display_name": "Scoped developer",
+            "roles": ["developer"],
+        },
+    ).json()["data"]
+    client.put(
+        f"/api/users/{created['id']}/scopes",
+        headers=admin_headers,
+        json={
+            "scopes": [
+                {"scope_type": "product", "scope_id": "product-allowed", "access_level": "write"}
+            ]
+        },
+    )
+    scoped_login = client.post(
+        "/api/auth/login",
+        json={"username": "collaboration-scope@example.com", "password": "scope123"},
+    )
+    scoped_headers = {"Authorization": f"Bearer {scoped_login.json()['data']['access_token']}"}
+    app.state.store.rd_collaboration_runs["run-cross-product"] = {
+        "id": "run-cross-product",
+        "product_id": "product-denied",
+        "product_version_id": "version-denied",
+        "status": "running",
+    }
+
+    denied = client.get(
+        "/api/delivery/rd-collaboration-runs/run-cross-product",
+        headers=scoped_headers,
+    )
+
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["code"] == "FORBIDDEN"

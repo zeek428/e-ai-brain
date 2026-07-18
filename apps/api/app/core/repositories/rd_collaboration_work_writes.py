@@ -612,6 +612,7 @@ class RdCollaborationWorkWriteMixin:
                 )
                 attempt = _row_dict(cursor, cursor.fetchone())
                 persisted_decision = None
+                persisted_work_item = None
                 if high_risk:
                     if decision_request is None:
                         raise RdCollaborationRepositoryError(
@@ -661,6 +662,7 @@ class RdCollaborationWorkWriteMixin:
                             work_item_id,
                         ),
                     )
+                    persisted_work_item = _row_dict(cursor, cursor.fetchone())
                 else:
                     if attempt is not None:
                         cursor.execute(
@@ -688,7 +690,13 @@ class RdCollaborationWorkWriteMixin:
                         """,
                         (work_item_id,),
                     )
-                persisted_work_item = _row_dict(cursor, cursor.fetchone())
+                    persisted_work_item = _row_dict(cursor, cursor.fetchone())
+                    self._cancel_linked_delivery_cursor(
+                        cursor,
+                        run_id=str(run["id"]),
+                        work_item_id=work_item_id,
+                        reason="work_item_cancelled",
+                    )
                 persisted_event = self._insert_event_cursor(cursor, event) if event else None
                 if persisted_work_item is None:
                     raise RuntimeError("work item cancellation did not return a row")
@@ -698,6 +706,103 @@ class RdCollaborationWorkWriteMixin:
                     "decision_request": persisted_decision,
                     "event": persisted_event,
                 }
+
+    def _cancel_linked_delivery_cursor(
+        self,
+        cursor: Any,
+        *,
+        run_id: str,
+        work_item_id: str,
+        reason: str,
+    ) -> None:
+        """Fence every linked delivery write and request external reconciliation.
+
+        A cancelled work item is not sufficient when a runner has already
+        dispatched an AI task or a review is pending.  The terminal task state
+        and cancelled review reject late transitions locally; durable outbox
+        commands make the runner/Git side converge even when an external
+        operation was already in flight.
+        """
+        cursor.execute(
+            "SELECT id FROM ai_tasks WHERE work_item_id = %s ORDER BY id FOR UPDATE",
+            (work_item_id,),
+        )
+        task_ids = [str(row[0]) for row in cursor.fetchall()]
+        cursor.execute(
+            "SELECT id FROM rd_work_item_attempts WHERE work_item_id = %s ORDER BY id FOR UPDATE",
+            (work_item_id,),
+        )
+        attempt_ids = [str(row[0]) for row in cursor.fetchall()]
+        if task_ids:
+            cursor.execute(
+                """
+                UPDATE human_reviews
+                SET status = 'cancelled', decision_reason = %s,
+                    decided_at = COALESCE(decided_at, now()), updated_at = now()
+                WHERE ai_task_id = ANY(%s) AND status = 'pending'
+                """,
+                (reason, task_ids),
+            )
+            cursor.execute(
+                """
+                UPDATE ai_tasks
+                SET status = 'cancelled', error_code = 'RD_WORK_ITEM_CANCELLED',
+                    error_message = %s, updated_at = now()
+                WHERE id = ANY(%s) AND status NOT IN ('completed', 'failed', 'cancelled')
+                """,
+                (reason, task_ids),
+            )
+        aggregate_ids = [work_item_id, *attempt_ids, *task_ids]
+        cursor.execute(
+            """
+            UPDATE execution_outbox_events
+            SET status = 'cancelled', lease_owner = NULL, lease_until = NULL, updated_at = now()
+            WHERE aggregate_id = ANY(%s) AND status IN ('pending', 'failed')
+            """,
+            (aggregate_ids,),
+        )
+        cursor.execute(
+            """
+            SELECT * FROM execution_outbox_events
+            WHERE aggregate_id = ANY(%s) AND status IN ('processing', 'completed', 'dead_letter')
+            ORDER BY id FOR UPDATE
+            """,
+            (aggregate_ids,),
+        )
+        source_outbox_rows = [
+            source for row in cursor.fetchall() if (source := _row_dict(cursor, row)) is not None
+        ]
+        transaction = RdCollaborationTransaction(self, cursor)
+        transaction.save_outbox_event(
+            {
+                "id": f"outbox:work-item:{work_item_id}:cancel",
+                "aggregate_type": "rd_work_item",
+                "aggregate_id": work_item_id,
+                "event_type": "rd.work_item.cancel_runner",
+                "idempotency_key": f"work-item:{work_item_id}:cancel",
+                "payload_json": {
+                    "reason": reason,
+                    "collaboration_run_id": run_id,
+                    "ai_task_ids": task_ids,
+                    "attempt_ids": attempt_ids,
+                },
+            }
+        )
+        for source in source_outbox_rows:
+            transaction.save_outbox_event(
+                {
+                    "id": f"outbox:work-item:{work_item_id}:reconcile:{source['id']}",
+                    "aggregate_type": source["aggregate_type"],
+                    "aggregate_id": source["aggregate_id"],
+                    "event_type": "rd.work_item.reconcile_cancellation",
+                    "idempotency_key": (f"work-item:{work_item_id}:reconcile:{source['id']}"),
+                    "payload_json": {
+                        "work_item_id": work_item_id,
+                        "source_outbox_id": source["id"],
+                        "source_status": source["status"],
+                    },
+                }
+            )
 
     def suspend_collaboration_run(
         self,
@@ -934,6 +1039,7 @@ class RdCollaborationWorkWriteMixin:
         comment: str | None,
         decided_by: str,
         expected_version: int,
+        actor_role_codes: list[str] | None = None,
     ) -> dict[str, Any]:
         return self._in_transaction(
             lambda cursor: self._apply_decision_bundle_cursor(
@@ -943,6 +1049,7 @@ class RdCollaborationWorkWriteMixin:
                 input_json=input_json,
                 comment=comment,
                 decided_by=decided_by,
+                actor_role_codes=actor_role_codes or [],
                 expected_version=expected_version,
             )
         )
@@ -956,6 +1063,7 @@ class RdCollaborationWorkWriteMixin:
         input_json: Any,
         comment: str | None,
         decided_by: str,
+        actor_role_codes: list[str],
         expected_version: int,
     ) -> dict[str, Any]:
         with nullcontext():
@@ -977,6 +1085,19 @@ class RdCollaborationWorkWriteMixin:
                     raise RdCollaborationRepositoryError(
                         "RD_DECISION_EXPIRED",
                         "decision request is no longer active",
+                    )
+                selector = decision.get("decision_actor_selector") or {}
+                if selector and not self._selector_matches(
+                    selector,
+                    actor_id=decided_by,
+                    actor_role_codes=actor_role_codes,
+                    actor_seat_ids=self._actor_run_seat_ids_cursor(
+                        cursor, run_id=str(bound_run["id"]), actor_id=decided_by
+                    ),
+                ):
+                    raise RdCollaborationRepositoryError(
+                        "PERMISSION_DENIED",
+                        "decision actor does not match the frozen selector",
                     )
                 if (
                     bound_work_item is None
@@ -1132,6 +1253,13 @@ class RdCollaborationWorkWriteMixin:
                         (target_status, work_item["id"]),
                     )
                     work_item = _row_dict(cursor, cursor.fetchone())
+                    if work_item is not None and target_status == "cancelled":
+                        self._cancel_linked_delivery_cursor(
+                            cursor,
+                            run_id=str(bound_run["id"]),
+                            work_item_id=str(work_item["id"]),
+                            reason="decision_approved_work_item_cancellation",
+                        )
                 if persisted_decision is None:
                     raise RuntimeError("decision application did not return a row")
                 return {
@@ -1150,6 +1278,8 @@ class RdCollaborationWorkWriteMixin:
         actor_role_codes: list[str],
         actor_seat_ids: list[str],
     ) -> bool:
+        if "admin" in actor_role_codes:
+            return True
         user_ids = {str(item) for item in selector.get("user_ids", [])}
         role_codes = {str(item) for item in selector.get("role_codes", [])}
         seat_ids = {str(item) for item in selector.get("seat_ids", [])}
@@ -1158,6 +1288,19 @@ class RdCollaborationWorkWriteMixin:
             or role_codes.intersection(actor_role_codes)
             or seat_ids.intersection(actor_seat_ids)
         )
+
+    @staticmethod
+    def _actor_run_seat_ids_cursor(cursor: Any, *, run_id: str, actor_id: str) -> list[str]:
+        cursor.execute(
+            """
+            SELECT id FROM rd_run_seats
+            WHERE collaboration_run_id = %s AND status = 'active'
+              AND (human_user_id = %s OR ai_employee_id = %s)
+            ORDER BY id
+            """,
+            (run_id, actor_id, actor_id),
+        )
+        return [str(row[0]) for row in cursor.fetchall()]
 
     def answer_decision_request(
         self,

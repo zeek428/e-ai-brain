@@ -364,6 +364,7 @@ def _apply_decision_repository(
             input_json=input_value,
             comment=comment,
             decided_by=str(actor["id"]),
+            actor_role_codes=[str(role) for role in actor.get("roles") or []],
             expected_version=version,
         )
         decision = result["decision_request"]
