@@ -709,10 +709,10 @@
 | 适用阶段 | v2.0 P1 |
 
 1. 在 `RD_COLLABORATION_DEPLOYMENT_ENABLED=false` 时尝试创建/激活 `delivery_target=deployed` 策略，并运行 P0 协作套件。
-2. 开启 P1 标志，在已经具备可信远程交付和 `ready_for_release` 证据、且协作运行保持非终态 `ready_for_release` 的版本上使用 `delivery_target=deployed`。
+2. 开启 P1 标志，在已经具备可信远程交付和 `ready_for_release` 证据、且协作运行保持非终态 `ready_for_release` 的版本上，通过既有部署 API 传入 `collaboration_run_id`；分别验证产品、版本和需求集合不匹配时拒绝。
 3. 分别模拟未通过和通过人工发布门禁、部署失败回滚和部署成功。
 
-**预期结果**: P1 标志关闭时 deployed 策略稳定拒绝，P0 策略、页面和完整套件仍可独立通过。部署目标在可信待发布证据完成后运行仍处于非终态 `ready_for_release`，未确认时不创建部署单；确认后只通过现有部署域推进到 `deploying`。失败或回滚保持版本和运行 `ready_for_release`，成功后协作运行才以 `completed(completion_reason=deployed)` 完成，所有部署副作用仍受既有 Outbox、资源授权和人工门禁约束。
+**预期结果**: P1 标志关闭时 deployed 策略和带 `collaboration_run_id` 的部署单稳定返回 `RD_COLLABORATION_DEPLOYMENT_DISABLED`，P0 策略、页面和完整套件仍可独立通过。部署目标在可信待发布证据完成后运行仍处于非终态 `ready_for_release`，未确认时不创建部署单；范围不匹配分别返回 `RD_DEPLOYMENT_SCOPE_MISMATCH` 或 `RD_DELIVERY_EVIDENCE_INCOMPLETE`。确认后只通过现有部署域推进到 `deploying`，并将部署派发与协作/版本状态变更原子提交。失败或回滚保持版本和运行 `ready_for_release`，成功后协作运行才以 `completed(completion_reason=deployed)` 完成，所有部署副作用仍受既有 Outbox、资源授权和人工门禁约束。
 
 ---
 

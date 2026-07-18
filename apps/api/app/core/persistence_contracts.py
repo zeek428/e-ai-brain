@@ -156,6 +156,27 @@ class RdCollaborationRepository(Protocol):
     def finalize_rd_ready_for_release_target(
         self, *, collaboration_run_id: str
     ) -> dict[str, dict[str, Any]]: ...
+    def enter_rd_policy_controlled_deployment(
+        self, *, collaboration_run_id: str, deployment_request_id: str
+    ) -> dict[str, dict[str, Any]]: ...
+    def project_rd_policy_controlled_deployment_result(
+        self,
+        *,
+        collaboration_run_id: str,
+        deployment_request_id: str,
+        result_status: str,
+    ) -> dict[str, dict[str, Any]]: ...
+    def create_rd_policy_controlled_deployment_dispatch_transaction(
+        self,
+        *,
+        audit_events: list[dict[str, Any]],
+        collaboration_run_id: str,
+        deployment: dict[str, Any],
+        outbox_event: dict[str, Any],
+        requirements: list[dict[str, Any]],
+        run: dict[str, Any],
+        steps: list[dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]: ...
     def get_rd_collaboration_run_requirement(self, record_id: str) -> dict[str, Any] | None: ...
     def list_rd_collaboration_run_requirements(
         self, collaboration_run_id: str

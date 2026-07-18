@@ -378,7 +378,7 @@ class DevopsReadRepository:
                                FILTER (WHERE r.requirement_id IS NOT NULL),
                              ARRAY[]::text[]
                            ) AS requirement_ids,
-                           d.artifact_digest
+                           d.artifact_digest, d.rd_collaboration_run_id
                     FROM deployment_requests d
                     LEFT JOIN deployment_request_requirements r
                       ON r.deployment_request_id = d.id
@@ -458,7 +458,7 @@ class DevopsReadRepository:
                              ),
                              ARRAY[]::text[]
                            ) AS requirement_ids,
-                           d.artifact_digest,
+                           d.artifact_digest, d.rd_collaboration_run_id,
                            COUNT(*) OVER() AS total_count
                     FROM deployment_requests d
                     {where_clause}
@@ -974,7 +974,7 @@ class DevopsReadRepository:
                        FILTER (WHERE r.requirement_id IS NOT NULL),
                      ARRAY[]::text[]
                    ) AS requirement_ids,
-                   d.artifact_digest
+                   d.artifact_digest, d.rd_collaboration_run_id
             FROM deployment_requests d
             LEFT JOIN deployment_request_requirements r
               ON r.deployment_request_id = d.id
@@ -1116,12 +1116,14 @@ class DevopsReadRepository:
         has_governance_fields = len(row) > 31
         requirement_ids_index = 31 if has_governance_fields else 27
         artifact_digest = row[32] if len(row) > 32 else None
+        collaboration_run_id = row[33] if len(row) > 33 else None
         request = {
             "approved_by": row[16],
             "artifact_digest": artifact_digest,
             "artifact_version": row[10],
             "assigned_ops_user": row[15],
             "commit_sha": row[9],
+            "collaboration_run_id": collaboration_run_id,
             "created_at": row[21].isoformat() if row[21] else None,
             "created_by": row[20],
             "deployment_method": row[24],
@@ -1157,6 +1159,7 @@ class DevopsReadRepository:
             "artifact_version",
             "assigned_ops_user",
             "commit_sha",
+            "collaboration_run_id",
             "created_at",
             "deploy_window_end",
             "deploy_window_start",

@@ -1,6 +1,7 @@
 import base64
 import json
 
+import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
@@ -782,6 +783,78 @@ def test_policy_rejects_legacy_task_executor_fields():
     )
 
     assert response.status_code == 422
+
+
+def test_deployed_target_policy_requires_the_independent_deployment_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app.state.store.reset()
+    payload = valid_policy_payload(delivery_target="deployed")
+    baseline = client.post(
+        "/api/delivery/rd-task-executor-policies",
+        headers=auth_headers(),
+        json=valid_policy_payload(),
+    )
+    assert baseline.status_code == 200
+    policy = baseline.json()["data"]["policy"]
+    disabled = client.post(
+        "/api/delivery/rd-task-executor-policies", headers=auth_headers(), json=payload
+    )
+    assert disabled.status_code == 409
+    assert disabled.json()["detail"]["code"] == "RD_COLLABORATION_DEPLOYMENT_DISABLED"
+    disabled_draft = client.post(
+        "/api/delivery/rd-task-executor-policies",
+        headers=auth_headers(),
+        json=valid_policy_payload(delivery_target="deployed", status="disabled"),
+    )
+    assert disabled_draft.status_code == 409
+    assert disabled_draft.json()["detail"]["code"] == "RD_COLLABORATION_DEPLOYMENT_DISABLED"
+
+    activation = client.patch(
+        f"/api/delivery/rd-task-executor-policies/{policy['id']}",
+        headers=auth_headers(),
+        json={
+            "changes": {"delivery_target": "deployed"},
+            "expected_policy_version": policy["policy_version"],
+        },
+    )
+    assert activation.status_code == 409
+    assert activation.json()["detail"]["code"] == "RD_COLLABORATION_DEPLOYMENT_DISABLED"
+
+    monkeypatch.setenv("RD_COLLABORATION_DEPLOYMENT_ENABLED", "true")
+    enabled = client.patch(
+        f"/api/delivery/rd-task-executor-policies/{policy['id']}",
+        headers=auth_headers(),
+        json={
+            "changes": {"delivery_target": "deployed"},
+            "expected_policy_version": policy["policy_version"],
+        },
+    )
+    assert enabled.status_code == 200
+    assert enabled.json()["data"]["policy"]["strategy_config"]["delivery_target"] == "deployed"
+
+    monkeypatch.delenv("RD_COLLABORATION_DEPLOYMENT_ENABLED")
+    stopped = client.patch(
+        f"/api/delivery/rd-task-executor-policies/{policy['id']}",
+        headers=auth_headers(),
+        json={
+            "changes": {"status": "disabled"},
+            "expected_policy_version": enabled.json()["data"]["policy"]["policy_version"],
+        },
+    )
+    assert stopped.status_code == 200
+    assert stopped.json()["data"]["policy"]["status"] == "disabled"
+    stopped_policy = stopped.json()["data"]["policy"]
+    disabled_mutation = client.patch(
+        f"/api/delivery/rd-task-executor-policies/{policy['id']}",
+        headers=auth_headers(),
+        json={
+            "changes": {"name": "Disabled deployed policy mutation"},
+            "expected_policy_version": stopped_policy["policy_version"],
+        },
+    )
+    assert disabled_mutation.status_code == 409
+    assert disabled_mutation.json()["detail"]["code"] == "RD_COLLABORATION_DEPLOYMENT_DISABLED"
 
 
 def test_policy_rejects_model_gateway_executor_profile():

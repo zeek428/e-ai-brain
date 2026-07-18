@@ -37,6 +37,7 @@ from app.services.operational_records import (
     record_audit_event,
 )
 from app.services.product_scope import product_scope_filter, require_product_scope
+from app.services.rd_policy_validation import rd_collaboration_deployment_enabled
 from app.services.requirements import save_requirement_record, set_requirement_status
 from app.services.task_workflow_context import task_workflow_write_store
 
@@ -345,22 +346,49 @@ def _save_deployment_dispatch_transaction(
     current_store: Any,
     *,
     audit_events: list[dict[str, Any]],
+    collaboration_run_id: str | None = None,
     deployment: dict[str, Any],
     outbox_event: dict[str, Any],
     requirements: list[dict[str, Any]],
     run: dict[str, Any],
     steps: list[dict[str, Any]],
-) -> None:
+) -> dict[str, dict[str, Any]] | None:
     repository = getattr(current_store, "repository", None)
-    save_transaction = getattr(repository, "create_deployment_dispatch_transaction", None)
-    if callable(save_transaction):
-        save_transaction(
+    save_policy_controlled_transaction = getattr(
+        repository,
+        "create_rd_policy_controlled_deployment_dispatch_transaction",
+        None,
+    )
+    state: dict[str, dict[str, Any]] | None = None
+    if collaboration_run_id and callable(save_policy_controlled_transaction):
+        state = save_policy_controlled_transaction(
             audit_events=audit_events,
+            collaboration_run_id=collaboration_run_id,
             deployment=deployment,
             outbox_event=outbox_event,
             requirements=requirements,
             run=run,
             steps=steps,
+        )
+    else:
+        save_transaction = getattr(repository, "create_deployment_dispatch_transaction", None)
+        if callable(save_transaction):
+            save_transaction(
+                audit_events=audit_events,
+                deployment=deployment,
+                outbox_event=outbox_event,
+                requirements=requirements,
+                run=run,
+                steps=steps,
+            )
+    if state is not None:
+        collaboration_run = state["run"]
+        product_version = state["product_version"]
+        read_memory_dict(current_store, "rd_collaboration_runs")[collaboration_run["id"]] = (
+            collaboration_run
+        )
+        read_memory_dict(current_store, "product_versions")[product_version["id"]] = (
+            product_version
         )
     read_memory_dict(current_store, "deployment_requests")[deployment["id"]] = deployment
     read_memory_dict(current_store, "deployment_runs")[run["id"]] = run
@@ -371,6 +399,7 @@ def _save_deployment_dispatch_transaction(
     step_store = read_memory_dict(current_store, "deployment_run_steps")
     for step in steps:
         step_store[step["id"]] = step
+    return state
 
 
 def _save_deployment_dispatch_failure_transaction(
@@ -754,6 +783,195 @@ def _deployment_by_id(current_store: Any, deployment_request_id: str) -> dict[st
     if deployment is None:
         raise api_error(404, "NOT_FOUND", "Deployment request not found")
     return deployment
+
+
+def _rd_collaboration_run(current_store: Any, collaboration_run_id: str) -> dict[str, Any]:
+    repository = getattr(current_store, "repository", None)
+    get_run = getattr(repository, "get_rd_collaboration_run", None)
+    run = get_run(collaboration_run_id) if callable(get_run) else None
+    if run is None:
+        run = read_memory_dict(current_store, "rd_collaboration_runs").get(collaboration_run_id)
+    if run is None:
+        raise api_error(404, "NOT_FOUND", "Collaboration run not found")
+    return dict(run)
+
+
+def _rd_collaboration_requirement_ids(
+    current_store: Any, *, collaboration_run_id: str
+) -> list[str]:
+    repository = getattr(current_store, "repository", None)
+    list_requirements = getattr(repository, "list_rd_collaboration_run_requirements", None)
+    rows = (
+        list_requirements(collaboration_run_id)
+        if callable(list_requirements)
+        else [
+            row
+            for row in read_memory_dict(current_store, "rd_collaboration_run_requirements").values()
+            if row.get("collaboration_run_id") == collaboration_run_id
+        ]
+    )
+    return sorted(
+        {str(row.get("requirement_id") or "") for row in rows if row.get("requirement_id")}
+    )
+
+
+def _require_policy_controlled_deployment_boundary(
+    current_store: Any,
+    *,
+    collaboration_run_id: str,
+    product_id: str,
+    requirement_ids: list[str],
+    version_id: str,
+) -> dict[str, Any]:
+    if not rd_collaboration_deployment_enabled():
+        raise api_error(
+            409,
+            "RD_COLLABORATION_DEPLOYMENT_DISABLED",
+            "Policy-controlled collaboration deployment is disabled",
+        )
+    run = _rd_collaboration_run(current_store, collaboration_run_id)
+    if (
+        run.get("status") != "ready_for_release"
+        or run.get("delivery_target") != "deployed"
+        or not run.get("delivery_evidence_id")
+        or not run.get("delivery_evidence_hash")
+    ):
+        raise api_error(
+            409,
+            "RD_DELIVERY_EVIDENCE_INCOMPLETE",
+            "Collaboration run is not a trusted deployed-target ready-for-release boundary",
+        )
+    if run.get("product_id") != product_id or run.get("product_version_id") != version_id:
+        raise api_error(
+            409,
+            "RD_DEPLOYMENT_SCOPE_MISMATCH",
+            "Deployment product/version must match the frozen collaboration run",
+        )
+    frozen_requirement_ids = _rd_collaboration_requirement_ids(
+        current_store, collaboration_run_id=collaboration_run_id
+    )
+    if frozen_requirement_ids != sorted(set(requirement_ids)):
+        raise api_error(
+            409,
+            "RD_DEPLOYMENT_SCOPE_MISMATCH",
+            "Deployment requirements must exactly match the frozen collaboration scope",
+            {
+                "collaboration_run_id": collaboration_run_id,
+                "frozen_requirement_ids": frozen_requirement_ids,
+            },
+        )
+    return run
+
+
+def _enter_policy_controlled_deployment(
+    current_store: Any,
+    *,
+    collaboration_run_id: str,
+    deployment_request_id: str,
+) -> dict[str, Any]:
+    repository = getattr(current_store, "repository", None)
+    enter = getattr(repository, "enter_rd_policy_controlled_deployment", None)
+    if callable(enter):
+        try:
+            result = enter(
+                collaboration_run_id=collaboration_run_id,
+                deployment_request_id=deployment_request_id,
+            )
+        except Exception as exc:  # repository errors are translated at this boundary.
+            code = getattr(exc, "code", "RD_DELIVERY_EVIDENCE_INCOMPLETE")
+            raise api_error(409, code, str(exc)) from exc
+        run = dict(result["run"])
+        version = dict(result["product_version"])
+        read_memory_dict(current_store, "rd_collaboration_runs")[run["id"]] = run
+        read_memory_dict(current_store, "product_versions")[version["id"]] = version
+        return {"run": run, "product_version": version}
+    run = _rd_collaboration_run(current_store, collaboration_run_id)
+    version = read_memory_dict(current_store, "product_versions").get(
+        str(run.get("product_version_id") or "")
+    )
+    if version is None or run.get("status") != "ready_for_release":
+        raise api_error(
+            409,
+            "RD_DELIVERY_EVIDENCE_INCOMPLETE",
+            "Collaboration run can no longer enter deployment",
+        )
+    now = datetime.now(UTC).isoformat()
+    run.update(
+        {
+            "status": "deploying",
+            "version": int(run.get("version") or 0) + 1,
+            "updated_at": now,
+        }
+    )
+    version = {**version, "status": "deploying", "updated_at": now}
+    read_memory_dict(current_store, "rd_collaboration_runs")[collaboration_run_id] = run
+    read_memory_dict(current_store, "product_versions")[str(version["id"])] = version
+    return {"run": dict(run), "product_version": dict(version)}
+
+
+def _project_policy_controlled_deployment_result(
+    current_store: Any,
+    *,
+    deployment: dict[str, Any],
+    result_status: str,
+) -> dict[str, Any] | None:
+    gate_summary = deployment.get("gate_summary")
+    collaboration_run_id = str(deployment.get("collaboration_run_id") or "") or (
+        str(gate_summary.get("rd_collaboration_run_id") or "")
+        if isinstance(gate_summary, dict)
+        else ""
+    )
+    if not collaboration_run_id:
+        return None
+    repository = getattr(current_store, "repository", None)
+    project = getattr(repository, "project_rd_policy_controlled_deployment_result", None)
+    if callable(project):
+        try:
+            result = project(
+                collaboration_run_id=collaboration_run_id,
+                deployment_request_id=str(deployment["id"]),
+                result_status=result_status,
+            )
+        except Exception as exc:  # repository errors are translated at this boundary.
+            code = getattr(exc, "code", "RD_DELIVERY_EVIDENCE_INCOMPLETE")
+            raise api_error(409, code, str(exc)) from exc
+        run = dict(result["run"])
+        version = dict(result["product_version"])
+        read_memory_dict(current_store, "rd_collaboration_runs")[run["id"]] = run
+        read_memory_dict(current_store, "product_versions")[version["id"]] = version
+        return {"run": run, "product_version": version}
+    run = _rd_collaboration_run(current_store, collaboration_run_id)
+    version = read_memory_dict(current_store, "product_versions").get(
+        str(run.get("product_version_id") or "")
+    )
+    if version is None:
+        raise api_error(409, "RD_DELIVERY_EVIDENCE_INCOMPLETE", "Product version is unavailable")
+    now = datetime.now(UTC).isoformat()
+    if result_status == "success":
+        run.update(
+            {
+                "completion_reason": "deployed",
+                "completed_at": now,
+                "status": "completed",
+                "version": int(run.get("version") or 0) + 1,
+                "updated_at": now,
+            }
+        )
+        version = {**version, "status": "released", "updated_at": now}
+    else:
+        run.update(
+            {
+                "completion_reason": None,
+                "completed_at": None,
+                "status": "ready_for_release",
+                "version": int(run.get("version") or 0) + 1,
+                "updated_at": now,
+            }
+        )
+        version = {**version, "status": "ready_for_release", "updated_at": now}
+    read_memory_dict(current_store, "rd_collaboration_runs")[collaboration_run_id] = run
+    read_memory_dict(current_store, "product_versions")[str(version["id"])] = version
+    return {"run": dict(run), "product_version": dict(version)}
 
 
 def _latest_deployment_run(current_store: Any, deployment_request_id: str) -> dict[str, Any] | None:
@@ -1931,6 +2149,7 @@ def create_deployment_request_response(
     )
     write_store = task_workflow_write_store(current_store)
     requirement_ids = _requirement_ids_from_payload(payload.requirement_ids)
+    collaboration_run_id = str(getattr(payload, "collaboration_run_id", "") or "").strip() or None
     ensure_enum(payload.risk_level, DEPLOYMENT_RISK_LEVELS, "risk_level")
     deploy_window_start = parse_optional_time(payload.deploy_window_start, "deploy_window_start")
     deploy_window_end = parse_optional_time(payload.deploy_window_end, "deploy_window_end")
@@ -1954,6 +2173,17 @@ def create_deployment_request_response(
         requirement_ids=requirement_ids,
         user=user,
         version_id=payload.version_id,
+    )
+    policy_controlled_run = (
+        _require_policy_controlled_deployment_boundary(
+            write_store,
+            collaboration_run_id=collaboration_run_id,
+            product_id=payload.product_id,
+            requirement_ids=requirement_ids,
+            version_id=payload.version_id,
+        )
+        if collaboration_run_id is not None
+        else None
     )
     deployment_scheme = _resolve_deployment_scheme(
         write_store,
@@ -2000,6 +2230,14 @@ def create_deployment_request_response(
         "total_waves": _rollout_wave_total(deployment_scheme),
         "quality_gate_run_id": None,
     }
+    if policy_controlled_run is not None:
+        deployment["collaboration_run_id"] = collaboration_run_id
+        deployment["gate_summary"] = {
+            **deployment["gate_summary"],
+            "rd_collaboration_run_id": collaboration_run_id,
+            "rd_delivery_evidence_hash": policy_controlled_run["delivery_evidence_hash"],
+            "rd_delivery_evidence_id": policy_controlled_run["delivery_evidence_id"],
+        }
     from app.services.quality_gates import create_pre_deploy_quality_gate
 
     pre_deploy_gate = create_pre_deploy_quality_gate(
@@ -2038,6 +2276,7 @@ def create_deployment_request_response(
         subject_type="deployment_request",
         subject_id=deployment_id,
         payload={
+            "collaboration_run_id": collaboration_run_id,
             "deployment_scheme_id": deployment_scheme["id"],
             "product_id": payload.product_id,
             "requirement_ids": requirement_ids,
@@ -2305,6 +2544,12 @@ def start_deployment_request_response(
     write_store = task_workflow_write_store(current_store)
     deployment = dict(_deployment_by_id(write_store, deployment_request_id))
     require_product_scope(user, deployment.get("product_id"))
+    gate_summary = deployment.get("gate_summary")
+    collaboration_run_id = str(deployment.get("collaboration_run_id") or "") or (
+        str(gate_summary.get("rd_collaboration_run_id") or "")
+        if isinstance(gate_summary, dict)
+        else ""
+    )
     if deployment.get("status") in {"deploying", "cancelling"}:
         active_run = _latest_deployment_run(write_store, deployment_request_id)
         if active_run is not None and active_run.get("status") in {
@@ -2315,6 +2560,14 @@ def start_deployment_request_response(
             return _deployment_public_response(write_store, deployment)
     if deployment.get("status") not in DEPLOYMENT_STARTABLE_STATUSES:
         raise api_error(409, "DEPLOYMENT_STATE_INVALID", "Deployment cannot be started")
+    if collaboration_run_id:
+        _require_policy_controlled_deployment_boundary(
+            write_store,
+            collaboration_run_id=collaboration_run_id,
+            product_id=str(deployment.get("product_id") or ""),
+            requirement_ids=[str(item) for item in deployment.get("requirement_ids") or []],
+            version_id=str(deployment.get("version_id") or ""),
+        )
     if deployment.get("environment") == "prod":
         from app.services.production_change_controls import (
             production_deployment_can_start,
@@ -2559,15 +2812,22 @@ def start_deployment_request_response(
         from_statuses=DEPLOYMENT_ELIGIBLE_REQUIREMENT_STATUSES,
         target_status="deploying",
     )
-    _save_deployment_dispatch_transaction(
+    collaboration_state = _save_deployment_dispatch_transaction(
         write_store,
         audit_events=[deployment_event, run_event, *requirement_events],
+        collaboration_run_id=collaboration_run_id or None,
         deployment=deployment,
         outbox_event=outbox_event,
         requirements=requirements,
         run=run,
         steps=steps,
     )
+    if collaboration_run_id and collaboration_state is None:
+        _enter_policy_controlled_deployment(
+            write_store,
+            collaboration_run_id=collaboration_run_id,
+            deployment_request_id=deployment_request_id,
+        )
     if _should_process_execution_outbox_inline(write_store):
         process_execution_outbox_events(
             write_store,
@@ -2970,6 +3230,12 @@ def _record_deployment_outbox_failure(
         run=run,
         steps=steps,
     )
+    if terminal:
+        _project_policy_controlled_deployment_result(
+            current_store,
+            deployment=deployment,
+            result_status="rolled_back" if operation == "rollback" else "failed",
+        )
 
 
 def _dispatch_git_writeback_outbox_event(
@@ -3624,6 +3890,11 @@ def complete_deployment_request_response(
                 run=run,
                 user=user,
             )
+    _project_policy_controlled_deployment_result(
+        write_store,
+        deployment=deployment,
+        result_status=payload.status,
+    )
     return _deployment_public_response(write_store, deployment)
 
 
@@ -3749,6 +4020,11 @@ def cancel_deployment_request_response(
             },
         )
         save_requirement_record(write_store, updated_requirement, audit_event=requirement_event)
+    _project_policy_controlled_deployment_result(
+        write_store,
+        deployment=deployment,
+        result_status="cancelled",
+    )
     return _deployment_public_response(write_store, deployment)
 
 
@@ -4143,6 +4419,20 @@ def sync_deployment_runner_task(
                 run=run,
                 user={"id": runner_id},
             )
+    result_status = (
+        "success"
+        if task_status == "succeeded" and operation in {"deploy", "verify"}
+        else "rolled_back"
+        if task_status == "succeeded" and operation == "rollback"
+        else "cancelled"
+        if task_status == "cancelled"
+        else "failed"
+    )
+    _project_policy_controlled_deployment_result(
+        write_store,
+        deployment=deployment,
+        result_status=result_status,
+    )
 
 
 def _create_deployment_failure_bug(

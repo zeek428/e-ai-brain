@@ -38,6 +38,7 @@ from app.services.knowledge_search import memory_knowledge_search_candidates
 from app.services.operational_records import record_audit_event
 from app.services.rd_policy_validation import (
     PolicyValidationError,
+    rd_collaboration_deployment_enabled,
     unified_policy_contract,
     unified_policy_from_record,
     validate_unified_policy_payload,
@@ -783,6 +784,23 @@ def _policy_from_payload(
         unified = validate_unified_policy_payload({**(previous or {}), **data})
     except PolicyValidationError as exc:
         raise api_error(400, exc.code, str(exc)) from exc
+    safe_deactivation = (
+        existing is not None
+        and previous is not None
+        and previous["delivery_target"] == "deployed"
+        and previous["status"] != "disabled"
+        and unified == {**previous, "status": "disabled"}
+    )
+    if (
+        unified["delivery_target"] == "deployed"
+        and not safe_deactivation
+        and not rd_collaboration_deployment_enabled()
+    ):
+        raise api_error(
+            409,
+            "RD_COLLABORATION_DEPLOYMENT_DISABLED",
+            "Active deployed-target policies require the P1 deployment feature flag",
+        )
     task_types = unified["matching_config"].get("task_types")
     task_type = (
         str(task_types[0]).strip() if isinstance(task_types, list) and task_types else "unified"

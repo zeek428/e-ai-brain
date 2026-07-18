@@ -225,6 +225,7 @@ Content-Type: application/json
 {
   "product_id": "product_001",
   "version_id": "version_001",
+  "collaboration_run_id": "rd_collaboration_run_001",
   "deployment_scheme_id": "deployment_scheme_001",
   "title": "生产部署",
   "requirement_ids": ["requirement_001"],
@@ -239,7 +240,7 @@ Content-Type: application/json
 }
 ```
 
-服务端校验方案属于同产品和环境且处于 active，产品和版本归属正确，需求必须处于 `testing` 或 `ready_for_release`，同版本不存在未关闭 blocker/critical Bug；如传入 `release_readiness_task_id`，必须是同产品版本下已完成的 `release_readiness` 任务。未显式传方案时只允许解析同产品、同环境的 active 默认方案。创建成功后写入 `deployment_requests` 和 `deployment_request_requirements`，并固化 `scheme_snapshot`；后续修改方案不会改变既有部署单。初始状态为 `pending_ops`，同时记录 `deployment_request.created` 审计事件。
+`collaboration_run_id` 是可选 P1 字段，默认部署不传。传入时仅在 `RD_COLLABORATION_DEPLOYMENT_ENABLED=true` 下受理，且必须指向同产品、同版本、需求集合逐项相等、已经固化可信交付证据且处于 `ready_for_release` 的 `delivery_target=deployed` 协作运行；否则分别返回 `RD_COLLABORATION_DEPLOYMENT_DISABLED`、`RD_DELIVERY_EVIDENCE_INCOMPLETE` 或 `RD_DEPLOYMENT_SCOPE_MISMATCH`。服务端同时校验方案属于同产品和环境且处于 active，产品和版本归属正确，需求必须处于 `testing` 或 `ready_for_release`，同版本不存在未关闭 blocker/critical Bug；如传入 `release_readiness_task_id`，必须是同产品版本下已完成的 `release_readiness` 任务。未显式传方案时只允许解析同产品、同环境的 active 默认方案。创建成功后写入 `deployment_requests` 和 `deployment_request_requirements`，固化 `scheme_snapshot`，并以部署单外键、门禁摘要和 `deployment_request.created` 审计共同保存协作运行及证据引用；后续修改方案不会改变既有部署单。初始状态为 `pending_ops`。
 
 具备 `deployment.execute` 的发布负责人或运维人员可启动部署，执行方式完全取自部署单方案快照，客户端无需再指定执行器：
 
@@ -252,7 +253,7 @@ Content-Type: application/json
 
 启动前会执行只读预检并创建前置质量门禁：严格模式必须处于 `deploy_window_start/end` 内，产品/版本/方案快照仍有效，Commit、制品版本和 `artifact_digest` 完整，阻塞 Bug/发布评估通过，回滚配置存在，Runner/Jenkins 就绪且产品环境授权仍 active。任何阻断都会保持 `pending_ops` 并返回结构化阻断项。
 
-启动通过后，部署单、首波 `deployment_runs`、`deployment_run_steps`、关联需求状态、审计和 `execution_outbox_events` 在同一数据库事务提交。API 不直接等待 Runner/Jenkins；execution worker 按幂等键认领派发。执行矩阵如下：
+启动通过后，部署单、首波 `deployment_runs`、`deployment_run_steps`、关联需求状态、审计和 `execution_outbox_events` 在同一数据库事务提交。带 `collaboration_run_id` 的 P1 部署会再次校验冻结边界，并在同一事务把协作运行和产品版本推进为 `deploying`；事务失败时任何一侧都不得可见。API 不直接等待 Runner/Jenkins；execution worker 按幂等键认领派发。执行矩阵如下：
 
 | 部署方式 | 启动行为 | 结果来源 |
 | --- | --- | --- |

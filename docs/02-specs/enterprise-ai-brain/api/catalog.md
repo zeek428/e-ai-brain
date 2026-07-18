@@ -217,7 +217,7 @@
 | DevOps | GET | `/api/devops/deployments` | 查询运维部署单；按产品 scope 在 PostgreSQL 层筛选、排序、分页并返回查询耗时。 |
 | DevOps | GET | `/api/devops/deployments/{deployment_request_id}` | 查询部署详情，聚合方案快照、门禁、波次、部署/验证/回滚运行、步骤证据、健康、派发和审计。 |
 | DevOps | GET/POST/PATCH/DELETE | `/api/devops/deployment-schemes`, `/api/devops/deployment-schemes/{scheme_id}` | 管理人工/SSH/Docker/Jenkins 方案、发布策略、窗口、健康检查和回滚；分页列表使用 PostgreSQL read model。 |
-| DevOps | POST | `/api/devops/deployments` | 从测试完成或待发布需求发起运维部署单；校验产品/版本/需求范围、阻塞 Bug 和发布评估任务。 |
+| DevOps | POST | `/api/devops/deployments` | 从测试完成或待发布需求发起运维部署单；校验产品/版本/需求范围、阻塞 Bug 和发布评估任务。P1 可选 `collaboration_run_id` 仅在部署能力标志开启且冻结协作范围、可信交付证据匹配时可用。 |
 | DevOps | POST | `/api/devops/deployments/{deployment_request_id}/start` | 启动部署单，记录部署运行并把关联需求推进到 `deploying`。 |
 | DevOps | GET/POST | `/api/devops/deployments/{deployment_request_id}/connectivity-probe` | 获取或触发自动部署连通性预检；Runner 使用本地受控探测任务，响应返回任务、排队/运行状态、剩余等待、下次查询时间、失败分类、安全重试条件和日志链接；Jenkins 校验 API 与 Job。 |
 | DevOps | GET | `/api/devops/deployments/{deployment_request_id}/connectivity-probe/logs` | 查询当前部署单关联 Runner 连通性探测任务的脱敏日志；按部署执行权限和产品 scope 校验。 |

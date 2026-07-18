@@ -9,7 +9,10 @@ from app.core.persistence_repositories import install_snapshot_repositories
 from app.core.persistence_runtime import PostgresRuntimeStore as PostgresRuntimeStore
 from app.core.persistent_memory_store import PersistentMemoryStore as PersistentMemoryStore
 from app.core.product_version_dashboard_read_model import product_version_dashboard_source_rows
-from app.core.repositories.rd_collaboration import RdCollaborationReadRepository
+from app.core.repositories.rd_collaboration import (
+    RdCollaborationReadRepository,
+    RdCollaborationRepositoryError,
+)
 
 
 class PostgresSnapshotRepository(RdCollaborationReadRepository):
@@ -426,6 +429,10 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
                 self._apply_additive_migration(
                     cursor,
                     "119_rd_role_experience_governance_fences.sql",
+                )
+                self._apply_additive_migration(
+                    cursor,
+                    "120_rd_policy_controlled_deployment.sql",
                 )
 
     def next_id(self, prefix: str) -> str:
@@ -3304,6 +3311,53 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
             run=run,
             steps=steps,
         )
+
+    def create_rd_policy_controlled_deployment_dispatch_transaction(
+        self,
+        *,
+        audit_events: list[dict[str, Any]],
+        collaboration_run_id: str,
+        deployment: dict[str, Any],
+        outbox_event: dict[str, Any],
+        requirements: list[dict[str, Any]],
+        run: dict[str, Any],
+        steps: list[dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        """Atomically enter an approved collaboration deployment and dispatch it.
+
+        The regular deployment domain retains ownership of the request, run,
+        requirement and Outbox rows.  This bridge only shares its transaction
+        with the frozen collaboration state transition, so either both domains
+        observe the deployment or neither does.
+        """
+        existing_run_id = deployment.get("collaboration_run_id")
+        if existing_run_id not in {None, collaboration_run_id}:
+            raise RdCollaborationRepositoryError(
+                "RD_DEPLOYMENT_SCOPE_MISMATCH",
+                "deployment bundle is bound to another collaboration run",
+            )
+        persisted_deployment = {
+            **deployment,
+            "collaboration_run_id": collaboration_run_id,
+        }
+        governance_writes = self._execution_governance_read_repository._write_repository
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                state = self._enter_rd_policy_controlled_deployment_cursor(
+                    cursor,
+                    collaboration_run_id=collaboration_run_id,
+                    deployment_request_id=str(persisted_deployment["id"]),
+                )
+                governance_writes._create_deployment_dispatch_transaction_cursor(
+                    cursor,
+                    audit_events=audit_events,
+                    deployment=persisted_deployment,
+                    outbox_event=outbox_event,
+                    requirements=requirements,
+                    run=run,
+                    steps=steps,
+                )
+                return state
 
     def save_deployment_dispatch_failure_transaction(
         self,

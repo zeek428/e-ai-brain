@@ -420,6 +420,13 @@ def version_delivery_stage_overview(
         deployment_detail_parts.append(
             f"最近 {latest_deployment_label} · {latest_deployment_time or '-'}"
         )
+        latest_gate_summary = latest_deployment.get("gate_summary")
+        if isinstance(latest_gate_summary, dict) and latest_gate_summary.get(
+            "rd_collaboration_run_id"
+        ):
+            deployment_detail_parts.append(
+                f"受控协作运行 {latest_gate_summary['rd_collaboration_run_id']}"
+            )
     deployment_detail = " · ".join(deployment_detail_parts)
 
     return [

@@ -382,27 +382,49 @@ class ExecutionGovernanceWriteRepository:
     ) -> None:
         with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
-                self._devops_repository.upsert_deployment_requests(
+                self._create_deployment_dispatch_transaction_cursor(
                     cursor,
-                    {str(deployment["id"]): deployment},
+                    audit_events=audit_events,
+                    deployment=deployment,
+                    outbox_event=outbox_event,
+                    requirements=requirements,
+                    run=run,
+                    steps=steps,
                 )
-                self._devops_repository.upsert_deployment_runs(
-                    cursor,
-                    {str(run["id"]): run},
-                )
-                self.upsert_deployment_run_steps(
-                    cursor,
-                    {str(step["id"]): step for step in steps},
-                )
-                self.upsert_execution_outbox_events(
-                    cursor,
-                    {str(outbox_event["id"]): outbox_event},
-                )
-                self._requirement_repository.upsert_requirements(
-                    cursor,
-                    {str(requirement["id"]): requirement for requirement in requirements},
-                )
-                self._upsert_audit_events(cursor, audit_events)
+
+    def _create_deployment_dispatch_transaction_cursor(
+        self,
+        cursor: Any,
+        *,
+        audit_events: list[dict[str, Any]],
+        deployment: dict[str, Any],
+        outbox_event: dict[str, Any],
+        requirements: list[dict[str, Any]],
+        run: dict[str, Any],
+        steps: list[dict[str, Any]],
+    ) -> None:
+        """Persist the existing deployment dispatch bundle on a caller-owned cursor."""
+        self._devops_repository.upsert_deployment_requests(
+            cursor,
+            {str(deployment["id"]): deployment},
+        )
+        self._devops_repository.upsert_deployment_runs(
+            cursor,
+            {str(run["id"]): run},
+        )
+        self.upsert_deployment_run_steps(
+            cursor,
+            {str(step["id"]): step for step in steps},
+        )
+        self.upsert_execution_outbox_events(
+            cursor,
+            {str(outbox_event["id"]): outbox_event},
+        )
+        self._requirement_repository.upsert_requirements(
+            cursor,
+            {str(requirement["id"]): requirement for requirement in requirements},
+        )
+        self._upsert_audit_events(cursor, audit_events)
 
     def save_deployment_dispatch_failure_transaction(
         self,

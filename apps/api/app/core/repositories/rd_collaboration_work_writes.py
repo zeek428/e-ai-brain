@@ -283,6 +283,207 @@ class RdCollaborationWorkWriteMixin:
             raise RuntimeError("ready-for-release target completion was not persisted")
         return {"run": completed, "product_version": state["product_version"]}
 
+    def enter_rd_policy_controlled_deployment(
+        self,
+        *,
+        collaboration_run_id: str,
+        deployment_request_id: str,
+    ) -> dict[str, dict[str, Any]]:
+        """Enter the existing deployment domain only from a frozen ready boundary."""
+        return self._in_transaction(
+            lambda cursor: self._enter_rd_policy_controlled_deployment_cursor(
+                cursor,
+                collaboration_run_id=collaboration_run_id,
+                deployment_request_id=deployment_request_id,
+            )
+        )
+
+    def _enter_rd_policy_controlled_deployment_cursor(
+        self,
+        cursor: Any,
+        *,
+        collaboration_run_id: str,
+        deployment_request_id: str,
+    ) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            "SELECT * FROM rd_collaboration_runs WHERE id = %s FOR UPDATE",
+            (collaboration_run_id,),
+        )
+        run = _row_dict(cursor, cursor.fetchone())
+        if run is None:
+            raise RdCollaborationRepositoryError("NOT_FOUND", "collaboration run does not exist")
+        if (
+            run.get("delivery_target") != "deployed"
+            or run.get("status") != "ready_for_release"
+            or not run.get("delivery_evidence_id")
+            or not run.get("delivery_evidence_hash")
+        ):
+            raise RdCollaborationRepositoryError(
+                "RD_DELIVERY_EVIDENCE_INCOMPLETE",
+                "deployment requires a deployed-target run with frozen ready evidence",
+            )
+        cursor.execute(
+            "SELECT * FROM product_versions WHERE id = %s FOR UPDATE",
+            (run["product_version_id"],),
+        )
+        version = _row_dict(cursor, cursor.fetchone())
+        if version is None or version.get("status") != "ready_for_release":
+            raise RdCollaborationRepositoryError(
+                "RD_DELIVERY_EVIDENCE_INCOMPLETE",
+                "product version is not at the ready-for-release boundary",
+            )
+        cursor.execute(
+            """
+            UPDATE product_versions SET status = 'deploying', updated_at = now()
+            WHERE id = %s RETURNING *
+            """,
+            (version["id"],),
+        )
+        persisted_version = _row_dict(cursor, cursor.fetchone())
+        cursor.execute(
+            """
+            UPDATE rd_collaboration_runs
+            SET status = 'deploying', version = version + 1, updated_at = now()
+            WHERE id = %s AND status = 'ready_for_release'
+            RETURNING *
+            """,
+            (collaboration_run_id,),
+        )
+        persisted_run = _row_dict(cursor, cursor.fetchone())
+        if persisted_version is None or persisted_run is None:
+            raise RuntimeError("policy-controlled deployment transition was not persisted")
+        cursor.execute(
+            """
+            INSERT INTO rd_collaboration_events (
+              id, collaboration_run_id, event_type, event_key,
+              subject_type, subject_id, payload_json
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
+            ON CONFLICT (collaboration_run_id, event_key) DO NOTHING
+            """,
+            (
+                str(uuid4()),
+                collaboration_run_id,
+                "rd_collaboration.deployment_entered",
+                f"rd-deployment:{deployment_request_id}:entered",
+                "deployment_request",
+                deployment_request_id,
+                Jsonb(
+                    {
+                        "delivery_evidence_id": run["delivery_evidence_id"],
+                        "delivery_evidence_hash": run["delivery_evidence_hash"],
+                    }
+                ),
+            ),
+        )
+        return {"run": persisted_run, "product_version": persisted_version}
+
+    def project_rd_policy_controlled_deployment_result(
+        self,
+        *,
+        collaboration_run_id: str,
+        deployment_request_id: str,
+        result_status: str,
+    ) -> dict[str, dict[str, Any]]:
+        """Project terminal existing-deployment evidence without changing its engine."""
+        return self._in_transaction(
+            lambda cursor: self._project_rd_policy_controlled_deployment_result_cursor(
+                cursor,
+                collaboration_run_id=collaboration_run_id,
+                deployment_request_id=deployment_request_id,
+                result_status=result_status,
+            )
+        )
+
+    def _project_rd_policy_controlled_deployment_result_cursor(
+        self,
+        cursor: Any,
+        *,
+        collaboration_run_id: str,
+        deployment_request_id: str,
+        result_status: str,
+    ) -> dict[str, dict[str, Any]]:
+        if result_status not in {"success", "failed", "rolled_back", "cancelled"}:
+            raise RdCollaborationRepositoryError(
+                "RD_DEPLOYMENT_RESULT_INVALID", "deployment result cannot be projected"
+            )
+        cursor.execute(
+            "SELECT * FROM rd_collaboration_runs WHERE id = %s FOR UPDATE",
+            (collaboration_run_id,),
+        )
+        run = _row_dict(cursor, cursor.fetchone())
+        if run is None:
+            raise RdCollaborationRepositoryError("NOT_FOUND", "collaboration run does not exist")
+        cursor.execute(
+            "SELECT * FROM product_versions WHERE id = %s FOR UPDATE",
+            (run["product_version_id"],),
+        )
+        version = _row_dict(cursor, cursor.fetchone())
+        if version is None:
+            raise RdCollaborationRepositoryError(
+                "RD_DELIVERY_EVIDENCE_INCOMPLETE", "product version is unavailable"
+        )
+        succeeded = result_status == "success"
+        if (
+            succeeded
+            and run.get("status") == "completed"
+            and run.get("completion_reason") == "deployed"
+        ):
+            return {"run": run, "product_version": version}
+        if not succeeded and run.get("status") == "ready_for_release":
+            return {"run": run, "product_version": version}
+        if run.get("delivery_target") != "deployed" or run.get("status") != "deploying":
+            raise RdCollaborationRepositoryError(
+                "RD_DEPLOYMENT_RESULT_INVALID",
+                "deployment result is not bound to an active deployed-target collaboration run",
+            )
+        version_status = "released" if succeeded else "ready_for_release"
+        cursor.execute(
+            "UPDATE product_versions SET status = %s, updated_at = now() WHERE id = %s RETURNING *",
+            (version_status, version["id"]),
+        )
+        persisted_version = _row_dict(cursor, cursor.fetchone())
+        cursor.execute(
+            """
+            UPDATE rd_collaboration_runs
+            SET status = %s,
+                completion_reason = %s,
+                completed_at = CASE WHEN %s THEN now() ELSE NULL END,
+                version = version + 1,
+                updated_at = now()
+            WHERE id = %s AND status = 'deploying'
+            RETURNING *
+            """,
+            (
+                "completed" if succeeded else "ready_for_release",
+                "deployed" if succeeded else None,
+                succeeded,
+                collaboration_run_id,
+            ),
+        )
+        persisted_run = _row_dict(cursor, cursor.fetchone())
+        if persisted_version is None or persisted_run is None:
+            raise RuntimeError("policy-controlled deployment result was not persisted")
+        event_name = "completed" if succeeded else result_status
+        cursor.execute(
+            """
+            INSERT INTO rd_collaboration_events (
+              id, collaboration_run_id, event_type, event_key,
+              subject_type, subject_id, payload_json
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
+            ON CONFLICT (collaboration_run_id, event_key) DO NOTHING
+            """,
+            (
+                str(uuid4()),
+                collaboration_run_id,
+                f"rd_collaboration.deployment_{event_name}",
+                f"rd-deployment:{deployment_request_id}:{event_name}",
+                "deployment_request",
+                deployment_request_id,
+                Jsonb({"result_status": result_status}),
+            ),
+        )
+        return {"run": persisted_run, "product_version": persisted_version}
+
     def fence_work_item_runner_result(
         self,
         *,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from copy import deepcopy
 from typing import Any
 
@@ -22,6 +23,15 @@ class PolicyValidationError(ValueError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+def rd_collaboration_deployment_enabled() -> bool:
+    """Read the P1 deployment bridge flag without changing P0 delivery defaults."""
+    return os.getenv("RD_COLLABORATION_DEPLOYMENT_ENABLED", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
 
 
 def _non_blank(value: Any, field: str) -> str:

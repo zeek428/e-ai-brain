@@ -892,6 +892,8 @@ v1 基线迁移 `066_rd_task_executor_policies.sql` 新增 `rd_task_executor_pol
 
 `101_deployment_strategies.sql` 新增 `deployment_schemes`，为部署单和运行记录补充方案快照、执行方式/通道、Runner task、插件调用、统一日志与同步租约字段，为 Runner 补充 `capabilities` 并允许 `executor_type=deployment`；迁移历史部署单到默认人工方案，新增 `deployment.scheme.manage` 权限。SSH/Docker 的机器和密钥配置不进入数据库，只通过 Runner 心跳上报脱敏目标摘要。
 
+`120_rd_policy_controlled_deployment.sql` 将协作运行状态约束扩展为可表达 P1 `ready_for_release/deploying` 边界，为 deployed-target 活动运行建立索引，并在 `deployment_requests.rd_collaboration_run_id` 上以外键和索引固化部署单归属；默认 `RD_COLLABORATION_DEPLOYMENT_ENABLED=false`，只有既有部署域收到与冻结范围和可信交付证据精确匹配的 `collaboration_run_id` 后才可推进该边界，P0 默认不进入部署。
+
 v1 基线迁移 `050_code_inspection_remediation_tasks.sql` 为代码巡检闭环补齐整改任务反链。v2.0 激活后 `created_task_ids/created_task_id` 仅作历史只读字段，兼容动作改为写入 `created_requirement_ids/created_requirement_id` 并把报告、finding、仓库、文件、行号、规则和修复建议作为正式需求证据；不得继续直接写入 `ai_tasks`。
 
 `055_code_inspection_native_scan.sql` 为 `code_inspection_reports` 增加 `scan_mode`、`scanner_name`、`is_full_scan`、`files_scanned`、`lines_scanned`、`rules_loaded` 和 `coverage_warning`，用于区分本地完整扫描、外部告警同步和平台触发扫描，并让报告详情可展示扫描覆盖率与规则版本。

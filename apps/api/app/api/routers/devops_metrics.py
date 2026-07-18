@@ -91,6 +91,7 @@ class JenkinsReleaseRequest(BaseModel):
 class DeploymentRequestCreate(BaseModel):
     product_id: str
     version_id: str
+    collaboration_run_id: str | None = None
     deployment_scheme_id: str | None = None
     title: str
     requirement_ids: list[str] = Field(default_factory=list)

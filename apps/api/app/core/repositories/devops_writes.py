@@ -318,7 +318,7 @@ class DevopsWriteRepository:
                   scheme_snapshot, assigned_ops_user, approved_by, started_at, finished_at,
                   failure_reason, created_by, created_at, updated_at,
                   window_enforcement, current_wave, total_waves, quality_gate_run_id,
-                  artifact_digest
+                  artifact_digest, rd_collaboration_run_id
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s,
@@ -327,7 +327,7 @@ class DevopsWriteRepository:
                   %s::jsonb, %s, %s, %s,
                   %s::jsonb, %s, %s, %s::timestamptz, %s::timestamptz,
                   %s, %s, COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now()),
-                  %s, %s, %s, %s, %s
+                  %s, %s, %s, %s, %s, %s
                 )
                 ON CONFLICT (id) DO UPDATE SET
                   product_id = EXCLUDED.product_id,
@@ -358,6 +358,7 @@ class DevopsWriteRepository:
                   total_waves = EXCLUDED.total_waves,
                   quality_gate_run_id = EXCLUDED.quality_gate_run_id,
                   artifact_digest = EXCLUDED.artifact_digest,
+                  rd_collaboration_run_id = EXCLUDED.rd_collaboration_run_id,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
@@ -393,6 +394,7 @@ class DevopsWriteRepository:
                     int(deployment_request.get("total_waves", 1)),
                     deployment_request.get("quality_gate_run_id"),
                     deployment_request.get("artifact_digest"),
+                    deployment_request.get("collaboration_run_id"),
                 ),
             )
             cursor.execute(
