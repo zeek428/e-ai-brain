@@ -1,4 +1,5 @@
 from importlib import import_module
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -37,6 +38,33 @@ def test_ai_task_graph_is_compiled_by_langgraph():
     assert result["node_path"] == EXPECTED_LANGGRAPH_NODE_PATH
     assert result["current_step"] == "interrupt_for_human_review"
     assert result["task_status"] == "waiting_review"
+
+
+def test_ai_task_graph_uses_a_stable_durable_thread_id() -> None:
+    from app.core.graph_checkpointer import build_checkpointer
+
+    graph_runtime = import_module("app.core.graph_runtime")
+    checkpointer = build_checkpointer(
+        SimpleNamespace(is_test_env=True, persistence_mode="memory", database_url=""),
+    )
+    graph = graph_runtime.build_ai_task_graph(checkpointer)
+    config = {"configurable": {"thread_id": "ai_task:task_001"}}
+
+    graph.invoke(
+        {
+            "current_step": "task_started",
+            "node_path": [],
+            "review_id": "review_001",
+            "task_id": "task_001",
+            "task_status": "running",
+            "task_type": "product_detail_design",
+        },
+        config=config,
+    )
+
+    checkpoint = graph.get_state(config)
+    assert checkpoint.values["task_id"] == "task_001"
+    assert checkpoint.config["configurable"]["thread_id"] == "ai_task:task_001"
 
 
 def auth_headers() -> dict[str, str]:
@@ -96,12 +124,18 @@ def test_starting_task_creates_graph_run_checkpoint_and_task_detail_projection()
     assert run["ai_task_id"] == task_id
     assert run["status"] == "interrupted"
     assert run["runtime"] == "langgraph"
+    assert run["subject_type"] == "ai_task"
+    assert run["subject_id"] == task_id
+    assert run["thread_id"] == f"ai_task:{task_id}"
+    assert run["graph_definition"] == "ai_task"
+    assert run["graph_version"] == "v1"
     assert run["node_path"] == EXPECTED_LANGGRAPH_NODE_PATH
     assert run["current_step"] == "interrupt_for_human_review"
     assert run["checkpoint_id"] == started["checkpoint_id"]
     assert run["state_snapshot"]["task_status"] == "waiting_review"
     assert run["state_snapshot"]["review_id"] == started["review_id"]
     assert run["state_snapshot"]["graph_runtime"]["package"] == "langgraph"
+    assert run["state_snapshot"]["graph_runtime"]["thread_id"] == f"ai_task:{task_id}"
     assert run["state_snapshot"]["graph_runtime"]["node_path"] == EXPECTED_LANGGRAPH_NODE_PATH
 
     task_detail = client.get(f"/api/ai-tasks/{task_id}", headers=headers).json()["data"]

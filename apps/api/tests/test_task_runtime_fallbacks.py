@@ -60,6 +60,28 @@ def test_graph_runtime_uses_memory_fallback_collections():
     assert current_store.graph_checkpoints[next_checkpoint["id"]] == next_checkpoint
 
 
+def test_legacy_graph_run_gains_stable_thread_metadata_on_next_checkpoint() -> None:
+    current_store = MinimalTaskStore()
+    task = {"id": "task_legacy", "status": "waiting_review", "task_type": "technical_solution"}
+    graph_run = {
+        "id": "graph_run_legacy",
+        "ai_task_id": task["id"],
+        "task_type": task["task_type"],
+        "status": "interrupted",
+    }
+
+    checkpoint = write_graph_checkpoint(
+        current_store,
+        graph_run=graph_run,
+        task=task,
+        current_step="interrupt_for_human_review",
+        state_snapshot={},
+    )
+
+    assert checkpoint["thread_id"] == "ai_task:task_legacy"
+    assert graph_run["graph_definition"] == "ai_task"
+
+
 def test_code_review_report_uses_memory_fallback_collection():
     current_store = MinimalTaskStore()
     task = {

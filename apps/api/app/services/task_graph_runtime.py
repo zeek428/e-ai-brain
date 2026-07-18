@@ -3,7 +3,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from app.core.graph_runtime import run_ai_task_graph
+from app.core.graph_runtime import (
+    AI_TASK_GRAPH_DEFINITION,
+    AI_TASK_GRAPH_VERSION,
+    ai_task_thread_id,
+    run_ai_task_graph,
+)
 
 
 def uses_repository_context(current_store: Any) -> bool:
@@ -46,6 +51,13 @@ def write_graph_checkpoint(
     current_step: str,
     state_snapshot: dict[str, Any],
 ) -> dict[str, Any]:
+    # Rows created before the durable-thread migration are upgraded lazily on
+    # their first legal state transition rather than failing a pending review.
+    graph_run.setdefault("subject_type", "ai_task")
+    graph_run.setdefault("subject_id", task["id"])
+    graph_run.setdefault("thread_id", ai_task_thread_id(str(task["id"])))
+    graph_run.setdefault("graph_definition", AI_TASK_GRAPH_DEFINITION)
+    graph_run.setdefault("graph_version", AI_TASK_GRAPH_VERSION)
     snapshot = current_store.snapshot(state_snapshot)
     if graph_run.get("runtime") and "graph_runtime" not in snapshot:
         snapshot["graph_runtime"] = {
@@ -57,6 +69,11 @@ def write_graph_checkpoint(
         "id": checkpoint_id,
         "graph_run_id": graph_run["id"],
         "ai_task_id": task["id"],
+        "subject_type": "ai_task",
+        "subject_id": task["id"],
+        "thread_id": graph_run["thread_id"],
+        "graph_definition": graph_run["graph_definition"],
+        "graph_version": graph_run["graph_version"],
         "current_step": current_step,
         "state_snapshot": current_store.snapshot(snapshot),
         "created_at": datetime.now(UTC).isoformat(),
@@ -103,9 +120,15 @@ def start_graph_run(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     graph_run_id = current_store.new_id("graph_run")
     graph_state = run_ai_task_graph(task, review_id=review_id)
+    thread_id = ai_task_thread_id(str(task["id"]))
     graph_run = {
         "id": graph_run_id,
         "ai_task_id": task["id"],
+        "subject_type": "ai_task",
+        "subject_id": task["id"],
+        "thread_id": thread_id,
+        "graph_definition": AI_TASK_GRAPH_DEFINITION,
+        "graph_version": AI_TASK_GRAPH_VERSION,
         "task_type": task["task_type"],
         "status": "interrupted",
         "runtime": graph_state["runtime"],
@@ -136,10 +159,6 @@ def start_graph_run(
 
 
 def graph_runs_for_task(current_store: Any, task_id: str) -> list[dict[str, Any]]:
-    runs = [
-        run
-        for run in _graph_run_rows(current_store).values()
-        if run["ai_task_id"] == task_id
-    ]
+    runs = [run for run in _graph_run_rows(current_store).values() if run["ai_task_id"] == task_id]
     runs.sort(key=lambda run: run["started_at"])
     return runs

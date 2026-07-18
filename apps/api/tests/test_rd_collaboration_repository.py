@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import psycopg
@@ -15,8 +16,10 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from psycopg import sql
 
+from app.core.graph_checkpointer import build_checkpointer
 from app.core.persistence import PostgresSnapshotRepository
 from app.core.persistence_runtime import PostgresRuntimeStore
+from app.core.rd_collaboration_graph import build_rd_collaboration_graph, rd_collaboration_thread_id
 from app.core.repositories.rd_collaboration import (
     RdCollaborationReadRepository,
     RdCollaborationRepositoryError,
@@ -24,6 +27,7 @@ from app.core.repositories.rd_collaboration import (
 )
 from app.main import app
 from app.services.rd_collaboration_decisions import answer_decision_request
+from app.services.rd_collaboration_graph_runtime import RdCollaborationGraphRuntime
 from app.services.rd_collaboration_planning import start_collaboration_run
 from app.services.rd_requirement_entry_adapters import create_or_link_rd_requirement
 from app.services.rd_work_item_scheduler import claim_work_item, review_work_item
@@ -122,6 +126,194 @@ def _insert_product_version(
             ),
         )
     return ids
+
+
+def test_postgres_checkpointer_restores_collaboration_cursor(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    settings = SimpleNamespace(
+        is_test_env=False,
+        persistence_mode="postgres",
+        database_url=repository.database_url,
+    )
+    first_checkpointer = build_checkpointer(settings)
+    config = {"configurable": {"thread_id": rd_collaboration_thread_id("run-checkpoint")}}
+    try:
+        first_graph = build_rd_collaboration_graph(first_checkpointer)
+        first_graph.invoke(
+            {
+                "collaboration_run_id": "run-checkpoint",
+                "current_step": "start",
+                "processed_event_ids": [],
+            },
+            config=config,
+        )
+        first_graph.invoke({"event_id": "event-1"}, config=config)
+
+        second_checkpointer = build_checkpointer(settings)
+        try:
+            restored = build_rd_collaboration_graph(second_checkpointer).get_state(config)
+        finally:
+            second_checkpointer.conn.close()
+    finally:
+        first_checkpointer.conn.close()
+
+    assert restored.values["collaboration_run_id"] == "run-checkpoint"
+    assert restored.values["processed_event_ids"] == ["event-1"]
+
+
+def test_incompatible_postgres_checkpoint_creates_a_human_takeover_decision(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="graph-checkpoint-takeover")
+    run_id = str(seeded["run"]["id"])
+    checkpointer = build_checkpointer(
+        SimpleNamespace(
+            is_test_env=False,
+            persistence_mode="postgres",
+            database_url=repository.database_url,
+        )
+    )
+    try:
+        runtime = RdCollaborationGraphRuntime(
+            PostgresRuntimeStore(repository),
+            checkpointer=checkpointer,
+        )
+        runtime.write_incompatible_checkpoint_for_test(run_id)
+
+        result = runtime.handle_event(
+            collaboration_run_id=run_id,
+            event_id="graph-checkpoint-event",
+            event_type="work_item.completed",
+        )
+    finally:
+        checkpointer.conn.close()
+
+    decision = repository.get_decision_request(f"graph-checkpoint-takeover:{run_id}")
+    assert result["checkpoint_status"] == "incompatible"
+    assert repository.get_rd_collaboration_run(run_id)["status"] == "waiting_human"
+    assert decision is not None
+    assert decision["decision_type"] == "graph_checkpoint_incompatible"
+
+
+def test_postgres_domain_event_retries_after_checkpoint_failure_without_duplicates(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="graph-checkpoint-retry")
+    run_id = str(seeded["run"]["id"])
+    checkpointer = build_checkpointer(
+        SimpleNamespace(
+            is_test_env=False,
+            persistence_mode="postgres",
+            database_url=repository.database_url,
+        )
+    )
+    try:
+        runtime = RdCollaborationGraphRuntime(
+            PostgresRuntimeStore(repository),
+            checkpointer=checkpointer,
+        )
+        runtime.fail_next_checkpoint_write()
+        first = runtime.handle_event(
+            collaboration_run_id=run_id,
+            event_id="graph-retry-event",
+            event_type="work_item.completed",
+        )
+        replay = runtime.handle_event(
+            collaboration_run_id=run_id,
+            event_id="graph-retry-event",
+            event_type="work_item.completed",
+        )
+    finally:
+        checkpointer.conn.close()
+
+    events = repository.list_rd_collaboration_events(run_id)
+    feedback = repository.list_role_feedback_records(run_id)
+    outbox = repository.list_execution_outbox_events(
+        aggregate_type="rd_collaboration_run",
+        aggregate_id=run_id,
+        status=None,
+    )
+    audit = repository.list_audit_events(subject_type="rd_collaboration_run", subject_id=run_id)
+    assert first["checkpoint_status"] == "failed"
+    assert replay["checkpoint_status"] == "persisted"
+    assert [event["id"] for event in events] == ["graph-retry-event"]
+    assert len(feedback) == 1
+    assert len(outbox) == 1
+    assert len(audit) == 1
+
+
+def test_postgres_workflow_rows_round_trip_stable_ai_task_thread_metadata(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _insert_product_version(repository, prefix="graph-thread-metadata")
+    requirement_id = "graph-thread-metadata-requirement"
+    task_id = "graph-thread-metadata-task"
+    graph_run_id = "graph-thread-metadata-run"
+    checkpoint_id = "graph-thread-metadata-checkpoint"
+    _insert_requirement(repository, ids, requirement_id=requirement_id, version_id=ids["version"])
+    repository.save_ai_tasks(
+        {
+            "ai_tasks": {
+                task_id: {
+                    "id": task_id,
+                    "brain_app_id": "rd_brain",
+                    "requirement_id": requirement_id,
+                    "task_type": "technical_solution",
+                    "title": "graph metadata",
+                    "status": "waiting_review",
+                    "product_id": ids["product"],
+                    "version_id": ids["version"],
+                    "product_context": {},
+                    "input_json": {},
+                    "output_json": None,
+                    "created_by": "user_admin",
+                }
+            }
+        }
+    )
+    repository.save_workflow_runtime(
+        {
+            "graph_runs": {
+                graph_run_id: {
+                    "id": graph_run_id,
+                    "ai_task_id": task_id,
+                    "task_type": "technical_solution",
+                    "status": "interrupted",
+                    "thread_id": f"ai_task:{task_id}",
+                    "subject_type": "ai_task",
+                    "subject_id": task_id,
+                    "graph_definition": "ai_task",
+                    "graph_version": "v1",
+                    "node_path": [],
+                    "state_snapshot": {},
+                }
+            },
+            "graph_checkpoints": {
+                checkpoint_id: {
+                    "id": checkpoint_id,
+                    "graph_run_id": graph_run_id,
+                    "ai_task_id": task_id,
+                    "current_step": "interrupt_for_human_review",
+                    "thread_id": f"ai_task:{task_id}",
+                    "subject_type": "ai_task",
+                    "subject_id": task_id,
+                    "graph_definition": "ai_task",
+                    "graph_version": "v1",
+                    "state_snapshot": {},
+                }
+            },
+            "human_reviews": {},
+        }
+    )
+
+    payload = repository.load_workflow_runtime()
+    graph_run = payload["graph_runs"][graph_run_id]
+    checkpoint = payload["graph_checkpoints"][checkpoint_id]
+    assert graph_run["thread_id"] == f"ai_task:{task_id}"
+    assert graph_run["graph_definition"] == "ai_task"
+    assert checkpoint["thread_id"] == f"ai_task:{task_id}"
+    assert checkpoint["graph_version"] == "v1"
 
 
 def test_requirement_entry_adapter_uses_postgres_product_and_reuses_open_requirement(

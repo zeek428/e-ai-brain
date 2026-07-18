@@ -8,6 +8,7 @@ dependencies = [
   "fastapi>=0.115.0",
   "httpx2>=2.5.0",
   "langgraph>=1.2.2",
+  "langgraph-checkpoint-postgres>=2.0.0",
   "minio>=7.2.15",
   "psycopg[binary]>=3.2.0",
   "pypdf>=5.0.0",

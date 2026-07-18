@@ -847,7 +847,8 @@ class TaskReadRepository:
         cursor.execute(
             """
             SELECT id, ai_task_id, task_type, status, current_step, checkpoint_id,
-                   runtime, node_path, state_snapshot, started_at, completed_at,
+                   runtime, node_path, state_snapshot, subject_type, subject_id,
+                   thread_id, graph_definition, graph_version, started_at, completed_at,
                    created_at, updated_at
             FROM graph_runs
             ORDER BY started_at, id
@@ -857,17 +858,22 @@ class TaskReadRepository:
             row[0]: {
                 "ai_task_id": row[1],
                 "checkpoint_id": row[5],
-                "completed_at": row[10].isoformat() if row[10] else None,
-                "created_at": row[11].isoformat() if row[11] else None,
+                "completed_at": row[15].isoformat() if row[15] else None,
+                "created_at": row[16].isoformat() if row[16] else None,
                 "current_step": row[4],
                 "id": row[0],
                 "node_path": list(row[7] or []),
                 "runtime": row[6],
-                "started_at": row[9].isoformat() if row[9] else None,
+                "subject_type": row[9],
+                "subject_id": row[10],
+                "thread_id": row[11],
+                "graph_definition": row[12],
+                "graph_version": row[13],
+                "started_at": row[14].isoformat() if row[14] else None,
                 "state_snapshot": dict(row[8] or {}),
                 "status": row[3],
                 "task_type": row[2],
-                "updated_at": row[12].isoformat() if row[12] else None,
+                "updated_at": row[17].isoformat() if row[17] else None,
             }
             for row in cursor.fetchall()
         }
@@ -876,6 +882,7 @@ class TaskReadRepository:
         cursor.execute(
             """
             SELECT id, graph_run_id, ai_task_id, current_step, state_snapshot,
+                   subject_type, subject_id, thread_id, graph_definition, graph_version,
                    created_at, updated_at
             FROM graph_checkpoints
             ORDER BY created_at, id
@@ -884,12 +891,17 @@ class TaskReadRepository:
         return {
             row[0]: {
                 "ai_task_id": row[2],
-                "created_at": row[5].isoformat() if row[5] else None,
+                "created_at": row[10].isoformat() if row[10] else None,
                 "current_step": row[3],
                 "graph_run_id": row[1],
                 "id": row[0],
                 "state_snapshot": dict(row[4] or {}),
-                "updated_at": row[6].isoformat() if row[6] else None,
+                "subject_type": row[5],
+                "subject_id": row[6],
+                "thread_id": row[7],
+                "graph_definition": row[8],
+                "graph_version": row[9],
+                "updated_at": row[11].isoformat() if row[11] else None,
             }
             for row in cursor.fetchall()
         }

@@ -116,12 +116,13 @@ class TaskWriteRepository:
                 """
                 INSERT INTO graph_runs (
                   id, ai_task_id, task_type, status, current_step, checkpoint_id,
-                  runtime, node_path, state_snapshot, started_at, completed_at,
+                  runtime, node_path, state_snapshot, subject_type, subject_id,
+                  thread_id, graph_definition, graph_version, started_at, completed_at,
                   created_at, updated_at
                 )
                 VALUES (
                   %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb,
-                  COALESCE(%s::timestamptz, now()), %s::timestamptz,
+                  %s, %s, %s, %s, %s, COALESCE(%s::timestamptz, now()), %s::timestamptz,
                   COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
@@ -133,12 +134,17 @@ class TaskWriteRepository:
                   runtime = EXCLUDED.runtime,
                   node_path = EXCLUDED.node_path,
                   state_snapshot = EXCLUDED.state_snapshot,
+                  subject_type = EXCLUDED.subject_type,
+                  subject_id = EXCLUDED.subject_id,
+                  thread_id = EXCLUDED.thread_id,
+                  graph_definition = EXCLUDED.graph_definition,
+                  graph_version = EXCLUDED.graph_version,
                   completed_at = EXCLUDED.completed_at,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
                     graph_run["id"],
-                    graph_run["ai_task_id"],
+                    graph_run.get("ai_task_id"),
                     graph_run["task_type"],
                     graph_run["status"],
                     graph_run.get("current_step"),
@@ -146,6 +152,11 @@ class TaskWriteRepository:
                     graph_run.get("runtime"),
                     json.dumps(graph_run.get("node_path", []), ensure_ascii=False),
                     json.dumps(graph_run.get("state_snapshot", {}), ensure_ascii=False),
+                    graph_run.get("subject_type"),
+                    graph_run.get("subject_id"),
+                    graph_run.get("thread_id"),
+                    graph_run.get("graph_definition"),
+                    graph_run.get("graph_version"),
                     graph_run.get("started_at"),
                     graph_run.get("completed_at"),
                     created_at,
@@ -164,11 +175,13 @@ class TaskWriteRepository:
             cursor.execute(
                 """
                 INSERT INTO graph_checkpoints (
-                  id, graph_run_id, ai_task_id, current_step, state_snapshot, created_at,
+                  id, graph_run_id, ai_task_id, current_step, state_snapshot, subject_type,
+                  subject_id, thread_id, graph_definition, graph_version, created_at,
                   updated_at
                 )
                 VALUES (
-                  %s, %s, %s, %s, %s::jsonb, COALESCE(%s::timestamptz, now()),
+                  %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s,
+                  COALESCE(%s::timestamptz, now()),
                   COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET
@@ -176,14 +189,24 @@ class TaskWriteRepository:
                   ai_task_id = EXCLUDED.ai_task_id,
                   current_step = EXCLUDED.current_step,
                   state_snapshot = EXCLUDED.state_snapshot,
+                  subject_type = EXCLUDED.subject_type,
+                  subject_id = EXCLUDED.subject_id,
+                  thread_id = EXCLUDED.thread_id,
+                  graph_definition = EXCLUDED.graph_definition,
+                  graph_version = EXCLUDED.graph_version,
                   updated_at = EXCLUDED.updated_at
                 """,
                 (
                     checkpoint["id"],
                     checkpoint["graph_run_id"],
-                    checkpoint["ai_task_id"],
+                    checkpoint.get("ai_task_id"),
                     checkpoint["current_step"],
                     json.dumps(checkpoint.get("state_snapshot", {}), ensure_ascii=False),
+                    checkpoint.get("subject_type"),
+                    checkpoint.get("subject_id"),
+                    checkpoint.get("thread_id"),
+                    checkpoint.get("graph_definition"),
+                    checkpoint.get("graph_version"),
                     created_at,
                     updated_at,
                 ),
