@@ -38,6 +38,18 @@ class ExecutionGovernanceReadRepository:
             record_type=record_type,
         )
 
+    def save_rd_delivery_evidence_record(
+        self,
+        *,
+        record: dict[str, Any],
+        record_type: str,
+    ) -> None:
+        """Persist P0 Git/reconciliation/readiness evidence by semantic boundary."""
+        self._write_repository.save_rd_delivery_evidence_record(
+            record=record,
+            record_type=record_type,
+        )
+
     def list_quality_gate_policies(
         self,
         *,
@@ -272,6 +284,17 @@ class ExecutionGovernanceReadRepository:
                     }
                     for row in cursor.fetchall()
                 ]
+
+    def list_rd_delivery_evidence_records(
+        self,
+        *,
+        record_type: str,
+        product_scope_ids: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        return self.list_trusted_delivery_records(
+            product_scope_ids=product_scope_ids,
+            record_type=record_type,
+        )
 
     def list_agent_loop_runs(
         self,

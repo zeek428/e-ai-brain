@@ -131,6 +131,14 @@ class ExecutionGovernanceWriteRepository:
                     ),
                 )
 
+    def save_rd_delivery_evidence_record(
+        self,
+        *,
+        record: dict[str, Any],
+        record_type: str,
+    ) -> None:
+        self.save_trusted_delivery_record(record=record, record_type=record_type)
+
     def save_execution_resource_grant_record(
         self,
         record: dict[str, Any],

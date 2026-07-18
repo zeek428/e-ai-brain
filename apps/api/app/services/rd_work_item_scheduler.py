@@ -901,9 +901,16 @@ def _review_work_item_repository(
                 "source_event_id": event["id"],
                 "feedback_fingerprint": _canonical_hash(
                     {
+                        "attempt_id": attempt["id"],
+                        "attributed_role_code": reviewer["role_code"],
+                        "attributed_seat_id": reviewer["id"],
+                        "attributed_subject_id": producer_subject_id,
+                        "attributed_subject_type": producer_subject_type,
+                        "feedback_kind": f"review_{decision}",
+                        "run_generation": int(run.get("run_generation") or 1),
                         "source_event_id": event["id"],
-                        "decision": decision,
-                        "producer_subject_id": producer_subject_id,
+                        "strategy_snapshot_id": run["strategy_snapshot_id"],
+                        "work_item_id": work_item_id,
                     }
                 ),
                 "role_code": reviewer["role_code"],

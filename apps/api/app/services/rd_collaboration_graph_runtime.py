@@ -254,10 +254,16 @@ class RdCollaborationGraphRuntime:
             "source_event_id": event_id,
             "feedback_fingerprint": _canonical_hash(
                 {
+                    "attempt_id": None,
+                    "attributed_role_code": "system",
+                    "attributed_seat_id": None,
+                    "attributed_subject_id": run.get("created_by"),
+                    "attributed_subject_type": "human_user",
+                    "feedback_kind": "graph_event_processed",
+                    "run_generation": int(run.get("run_generation") or 1),
                     "source_event_id": event_id,
-                    "outcome": "graph_event_processed",
-                    "producer_subject_type": "service",
-                    "producer_subject_id": "collaboration_orchestrator",
+                    "strategy_snapshot_id": run["strategy_snapshot_id"],
+                    "work_item_id": None,
                 }
             ),
             "role_code": "system",

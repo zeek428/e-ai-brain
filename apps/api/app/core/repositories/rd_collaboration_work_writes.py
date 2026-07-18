@@ -27,6 +27,118 @@ from app.core.repositories.rd_collaboration_shared import (
 
 
 class RdCollaborationWorkWriteMixin:
+    def mark_rd_ready_for_release(
+        self,
+        *,
+        collaboration_run_id: str,
+    ) -> dict[str, dict[str, Any]]:
+        """Atomically enter the trusted ready-for-release boundary.
+
+        Remote Git and integration-test facts are verified by the delivery
+        service before this command.  This repository command owns only the
+        durable run/version state transition, and deliberately does not create
+        a deployment request or complete the collaboration run.
+        """
+        return self._in_transaction(
+            lambda cursor: self._mark_rd_ready_for_release_cursor(
+                cursor,
+                collaboration_run_id=collaboration_run_id,
+            )
+        )
+
+    def _mark_rd_ready_for_release_cursor(
+        self,
+        cursor: Any,
+        *,
+        collaboration_run_id: str,
+    ) -> dict[str, dict[str, Any]]:
+        cursor.execute(
+            "SELECT * FROM rd_collaboration_runs WHERE id = %s FOR UPDATE",
+            (collaboration_run_id,),
+        )
+        run = _row_dict(cursor, cursor.fetchone())
+        if run is None:
+            raise RdCollaborationRepositoryError("NOT_FOUND", "collaboration run does not exist")
+        if run["status"] not in {"integrating", "verifying", "ready_for_release"}:
+            raise RdCollaborationRepositoryError(
+                "RD_DELIVERY_EVIDENCE_INCOMPLETE",
+                "collaboration run is not at the delivery boundary",
+            )
+        cursor.execute(
+            "SELECT * FROM product_versions WHERE id = %s FOR UPDATE",
+            (run["product_version_id"],),
+        )
+        version = _row_dict(cursor, cursor.fetchone())
+        if version is None or version["status"] not in {"active", "testing", "ready_for_release"}:
+            raise RdCollaborationRepositoryError(
+                "RD_DELIVERY_EVIDENCE_INCOMPLETE",
+                "product version cannot enter ready for release",
+            )
+        cursor.execute(
+            """
+            UPDATE product_versions
+            SET status = 'ready_for_release', updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (version["id"],),
+        )
+        persisted_version = _row_dict(cursor, cursor.fetchone())
+        cursor.execute(
+            """
+            UPDATE rd_collaboration_runs
+            SET status = 'ready_for_release', version = version + 1, updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (collaboration_run_id,),
+        )
+        persisted_run = _row_dict(cursor, cursor.fetchone())
+        if persisted_version is None or persisted_run is None:
+            raise RuntimeError("ready-for-release state transition was not persisted")
+        return {"run": persisted_run, "product_version": persisted_version}
+
+    def finalize_rd_ready_for_release_target(
+        self,
+        *,
+        collaboration_run_id: str,
+    ) -> dict[str, dict[str, Any]]:
+        """Finish only ready-target runs; deployed targets stay non-terminal."""
+        return self._in_transaction(
+            lambda cursor: self._finalize_rd_ready_for_release_target_cursor(
+                cursor,
+                collaboration_run_id=collaboration_run_id,
+            )
+        )
+
+    def _finalize_rd_ready_for_release_target_cursor(
+        self,
+        cursor: Any,
+        *,
+        collaboration_run_id: str,
+    ) -> dict[str, dict[str, Any]]:
+        state = self._mark_rd_ready_for_release_cursor(
+            cursor,
+            collaboration_run_id=collaboration_run_id,
+        )
+        run = state["run"]
+        if str(run.get("delivery_target") or "ready_for_release") != "ready_for_release":
+            return state
+        cursor.execute(
+            """
+            UPDATE rd_collaboration_runs
+            SET status = 'completed', completion_reason = 'ready_for_release',
+                completed_at = now(), version = version + 1, updated_at = now()
+            WHERE id = %s AND status = 'ready_for_release'
+            RETURNING *
+            """,
+            (collaboration_run_id,),
+        )
+        completed = _row_dict(cursor, cursor.fetchone())
+        if completed is None:
+            raise RuntimeError("ready-for-release target completion was not persisted")
+        return {"run": completed, "product_version": state["product_version"]}
+
     def fence_work_item_runner_result(
         self,
         *,
