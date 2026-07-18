@@ -149,6 +149,12 @@ class RdCollaborationGraphRuntime:
             if event.get("event_key") == f"graph-event:{event_id}"
         )
 
+    def is_event_checkpointed(self, *, collaboration_run_id: str, event_id: str) -> bool:
+        """Return whether the durable cursor has already observed this event."""
+        snapshot = self.graph.get_state(self._config(collaboration_run_id))
+        values = getattr(snapshot, "values", None) or {}
+        return event_id in set(values.get("processed_event_ids") or [])
+
     def outbox_count(self, event_id: str) -> int:
         return sum(
             1

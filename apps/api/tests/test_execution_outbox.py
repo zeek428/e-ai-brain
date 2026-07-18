@@ -36,6 +36,13 @@ def test_execution_worker_iteration_processes_outbox_and_jenkins_sync(monkeypatc
     )
     monkeypatch.setattr(
         execution_worker,
+        "process_rd_collaboration_graph_events",
+        lambda current_store, *, runtime=None: (
+            calls.append(("collaboration_graph", "execution-worker-test")) or 5
+        ),
+    )
+    monkeypatch.setattr(
+        execution_worker,
         "sync_due_jenkins_deployments",
         lambda current_store, *, worker_id: calls.append(("jenkins", worker_id)) or 3,
     )
@@ -49,11 +56,13 @@ def test_execution_worker_iteration_processes_outbox_and_jenkins_sync(monkeypatc
         "external_event_count": 4,
         "jenkins_sync_count": 3,
         "outbox_count": 2,
+        "rd_collaboration_graph_event_count": 5,
         "reconciliation_count": 0,
     }
     assert calls == [
         ("outbox", "execution-worker-test"),
         ("external", "execution-worker-test"),
+        ("collaboration_graph", "execution-worker-test"),
         ("jenkins", "execution-worker-test"),
     ]
 
@@ -72,7 +81,4 @@ def test_only_memory_runtime_processes_execution_outbox_inline():
     )
 
     assert _should_process_execution_outbox_inline(MemoryStore()) is True
-    assert (
-        _should_process_execution_outbox_inline(SimpleNamespace(repository=object()))
-        is False
-    )
+    assert _should_process_execution_outbox_inline(SimpleNamespace(repository=object())) is False

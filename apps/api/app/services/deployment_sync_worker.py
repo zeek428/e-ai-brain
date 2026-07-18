@@ -73,11 +73,15 @@ def _worker_loop(application: Any, stop_event: threading.Event, worker_id: str) 
             from app.services.operational_deployments import (
                 process_execution_outbox_events,
             )
+            from app.services.rd_collaboration_graph_event_projection import (
+                process_rd_collaboration_graph_events,
+            )
 
             process_execution_outbox_events(
                 application.state.store,
                 worker_id=worker_id,
             )
+            process_rd_collaboration_graph_events(application.state.store)
             sync_due_jenkins_deployments(
                 application.state.store,
                 worker_id=worker_id,

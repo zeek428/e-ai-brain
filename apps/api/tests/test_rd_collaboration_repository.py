@@ -31,6 +31,7 @@ from app.services.rd_collaboration_graph_runtime import RdCollaborationGraphRunt
 from app.services.rd_collaboration_planning import start_collaboration_run
 from app.services.rd_requirement_entry_adapters import create_or_link_rd_requirement
 from app.services.rd_work_item_scheduler import claim_work_item, review_work_item
+from app.workers.execution_worker import run_execution_worker_iteration
 from tests.test_technical_solution_export import auth_headers
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "app" / "db" / "migrations"
@@ -2051,6 +2052,145 @@ def test_postgres_review_approval_promotes_blocked_successor_before_its_claim(
         idempotency_key="claim-dependency-successor",
     )
     assert claimed["work_item"]["status"] == "running"
+
+
+def test_execution_worker_projects_committed_work_item_event_to_postgres_graph_cursor(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    """The production worker must advance the durable cursor from a scheduler event.
+
+    The scheduler's review transaction is deliberately the producer here: this
+    proves the LangGraph runtime is reachable from the real command/event path,
+    instead of only from a runtime unit test.
+    """
+    seeded = _seed_exact_run(repository, prefix="graph-worker-projection")
+    run_id = str(seeded["run"]["id"])
+    repository.save_rd_run_seat_record(
+        {
+            "id": "graph-worker-owner-seat",
+            "collaboration_run_id": run_id,
+            "role_code": "developer",
+            "subject_type": "human_user",
+            "human_user_id": "user_admin",
+        }
+    )
+    repository.save_rd_run_seat_record(
+        {
+            "id": "graph-worker-reviewer-seat",
+            "collaboration_run_id": run_id,
+            "role_code": "tester",
+            "subject_type": "human_user",
+            "human_user_id": "user_reviewer",
+        }
+    )
+    repository.save_rd_work_item_record(
+        {
+            "id": "graph-worker-work-item",
+            "collaboration_run_id": run_id,
+            "plan_version": 1,
+            "work_item_type": "implementation",
+            "title": "advance collaboration cursor",
+            "objective": "advance collaboration cursor",
+            "owner_seat_id": "graph-worker-owner-seat",
+            "reviewer_seat_id": "graph-worker-reviewer-seat",
+            "status": "reviewing",
+            "idempotency_key": "graph-worker-work-item",
+        }
+    )
+    repository.save_work_item_attempt_bundle(
+        work_item_id="graph-worker-work-item",
+        expected_statuses=["reviewing"],
+        next_status="reviewing",
+        attempt={
+            "id": "graph-worker-attempt",
+            "work_item_id": "graph-worker-work-item",
+            "attempt_no": 1,
+            "idempotency_key": "graph-worker-attempt",
+            "status": "completed",
+        },
+    )
+    store = PostgresRuntimeStore(repository)
+
+    reviewed = review_work_item(
+        store,
+        work_item_id="graph-worker-work-item",
+        decision="approve",
+        comment=None,
+        actor={"id": "user_reviewer", "roles": ["reviewer"]},
+        version=2,
+        idempotency_key="graph-worker-approve",
+    )
+    assert reviewed["work_item"]["status"] == "completed"
+    scheduler_event = next(
+        event
+        for event in repository.list_rd_collaboration_events(run_id)
+        if event["event_key"] == "review:graph-worker-work-item:graph-worker-approve"
+    )
+
+    checkpointer = build_checkpointer(
+        SimpleNamespace(
+            is_test_env=False,
+            persistence_mode="postgres",
+            database_url=repository.database_url,
+        )
+    )
+    try:
+        runtime = RdCollaborationGraphRuntime(store, checkpointer=checkpointer)
+        runtime.fail_next_checkpoint_write()
+        failed = run_execution_worker_iteration(
+            store,
+            worker_id="graph-projection-worker",
+            rd_collaboration_graph_runtime=runtime,
+        )
+        recovered = run_execution_worker_iteration(
+            store,
+            worker_id="graph-projection-worker",
+            rd_collaboration_graph_runtime=runtime,
+        )
+        settled = run_execution_worker_iteration(
+            store,
+            worker_id="graph-projection-worker",
+            rd_collaboration_graph_runtime=runtime,
+        )
+        assert failed["rd_collaboration_graph_event_count"] == 0
+        assert recovered["rd_collaboration_graph_event_count"] == 1
+        assert settled["rd_collaboration_graph_event_count"] == 0
+
+        checkpoint = build_rd_collaboration_graph(checkpointer).get_state(
+            {"configurable": {"thread_id": rd_collaboration_thread_id(run_id)}}
+        )
+    finally:
+        checkpointer.conn.close()
+
+    assert checkpoint.values["graph_definition"] == "rd_collaboration"
+    assert checkpoint.values["graph_version"] == "v1"
+    assert checkpoint.values["processed_event_ids"] == [f"event-projection:{scheduler_event['id']}"]
+    graph_events = [
+        event
+        for event in repository.list_rd_collaboration_events(run_id)
+        if event["event_key"] == f"graph-event:event-projection:{scheduler_event['id']}"
+    ]
+    assert len(graph_events) == 1
+    assert (
+        len(
+            repository.list_execution_outbox_events(
+                aggregate_type="rd_collaboration_run",
+                aggregate_id=run_id,
+                status=None,
+            )
+        )
+        == 1
+    )
+    assert (
+        len(
+            [
+                item
+                for item in repository.list_role_feedback_records(run_id)
+                if item["source_event_id"] == f"event-projection:{scheduler_event['id']}"
+            ]
+        )
+        == 1
+    )
 
 
 def test_concurrent_claim_uses_skip_locked_and_only_one_worker_wins(

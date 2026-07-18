@@ -26,6 +26,18 @@ class ExecutionGovernanceReadRepository:
             upsert_audit_events=upsert_audit_events,
         )
 
+    def save_trusted_delivery_record(
+        self,
+        *,
+        record: dict[str, Any],
+        record_type: str,
+    ) -> None:
+        """Expose the paired write adapter for worker heartbeat persistence."""
+        self._write_repository.save_trusted_delivery_record(
+            record=record,
+            record_type=record_type,
+        )
+
     def list_quality_gate_policies(
         self,
         *,
@@ -48,9 +60,7 @@ class ExecutionGovernanceReadRepository:
                 params.append(value)
         if product_scope_ids is not None:
             normalized_scope = [
-                str(scope_id)
-                for scope_id in product_scope_ids
-                if str(scope_id).strip()
+                str(scope_id) for scope_id in product_scope_ids if str(scope_id).strip()
             ]
             if normalized_scope:
                 clauses.append("(product_id IS NULL OR product_id = ANY(%s))")
@@ -247,7 +257,7 @@ class ExecutionGovernanceReadRepository:
                     f"""
                     SELECT id, product_id, payload_json, created_at, updated_at
                     FROM trusted_delivery_records
-                    WHERE {' AND '.join(clauses)}
+                    WHERE {" AND ".join(clauses)}
                     ORDER BY updated_at DESC, id DESC
                     """,
                     tuple(params),
