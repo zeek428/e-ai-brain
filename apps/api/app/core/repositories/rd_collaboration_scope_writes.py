@@ -21,6 +21,7 @@ from app.core.repositories.rd_collaboration_shared import (
     _adapt,
     _canonical_hash,
     _canonical_scope_operations,
+    _json_response_payload,
     _response_hash,
     _row_dict,
 )
@@ -1958,7 +1959,7 @@ class RdCollaborationScopeWriteMixin:
                 result = operation(transaction)
                 if failure_injection is not None:
                     failure_injection("after_domain")
-                response = deepcopy(result["response_json"])
+                response = _json_response_payload(deepcopy(result["response_json"]))
                 response_hash = _response_hash(response)
                 record_id = command_record_id or f"rd-command-{uuid4().hex}"
                 cursor.execute(

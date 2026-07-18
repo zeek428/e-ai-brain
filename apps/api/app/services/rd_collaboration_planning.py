@@ -220,8 +220,15 @@ def _requirements_for_version(store: Any, version_id: str) -> list[dict[str, Any
     repository = getattr(store, "repository", None)
     load = getattr(repository, "load_requirements", None)
     loaded = load() if callable(load) else None
+    persisted_requirements = (
+        loaded.get("requirements")
+        if isinstance(loaded, dict) and isinstance(loaded.get("requirements"), dict)
+        else loaded
+    )
     values = (
-        loaded.values() if isinstance(loaded, dict) else _records(store, "requirements").values()
+        persisted_requirements.values()
+        if isinstance(persisted_requirements, dict)
+        else _records(store, "requirements").values()
     )
     return sorted(
         [
@@ -417,7 +424,12 @@ def _run_seat_records(
         key=lambda binding: str(binding.get("role_code") or ""),
     )
     if not bindings:
-        return []
+        raise api_error(
+            409,
+            "RD_ROLE_ASSIGNMENT_REQUIRED",
+            "Collaboration policy requires at least one active role binding",
+            {"retryable": False, "next_action": "assign_role_seat"},
+        )
     if any(not str(binding.get("role_code") or "").strip() for binding in bindings):
         raise api_error(409, "RD_ROLE_ASSIGNMENT_REQUIRED", "Active role binding has no role code")
     if len({str(binding["role_code"]) for binding in bindings}) != len(bindings):

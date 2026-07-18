@@ -219,6 +219,50 @@ def test_start_freezes_exact_accepted_requirement_scope_and_replays_request() ->
     assert next(iter(store.rd_run_seats.values()))["human_user_id"] == "user-owner"
 
 
+def test_start_rejects_empty_active_policy_bindings_before_any_run_is_written() -> None:
+    store = MemoryStore()
+    store.product_versions["version-empty-seats"] = {
+        "id": "version-empty-seats",
+        "product_id": "product-empty-seats",
+        "scope_version": 1,
+        "status": "planning",
+    }
+    store.requirements["requirement-empty-seats"] = {
+        "id": "requirement-empty-seats",
+        "product_id": "product-empty-seats",
+        "version_id": "version-empty-seats",
+        "assessment_revision": 1,
+        "status": "planned",
+    }
+    store.requirement_assessments["assessment-empty-seats"] = {
+        "id": "assessment-empty-seats",
+        "requirement_id": "requirement-empty-seats",
+        "requirement_revision": 1,
+        "final_strategy_snapshot_id": "snapshot-empty-seats",
+        "status": "accepted",
+    }
+    store.rd_task_executor_policy_snapshots["snapshot-empty-seats"] = {
+        "id": "snapshot-empty-seats",
+        "policy_id": "policy-empty-seats",
+        "policy_version": 1,
+        "payload_json": {"role_bindings": []},
+    }
+
+    with pytest.raises(type(api_error(409, "RD_ROLE_ASSIGNMENT_REQUIRED", "invalid"))) as exc_info:
+        start_collaboration_run(
+            store,
+            product_version_id="version-empty-seats",
+            request_id="start:empty-seats",
+            scope_version=1,
+            actor={"id": "user-owner", "roles": ["rd_owner"]},
+        )
+
+    assert exc_info.value.detail["code"] == "RD_ROLE_ASSIGNMENT_REQUIRED"
+    assert store.rd_collaboration_runs == {}
+    assert store.rd_run_seats == {}
+    assert store.product_versions["version-empty-seats"]["status"] == "planning"
+
+
 def test_start_requires_planning_version_and_never_reuses_terminal_generation() -> None:
     store = MemoryStore()
     store.product_versions["version-1"] = {
@@ -367,8 +411,25 @@ def test_replacement_scope_provenance_is_used_by_the_restarted_generation() -> N
             "id": snapshot_id,
             "policy_id": "policy-replace",
             "policy_version": 1,
-            "payload_json": {"delivery_target": "ready_for_release"},
+            "payload_json": {
+                "delivery_target": "ready_for_release",
+                "role_bindings": [
+                    {
+                        "role_code": "developer",
+                        "actor_mode": "human",
+                        "candidate_human_user_ids": ["user-owner"],
+                        "status": "active",
+                    }
+                ],
+            },
         }
+    store.rd_role_definitions["role-developer"] = {
+        "id": "role-developer",
+        "brain_app_id": "rd_brain",
+        "code": "developer",
+        "status": "active",
+        "assignable_subject_types": ["human_user"],
+    }
 
     scope = create_scope_change_request(
         store,
@@ -412,6 +473,7 @@ def test_replacement_scope_provenance_is_used_by_the_restarted_generation() -> N
     assert scope_row["collaboration_run_id"] == restarted["run"]["id"]
     assert scope_row["assessment_id"] == "assessment-replacement"
     assert scope_row["final_strategy_snapshot_id"] == "snapshot-replacement"
+    assert [seat["role_code"] for seat in store.rd_run_seats.values()] == ["developer"]
 
 
 def test_feedback_keeps_producer_seat_attribution_distinct_from_executor() -> None:
@@ -572,6 +634,54 @@ def test_start_route_returns_versioned_snapshot_contract_and_trace_id() -> None:
     )
     assert claimed.status_code == 200
     assert claimed.json()["data"]["work_item"]["status"] == "running"
+
+
+def test_start_route_rejects_empty_policy_bindings_without_creating_a_run() -> None:
+    client = TestClient(app)
+    app.state.store.reset()
+    login = client.post(
+        "/api/auth/login",
+        json={"username": "admin@example.com", "password": "admin123"},
+    )
+    headers = {"Authorization": f"Bearer {login.json()['data']['access_token']}"}
+    app.state.store.product_versions["version-route-empty-seats"] = {
+        "id": "version-route-empty-seats",
+        "product_id": "product-route-empty-seats",
+        "scope_version": 1,
+        "status": "planning",
+    }
+    app.state.store.requirements["requirement-route-empty-seats"] = {
+        "id": "requirement-route-empty-seats",
+        "product_id": "product-route-empty-seats",
+        "version_id": "version-route-empty-seats",
+        "assessment_revision": 1,
+        "status": "planned",
+    }
+    app.state.store.requirement_assessments["assessment-route-empty-seats"] = {
+        "id": "assessment-route-empty-seats",
+        "requirement_id": "requirement-route-empty-seats",
+        "requirement_revision": 1,
+        "final_strategy_snapshot_id": "snapshot-route-empty-seats",
+        "status": "accepted",
+    }
+    app.state.store.rd_task_executor_policy_snapshots["snapshot-route-empty-seats"] = {
+        "id": "snapshot-route-empty-seats",
+        "policy_id": "policy-route-empty-seats",
+        "policy_version": 1,
+        "payload_json": {"role_bindings": []},
+    }
+
+    response = client.post(
+        "/api/product-versions/version-route-empty-seats/collaboration-runs",
+        json={"request_id": "start:route-empty-seats", "scope_version": 1},
+        headers=headers,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "RD_ROLE_ASSIGNMENT_REQUIRED"
+    assert app.state.store.rd_collaboration_runs == {}
+    assert app.state.store.rd_run_seats == {}
+    assert app.state.store.product_versions["version-route-empty-seats"]["status"] == "planning"
 
 
 def test_collaboration_routes_enforce_aggregate_product_scope() -> None:

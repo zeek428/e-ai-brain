@@ -653,6 +653,20 @@ def review_work_item(
     )
     status_map = {"approve": "completed", "request_rework": "ready", "reject": "failed"}
     item.update({"status": status_map[decision], "version": int(item.get("version") or 1) + 1})
+    if decision == "approve":
+        ready_successors = ready_work_items(
+            store,
+            collaboration_run_id=str(item["collaboration_run_id"]),
+        )
+        for successor in ready_successors:
+            if successor.get("status") == "blocked":
+                promoted = _records(store, "rd_work_items")[str(successor["id"])]
+                promoted.update(
+                    {
+                        "status": "ready",
+                        "version": int(promoted.get("version") or 1) + 1,
+                    }
+                )
     review = {
         "id": _new_id(store, "rd_work_item_review"),
         "decision": decision,

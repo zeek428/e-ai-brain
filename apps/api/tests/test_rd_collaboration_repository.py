@@ -23,7 +23,10 @@ from app.core.repositories.rd_collaboration import (
     RdCollaborationVersionConflictError,
 )
 from app.main import app
+from app.services.rd_collaboration_decisions import answer_decision_request
+from app.services.rd_collaboration_planning import start_collaboration_run
 from app.services.rd_requirement_entry_adapters import create_or_link_rd_requirement
+from app.services.rd_work_item_scheduler import claim_work_item, review_work_item
 from tests.test_technical_solution_export import auth_headers
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "app" / "db" / "migrations"
@@ -579,6 +582,37 @@ def _seed_exact_run(
     }
 
 
+def _seed_startable_collaboration_version(
+    repository: PostgresSnapshotRepository,
+    *,
+    prefix: str,
+    role_bindings: list[dict[str, object]],
+) -> dict[str, object]:
+    ids = _insert_product_version(repository, prefix=prefix, status="planning")
+    policy = _policy_record(ids, prefix=prefix)
+    repository.save_rd_task_executor_policy_record(policy)
+    base = _base_snapshot(policy, prefix=prefix)
+    base["payload_json"] = {"role_bindings": role_bindings}
+    base = repository.freeze_base_policy_snapshot(base)
+    requirement_id = f"{prefix}-requirement"
+    _insert_requirement(
+        repository,
+        ids,
+        requirement_id=requirement_id,
+        status="planned",
+        version_id=ids["version"],
+    )
+    repository.save_assessment_bundle(
+        assessment=_accepted_assessment(
+            assessment_id=f"{prefix}-assessment",
+            requirement_id=requirement_id,
+            snapshot_id=str(base["id"]),
+        ),
+        opinions=[],
+    )
+    return {**ids, "policy": policy, "base_snapshot": base}
+
+
 def _decision_record(
     ids: dict[str, object],
     *,
@@ -711,6 +745,72 @@ def test_repository_is_registered_and_crud_keeps_actor_and_executor_identity_sep
     assert repository.get_rd_ai_employee("ai-dev")["id"] == "ai-dev"
     assert repository.get_rd_executor_profile("executor-dev")["id"] == "executor-dev"
     assert repository.list_rd_role_definitions(status="active")[0]["id"] == "role-dev"
+
+
+def test_postgres_start_rejects_empty_bindings_without_persisting_a_run(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_startable_collaboration_version(
+        repository,
+        prefix="start-empty-seats",
+        role_bindings=[],
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        start_collaboration_run(
+            PostgresRuntimeStore(repository),
+            product_version_id=str(seeded["version"]),
+            request_id="start-empty-seats",
+            scope_version=1,
+            actor={"id": "user_admin", "roles": ["admin"]},
+        )
+
+    assert exc_info.value.detail["code"] == "RD_ROLE_ASSIGNMENT_REQUIRED"
+    assert repository.list_rd_collaboration_runs(product_version_id=str(seeded["version"])) == []
+    assert repository.list_rd_run_seats("missing-run") == []
+    assert repository.get_product_version(str(seeded["version"]))["status"] == "planning"
+
+
+def test_postgres_start_freezes_the_resolved_valid_role_seat(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_startable_collaboration_version(
+        repository,
+        prefix="start-freeze-seats",
+        role_bindings=[
+            {
+                "id": "start-freeze-developer-binding",
+                "role_code": "developer",
+                "actor_mode": "human",
+                "candidate_human_user_ids": ["user_admin"],
+                "status": "active",
+            }
+        ],
+    )
+    repository.save_rd_role_definition_record(
+        {
+            "id": "start-freeze-developer-role",
+            "brain_app_id": "rd_brain",
+            "code": "developer",
+            "name": "Developer",
+            "assignable_subject_types": ["human_user"],
+            "created_by": "user_admin",
+        }
+    )
+
+    started = start_collaboration_run(
+        PostgresRuntimeStore(repository),
+        product_version_id=str(seeded["version"]),
+        request_id="start-freeze-seats",
+        scope_version=1,
+        actor={"id": "user_admin", "roles": ["admin"]},
+    )
+
+    seats = repository.list_rd_run_seats(started["run"]["id"])
+    assert [(seat["role_code"], seat["human_user_id"], seat["status"]) for seat in seats] == [
+        ("developer", "user_admin", "active")
+    ]
+    assert repository.get_product_version(str(seeded["version"]))["status"] == "active"
 
 
 def test_policy_patch_increments_version_and_enforces_one_active_scope(
@@ -1662,6 +1762,105 @@ def test_claim_ready_work_item_is_atomic(repository: PostgresSnapshotRepository)
     assert second is None
 
 
+def test_postgres_review_approval_promotes_blocked_successor_before_its_claim(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="dependency-promotion")
+    run_id = str(seeded["run"]["id"])
+    repository.save_rd_run_seat_record(
+        {
+            "id": "dependency-owner-seat",
+            "collaboration_run_id": run_id,
+            "role_code": "developer",
+            "subject_type": "human_user",
+            "human_user_id": "user_admin",
+        }
+    )
+    repository.save_rd_run_seat_record(
+        {
+            "id": "dependency-reviewer-seat",
+            "collaboration_run_id": run_id,
+            "role_code": "tester",
+            "subject_type": "human_user",
+            "human_user_id": "user_reviewer",
+        }
+    )
+    repository.save_rd_work_item_record(
+        {
+            "id": "dependency-root",
+            "collaboration_run_id": run_id,
+            "plan_version": 1,
+            "work_item_type": "implementation",
+            "title": "root",
+            "objective": "complete root",
+            "owner_seat_id": "dependency-owner-seat",
+            "reviewer_seat_id": "dependency-reviewer-seat",
+            "status": "reviewing",
+            "idempotency_key": "dependency-root",
+        }
+    )
+    repository.save_rd_work_item_record(
+        {
+            "id": "dependency-successor",
+            "collaboration_run_id": run_id,
+            "plan_version": 1,
+            "work_item_type": "testing",
+            "title": "successor",
+            "objective": "verify root",
+            "owner_seat_id": "dependency-owner-seat",
+            "reviewer_seat_id": "dependency-reviewer-seat",
+            "status": "blocked",
+            "idempotency_key": "dependency-successor",
+        }
+    )
+    repository.save_rd_work_item_dependency_record(
+        {
+            "id": "dependency-root-to-successor",
+            "collaboration_run_id": run_id,
+            "plan_version": 1,
+            "predecessor_work_item_id": "dependency-root",
+            "successor_work_item_id": "dependency-successor",
+        }
+    )
+    repository.save_work_item_attempt_bundle(
+        work_item_id="dependency-root",
+        expected_statuses=["reviewing"],
+        next_status="reviewing",
+        attempt={
+            "id": "dependency-root-attempt",
+            "work_item_id": "dependency-root",
+            "attempt_no": 1,
+            "idempotency_key": "dependency-root-attempt",
+            "status": "completed",
+        },
+    )
+    store = PostgresRuntimeStore(repository)
+
+    approved = review_work_item(
+        store,
+        work_item_id="dependency-root",
+        decision="approve",
+        comment=None,
+        actor={"id": "user_reviewer", "roles": ["reviewer"]},
+        version=2,
+        idempotency_key="approve-dependency-root",
+    )
+
+    assert approved["work_item"]["status"] == "completed"
+    successor = repository.get_rd_work_item("dependency-successor")
+    assert successor is not None
+    assert successor["status"] == "ready"
+    claimed = claim_work_item(
+        store,
+        work_item_id="dependency-successor",
+        actor={"id": "user_admin", "roles": ["admin"]},
+        expected_version=int(successor["version"]),
+        lease_seconds=60,
+        idempotency_key="claim-dependency-successor",
+    )
+    assert claimed["work_item"]["status"] == "running"
+
+
 def test_concurrent_claim_uses_skip_locked_and_only_one_worker_wins(
     repository: PostgresSnapshotRepository,
 ) -> None:
@@ -1737,6 +1936,40 @@ def test_high_risk_cancel_continue_fences_old_attempt_and_requires_new_attempt(
         }
     ]
     decision["options_hash"] = "cancel-high-risk-options-v1"
+    with repository._connect(autocommit=False) as connection:
+        connection.execute(
+            """
+            INSERT INTO ai_tasks (
+              id, brain_app_id, requirement_id, task_type, title, status,
+              product_id, version_id, created_by, collaboration_run_id, work_item_id
+            ) VALUES (%s, 'rd_brain', %s, 'development_planning', 'linked high-risk', 'running',
+                      %s, %s, 'user_admin', %s, %s)
+            """,
+            (
+                "cancel-high-risk-task",
+                seeded["requirement"],
+                seeded["product"],
+                seeded["version"],
+                seeded["run"]["id"],
+                "cancel-high-risk-work",
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO human_reviews (id, ai_task_id, stage, status)
+            VALUES ('cancel-high-risk-review', 'cancel-high-risk-task', 'execution', 'pending')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO execution_outbox_events (
+              id, aggregate_type, aggregate_id, event_type, idempotency_key, status
+            ) VALUES (
+              'cancel-high-risk-processing', 'ai_task', 'cancel-high-risk-task',
+              'runner.execute', 'cancel-high-risk-processing', 'processing'
+            )
+            """
+        )
     paused = repository.cancel_work_item_bundle(
         work_item_id="cancel-high-risk-work",
         expected_version=int(claimed["version"]),
@@ -1746,6 +1979,26 @@ def test_high_risk_cancel_continue_fences_old_attempt_and_requires_new_attempt(
     assert paused["work_item"]["status"] == "waiting_human"
     assert paused["attempt"]["status"] == "waiting_human"
     assert paused["work_item"]["lease_owner"] is None
+    with repository._connect() as connection:
+        task_status = connection.execute(
+            "SELECT status FROM ai_tasks WHERE id = 'cancel-high-risk-task'"
+        ).fetchone()[0]
+        review_status = connection.execute(
+            "SELECT status FROM human_reviews WHERE id = 'cancel-high-risk-review'"
+        ).fetchone()[0]
+        outbox_types = {
+            row[0]
+            for row in connection.execute(
+                "SELECT event_type FROM execution_outbox_events "
+                "WHERE aggregate_id = 'cancel-high-risk-work' "
+                "OR id LIKE 'outbox:work-item:cancel-high-risk-work:%'"
+            ).fetchall()
+        }
+    assert task_status == "cancelled"
+    assert review_status == "cancelled"
+    assert {"rd.work_item.cancel_runner", "rd.work_item.reconcile_cancellation"}.issubset(
+        outbox_types
+    )
 
     continued = repository.apply_decision_bundle(
         decision_request_id="cancel-high-risk-decision",
@@ -2045,7 +2298,7 @@ def test_decision_apply_enforces_the_frozen_actor_selector_in_postgres(
     assert repository.get_decision_request("selector-decision")["status"] == "pending"
 
 
-def test_decision_apply_allows_admin_selector_override_in_postgres(
+def test_decision_apply_rejects_admin_that_is_not_in_the_frozen_selector_in_postgres(
     repository: PostgresSnapshotRepository,
 ) -> None:
     seeded = _seed_exact_run(repository, prefix="decision-admin-selector")
@@ -2057,18 +2310,58 @@ def test_decision_apply_allows_admin_selector_override_in_postgres(
         expected_version=1,
     )
 
-    result = repository.apply_decision_bundle(
-        decision_request_id="admin-selector-decision",
-        selected_option_code="continue",
-        input_json={"modules": ["payments"]},
-        comment=None,
-        decided_by="user_reviewer",
-        actor_role_codes=["admin"],
+    with pytest.raises(RdCollaborationRepositoryError) as denied:
+        repository.apply_decision_bundle(
+            decision_request_id="admin-selector-decision",
+            selected_option_code="continue",
+            input_json={"modules": ["payments"]},
+            comment=None,
+            decided_by="user_reviewer",
+            actor_role_codes=["admin"],
+            expected_version=1,
+        )
+
+    assert denied.value.code == "PERMISSION_DENIED"
+    assert repository.get_decision_request("admin-selector-decision")["status"] == "pending"
+
+
+def test_postgres_decision_selector_denial_maps_to_forbidden_http_status(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="decision-selector-http")
+    decision = _decision_record(seeded, decision_id="selector-http-decision")
+    decision["decision_actor_selector"] = {"user_ids": ["user_reviewer"]}
+    repository.save_decision_request_record(decision)
+    repository.suspend_collaboration_run(
+        collaboration_run_id=str(seeded["run"]["id"]),
+        decision_request_id="selector-http-decision",
         expected_version=1,
     )
+    original_store = app.state.store
+    app.state.store = PostgresRuntimeStore(repository)
+    try:
+        client = TestClient(app)
+        login = client.post(
+            "/api/auth/login",
+            json={"username": "admin@example.com", "password": "admin123"},
+        )
+        response = client.post(
+            "/api/delivery/decision-requests/selector-http-decision/decide",
+            json={
+                "selected_option": "continue",
+                "input": {"modules": ["payments"]},
+                "version": 1,
+                "idempotency_key": "selector-http-admin-attempt",
+            },
+            headers={"Authorization": f"Bearer {login.json()['data']['access_token']}"},
+        )
+    finally:
+        app.state.store = original_store
 
-    assert result["decision_request"]["status"] == "approved"
-    assert result["run"]["status"] == "running"
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "PERMISSION_DENIED"
+    assert response.json()["detail"]["trace_id"]
+    assert repository.get_decision_request("selector-http-decision")["status"] == "pending"
 
 
 def test_request_more_info_and_answer_selector_reopens_pending_without_resuming(
@@ -2127,6 +2420,54 @@ def test_request_more_info_and_answer_selector_reopens_pending_without_resuming(
     assert (
         repository.get_rd_collaboration_run(str(seeded["run"]["id"]))["status"] == "waiting_human"
     )
+
+
+def test_postgres_answer_selector_resolves_the_callers_frozen_run_seat(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="answer-seat-selector")
+    run_id = str(seeded["run"]["id"])
+    repository.save_rd_run_seat_record(
+        {
+            "id": "answer-seat-selector-seat",
+            "collaboration_run_id": run_id,
+            "role_code": "product_manager",
+            "subject_type": "human_user",
+            "human_user_id": "user_reviewer",
+        }
+    )
+    decision = _decision_record(
+        seeded,
+        decision_id="answer-seat-selector-decision",
+        answer_actor_selector={"seat_ids": ["answer-seat-selector-seat"]},
+    )
+    repository.save_decision_request_record(decision)
+    repository.suspend_collaboration_run(
+        collaboration_run_id=run_id,
+        decision_request_id="answer-seat-selector-decision",
+        expected_version=1,
+    )
+    repository.apply_decision_bundle(
+        decision_request_id="answer-seat-selector-decision",
+        selected_option_code="more_info",
+        input_json=None,
+        comment="need evidence",
+        decided_by="user_admin",
+        expected_version=1,
+    )
+
+    answered = answer_decision_request(
+        PostgresRuntimeStore(repository),
+        decision_request_id="answer-seat-selector-decision",
+        answer={"detail": "attached"},
+        evidence=[{"ref": "evidence-1"}],
+        actor={"id": "user_reviewer", "roles": ["reviewer"]},
+        version=2,
+        idempotency_key="answer-seat-selector",
+    )
+
+    assert answered["decision_request"]["status"] == "pending"
+    assert answered["decision_request"]["version"] == 3
 
 
 def test_database_time_expiry_is_idempotent_and_keeps_subject_paused(

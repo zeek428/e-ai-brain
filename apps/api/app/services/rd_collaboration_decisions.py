@@ -51,8 +51,25 @@ def _decision_command_key(decision_id: str, operation: str, idempotency_key: str
     return f"{operation}:{decision_id}:{idempotency_key}"
 
 
-def _actor_seat_ids(store: Any, actor: dict[str, Any]) -> set[str]:
+def _actor_seat_ids(
+    store: Any,
+    actor: dict[str, Any],
+    *,
+    collaboration_run_id: str | None = None,
+) -> set[str]:
     actor_id = str(actor.get("id") or "")
+    repository = getattr(store, "repository", None)
+    list_seats = getattr(repository, "list_rd_run_seats", None)
+    if collaboration_run_id and callable(list_seats):
+        return {
+            str(seat["id"])
+            for seat in list_seats(collaboration_run_id)
+            if seat.get("status", "active") == "active"
+            and (
+                str(seat.get("human_user_id") or "") == actor_id
+                or str(seat.get("ai_employee_id") or "") == actor_id
+            )
+        }
     return {
         str(seat["id"])
         for seat in _records(store, "rd_run_seats").values()
@@ -64,9 +81,24 @@ def _actor_seat_ids(store: Any, actor: dict[str, Any]) -> set[str]:
     }
 
 
+def _decision_collaboration_run_id(store: Any, decision: dict[str, Any]) -> str | None:
+    subject_type = str(decision.get("subject_type") or "")
+    subject_id = str(decision.get("subject_id") or "")
+    if subject_type == "rd_collaboration_run":
+        return subject_id or None
+    if subject_type != "rd_work_item":
+        return None
+    repository = getattr(store, "repository", None)
+    get_work_item = getattr(repository, "get_rd_work_item", None)
+    work_item = (
+        get_work_item(subject_id)
+        if callable(get_work_item)
+        else _records(store, "rd_work_items").get(subject_id)
+    )
+    return str(work_item.get("collaboration_run_id") or "") if work_item else None
+
+
 def _matches_selector(store: Any, actor: dict[str, Any], selector: Any) -> bool:
-    if "admin" in set(actor.get("roles") or []):
-        return True
     if not isinstance(selector, dict) or not selector:
         return True
     actor_id = str(actor.get("id") or "")
@@ -492,7 +524,13 @@ def _answer_decision_repository(
     current = get_decision(decision_request_id)
     if current is None:
         raise api_error(404, "NOT_FOUND", "Decision request not found")
-    actor_seats = sorted(_actor_seat_ids(store, actor))
+    actor_seats = sorted(
+        _actor_seat_ids(
+            store,
+            actor,
+            collaboration_run_id=_decision_collaboration_run_id(store, current),
+        )
+    )
 
     def operation(transaction: Any) -> dict[str, Any]:
         decision = transaction.answer_decision_request(

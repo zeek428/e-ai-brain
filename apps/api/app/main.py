@@ -296,8 +296,16 @@ async def rd_collaboration_repository_exception_handler(
     request: Request,
     exc: RdCollaborationRepositoryError,
 ) -> JSONResponse:
+    status_code = {
+        "NOT_FOUND": 404,
+        "PERMISSION_DENIED": 403,
+        "RD_DECISION_INPUT_INVALID": 422,
+        "RD_PLAN_INVALID": 422,
+        "RD_EXECUTOR_UNAVAILABLE": 503,
+        "REPOSITORY_REQUIRED": 503,
+    }.get(exc.code, 409)
     return JSONResponse(
-        status_code=409,
+        status_code=status_code,
         content={
             "detail": {
                 "code": exc.code,

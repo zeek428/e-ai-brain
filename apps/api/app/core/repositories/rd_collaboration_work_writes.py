@@ -493,6 +493,11 @@ class RdCollaborationWorkWriteMixin:
                     ),
                 )
                 persisted_work_item = _row_dict(cursor, cursor.fetchone())
+                if persisted_work_item is not None and next_status == "completed":
+                    self._promote_dependency_satisfied_successors_cursor(
+                        cursor,
+                        predecessor_work_item_id=work_item_id,
+                    )
                 persisted_event = None
                 if event is not None:
                     persisted_event = self._insert_event_cursor(cursor, event)
@@ -503,6 +508,50 @@ class RdCollaborationWorkWriteMixin:
                     "attempt": persisted_attempt,
                     "event": persisted_event,
                 }
+
+    @staticmethod
+    def _promote_dependency_satisfied_successors_cursor(
+        cursor: Any,
+        *,
+        predecessor_work_item_id: str,
+    ) -> None:
+        """Make completed predecessor edges and their now-runnable successors durable.
+
+        The review transition owns this mutation so a read-side DAG check cannot
+        leave an otherwise valid successor permanently blocked.  The update is
+        deliberately conditional: only a completed predecessor satisfies an
+        edge, and every incoming edge must be satisfied (or explicitly waived)
+        before a blocked successor becomes ready.
+        """
+        cursor.execute(
+            """
+            UPDATE rd_work_item_dependencies
+            SET status = 'satisfied', satisfied_at = COALESCE(satisfied_at, now()),
+                updated_at = now()
+            WHERE predecessor_work_item_id = %s AND status = 'pending'
+            """,
+            (predecessor_work_item_id,),
+        )
+        cursor.execute(
+            """
+            UPDATE rd_work_items AS successor
+            SET status = 'ready', version = version + 1, updated_at = now()
+            WHERE successor.status = 'blocked'
+              AND EXISTS (
+                SELECT 1
+                FROM rd_work_item_dependencies direct_dependency
+                WHERE direct_dependency.successor_work_item_id = successor.id
+                  AND direct_dependency.predecessor_work_item_id = %s
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM rd_work_item_dependencies dependency
+                WHERE dependency.successor_work_item_id = successor.id
+                  AND dependency.status = 'pending'
+              )
+            """,
+            (predecessor_work_item_id,),
+        )
 
     def _insert_event_cursor(self, cursor: Any, event: dict[str, Any]) -> dict[str, Any]:
         columns = [column for column in TABLE_COLUMNS["rd_collaboration_events"] if column in event]
@@ -633,6 +682,12 @@ class RdCollaborationWorkWriteMixin:
                             "cancellation decision is not bound to the work item and product",
                         )
                     persisted_decision = self._insert_decision_request(cursor, decision_request)
+                    self._cancel_linked_delivery_cursor(
+                        cursor,
+                        run_id=str(run["id"]),
+                        work_item_id=work_item_id,
+                        reason="work_item_cancellation_pending_decision",
+                    )
                     if attempt is not None:
                         cursor.execute(
                             """
@@ -1278,8 +1333,6 @@ class RdCollaborationWorkWriteMixin:
         actor_role_codes: list[str],
         actor_seat_ids: list[str],
     ) -> bool:
-        if "admin" in actor_role_codes:
-            return True
         user_ids = {str(item) for item in selector.get("user_ids", [])}
         role_codes = {str(item) for item in selector.get("role_codes", [])}
         seat_ids = {str(item) for item in selector.get("seat_ids", [])}
