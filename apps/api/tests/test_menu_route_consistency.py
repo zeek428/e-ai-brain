@@ -10,6 +10,7 @@ ROUTE_PATH_PATTERN = re.compile(r"path:\s*'([^']+)'")
 CRITICAL_MENU_PATHS = {
     "assistant.drafts": "/assistant/drafts",
     "code_inspection.reports": "/governance/code-inspections",
+    "delivery.rd_collaboration": "/delivery/rd-collaboration",
     "delivery.rd_executor_policies": "/delivery/rd-executor-policies",
     "diagnostics.execution_traces": "/governance/execution-traces",
     "governance.worker_operations": "/governance/worker-operations",

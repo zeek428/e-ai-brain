@@ -434,6 +434,10 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
                     cursor,
                     "120_rd_policy_controlled_deployment.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "122_rd_collaboration_menu.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)

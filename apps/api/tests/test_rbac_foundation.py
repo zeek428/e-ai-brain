@@ -21,6 +21,9 @@ VIEWER_ASSISTANT_BOUNDARY_MIGRATION = Path(
 VIEWER_PRODUCT_READ_MENU_MIGRATION = Path("app/db/migrations/085_viewer_product_read_menu.sql")
 ROLE_BOUNDARY_CLEANUP_MIGRATION = Path("app/db/migrations/090_role_boundary_cleanup.sql")
 DEPLOYMENT_MENU_MIGRATION = Path("app/db/migrations/100_operational_deployment_menu.sql")
+RD_COLLABORATION_MENU_MIGRATION = Path(
+    "app/db/migrations/122_rd_collaboration_menu.sql"
+)
 
 
 def _role_permissions(role_code: str) -> set[str]:
@@ -174,6 +177,33 @@ def test_operational_deployment_menu_resource_and_default_grants_are_seeded():
     roles_by_code = {role["code"]: role for role in ROLE_DEFINITIONS}
     for role_code in {"product_owner", "rd_owner", "release_owner", "test_owner", "tester"}:
         assert "运维部署" in roles_by_code[role_code]["menu_scope"]
+
+
+def test_rd_collaboration_menu_resource_and_admin_grant_are_seeded():
+    resources = {
+        resource["code"]: resource
+        for resource in authorization_repository.COMPATIBILITY_MENU_RESOURCES
+    }
+
+    assert resources["delivery.rd_collaboration"] == {
+        "code": "delivery.rd_collaboration",
+        "name": "研发协同",
+        "path": "/delivery/rd-collaboration",
+        "parent_code": "delivery",
+        "menu_type": "page",
+        "sort_order": 36,
+        "required_permissions": ["delivery.rd_collaboration.read"],
+        "status": "active",
+    }
+    assert "delivery.rd_collaboration" in COMPATIBILITY_ROLE_MENU_GRANTS["admin"]
+
+    sql = RD_COLLABORATION_MENU_MIGRATION.read_text(encoding="utf-8")
+    assert "'delivery.rd_collaboration'" in sql
+    assert "'/delivery/rd-collaboration'" in sql
+    assert "'[\"delivery.rd_collaboration.read\"]'::jsonb" in sql
+    assert "('admin', 'delivery.rd_collaboration')" in sql
+    persistence_source = Path("app/core/persistence.py").read_text(encoding="utf-8")
+    assert '"122_rd_collaboration_menu.sql"' in persistence_source
 
 
 def test_rbac_menu_move_migration_moves_rd_tasks_under_delivery():
