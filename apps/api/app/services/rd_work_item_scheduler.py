@@ -71,6 +71,37 @@ def _dependencies(store: Any, collaboration_run_id: str) -> list[dict[str, Any]]
     ]
 
 
+def _dependency_work_items(
+    store: Any,
+    collaboration_run_id: str,
+    *,
+    candidates: dict[str, dict[str, Any]],
+    dependencies: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Hydrate predecessor rows omitted by the indexed due-candidate scan."""
+    items = dict(candidates)
+    predecessor_ids = {
+        str(dependency.get("predecessor_work_item_id") or "")
+        for dependency in dependencies
+        if str(dependency.get("successor_work_item_id") or "") in candidates
+    }
+    repository = _repository(store)
+    get_work_item = getattr(repository, "get_rd_work_item", None)
+    memory_items = getattr(store, "rd_work_items", None)
+    for predecessor_id in sorted(predecessor_ids - items.keys()):
+        predecessor = (
+            get_work_item(predecessor_id)
+            if callable(get_work_item)
+            else (memory_items.get(predecessor_id) if isinstance(memory_items, dict) else None)
+        )
+        if (
+            isinstance(predecessor, dict)
+            and predecessor.get("collaboration_run_id") == collaboration_run_id
+        ):
+            items[predecessor_id] = predecessor
+    return items
+
+
 def ready_work_items(
     store: Any,
     *,
@@ -84,7 +115,7 @@ def ready_work_items(
     listing can never grant a lease by itself.
     """
     observed_at = _normalize_utc_time(now or _now())
-    items = {
+    candidates = {
         str(item["id"]): item
         for item in _work_items(
             store,
@@ -93,8 +124,14 @@ def ready_work_items(
         )
     }
     dependencies = _dependencies(store, collaboration_run_id)
+    dependency_items = _dependency_work_items(
+        store,
+        collaboration_run_id,
+        candidates=candidates,
+        dependencies=dependencies,
+    )
     ready: list[dict[str, Any]] = []
-    for item_id, item in items.items():
+    for item_id, item in candidates.items():
         if item.get("status") not in {"ready", "draft", "rework_required", "blocked"}:
             continue
         next_dispatch_at = _parse_time(item.get("next_dispatch_at"))
@@ -106,7 +143,7 @@ def ready_work_items(
             if edge.get("successor_work_item_id") == item_id
         ]
         if all(
-            items.get(predecessor_id, {}).get("status") in _SATISFIED_PREDECESSOR_STATES
+            dependency_items.get(predecessor_id, {}).get("status") in _SATISFIED_PREDECESSOR_STATES
             for predecessor_id in predecessor_ids
         ):
             ready.append(deepcopy(item))

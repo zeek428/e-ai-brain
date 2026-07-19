@@ -316,6 +316,84 @@ def _assert_no_dispatch_bundle_artifacts(
     assert counts == (0, 0, 0, 0, 0)
 
 
+def _add_dispatch_predecessor(
+    repository: PostgresSnapshotRepository,
+    *,
+    ids: dict[str, str],
+    prefix: str,
+    predecessor_status: str | None,
+) -> str:
+    predecessor_id = f"{prefix}-predecessor"
+    if predecessor_status is not None:
+        pause_fields: dict[str, object] = {}
+        if predecessor_status == "waiting_human":
+            decision_id = f"{prefix}-predecessor-decision"
+            repository.save_decision_request_record(
+                _decision_record(
+                    {"product": ids["product_id"], "run": {"id": ids["run_id"]}},
+                    decision_id=decision_id,
+                    subject_type="rd_work_item",
+                    subject_id=predecessor_id,
+                )
+            )
+            pause_fields = {
+                "resume_state": "ready",
+                "suspended_decision_request_id": decision_id,
+                "suspended_at": datetime.now(UTC),
+            }
+        repository.save_rd_work_item_record(
+            {
+                "id": predecessor_id,
+                "collaboration_run_id": ids["run_id"],
+                "requirement_id": ids["requirement_id"],
+                "plan_version": 1,
+                "work_item_type": "implementation",
+                "title": f"{prefix} predecessor",
+                "objective": "control successor dependency eligibility",
+                "owner_seat_id": ids["owner_seat_id"],
+                "reviewer_seat_id": f"{prefix}-reviewer",
+                "status": predecessor_status,
+                "idempotency_key": predecessor_id,
+                **pause_fields,
+            }
+        )
+        repository.save_rd_work_item_dependency_record(
+            {
+                "id": f"{prefix}-dependency",
+                "collaboration_run_id": ids["run_id"],
+                "plan_version": 1,
+                "predecessor_work_item_id": predecessor_id,
+                "successor_work_item_id": ids["work_item_id"],
+                "dependency_type": "finish_to_start",
+                "status": "pending",
+            }
+        )
+        return predecessor_id
+
+    # A missing durable predecessor is not normally constructible because of
+    # the foreign key. Seed one deliberately to prove polling fails closed if
+    # legacy/corrupt data violates that invariant.
+    with repository._connect(autocommit=False) as connection:
+        connection.execute("SET LOCAL session_replication_role = replica")
+        connection.execute(
+            """
+            INSERT INTO rd_work_item_dependencies (
+              id, collaboration_run_id, plan_version,
+              predecessor_work_item_id, successor_work_item_id,
+              dependency_type, status
+            )
+            VALUES (%s, %s, 1, %s, %s, 'finish_to_start', 'pending')
+            """,
+            (
+                f"{prefix}-dependency",
+                ids["run_id"],
+                predecessor_id,
+                ids["work_item_id"],
+            ),
+        )
+    return predecessor_id
+
+
 def _capture_postgres_dispatch_bundle(
     repository: PostgresSnapshotRepository,
     monkeypatch: pytest.MonkeyPatch,
@@ -453,6 +531,49 @@ def test_postgres_auto_dispatch_releases_a_high_risk_item_only_after_its_decisio
 
     assert result["dispatched_work_item_ids"] == [ids["work_item_id"]]
     assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "running"
+
+
+def test_postgres_auto_dispatches_due_successor_after_completed_predecessor(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    prefix = "dispatch-completed-predecessor"
+    ids = _seed_dispatchable_work_item(repository, prefix=prefix)
+    _add_dispatch_predecessor(
+        repository,
+        ids=ids,
+        prefix=prefix,
+        predecessor_status="completed",
+    )
+
+    result = dispatch_ready_ai_work_items(PostgresRuntimeStore(repository))
+
+    assert result["dispatched_work_item_ids"] == [ids["work_item_id"]]
+    assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "running"
+
+
+@pytest.mark.parametrize(
+    "predecessor_status",
+    ["waiting_human", None],
+    ids=["waiting", "missing"],
+)
+def test_postgres_auto_dispatch_keeps_successor_ready_without_completed_predecessor(
+    repository: PostgresSnapshotRepository,
+    predecessor_status: str | None,
+) -> None:
+    prefix = f"dispatch-{predecessor_status or 'missing'}-predecessor"
+    ids = _seed_dispatchable_work_item(repository, prefix=prefix)
+    _add_dispatch_predecessor(
+        repository,
+        ids=ids,
+        prefix=prefix,
+        predecessor_status=predecessor_status,
+    )
+
+    result = dispatch_ready_ai_work_items(PostgresRuntimeStore(repository))
+
+    assert result["dispatched_work_item_ids"] == []
+    assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "ready"
+    assert repository.list_rd_work_item_attempts(ids["work_item_id"]) == []
 
 
 def test_postgres_auto_dispatch_atomically_escalates_a_frozen_runner_safety_fault(
