@@ -11,13 +11,8 @@ MIGRATIONS_DIR = REPO_ROOT / "apps" / "api" / "app" / "db" / "migrations"
 def test_postgres_initdb_cannot_execute_application_migrations() -> None:
     compose_source = COMPOSE_FILE.read_text(encoding="utf-8")
     postgres_image_source = POSTGRES_DOCKERFILE.read_text(encoding="utf-8")
-    initdb_mounts = [
-        line.strip()
-        for line in compose_source.splitlines()
-        if "/docker-entrypoint-initdb.d" in line
-    ]
-
-    assert all("apps/api/app/db/migrations" not in mount for mount in initdb_mounts)
+    assert "/docker-entrypoint-initdb.d" not in compose_source
+    assert "/docker-entrypoint-initdb.d" not in postgres_image_source
     assert "apps/api/app/db/migrations" not in postgres_image_source
     assert "121_requirement_driven_rd_cutover.sql" not in postgres_image_source
     for migration_number in range(125, 129):

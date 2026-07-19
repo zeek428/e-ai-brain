@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 
 def test_api_entrypoint_runs_only_ordinary_additive_migrations(tmp_path: Path) -> None:
