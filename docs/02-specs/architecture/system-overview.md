@@ -163,7 +163,7 @@ Docker Compose
   └─ minio：知识原始资产和解析产物
 ```
 
-API 容器启动入口会在服务启动前执行普通 additive migration，用于升级已有数据库卷；它明确跳过破坏性的 `121_requirement_driven_rd_cutover.sql` 和四个大索引迁移 `125_rd_dispatch_due_index.sql` 至 `128_rd_dependency_successor_index.sql`。迁移 121 必须先完成围栏外只读预检，经 `draining` 收敛到零活动并进入不可回退旧运行时的 `cutover_locked`，再在健康标记和显式 cleanup 命令下执行。四个派发索引由正常 API 运行时的 repository schema-compatibility 路径接管：使用 autocommit 连接、共享的非阻塞 PostgreSQL advisory lock 和 `CREATE INDEX CONCURRENTLY`，有效索引直接复用，无效索引并发删除后重建，未取得锁的启动实例立即继续而不等待。数据库结构或种子数据变更不得依赖清空 volume。PostgreSQL 服务使用同主版本 pgvector 镜像，避免已有 PG18 数据目录被错误挂载到 PG16。
+PostgreSQL 容器只负责初始化数据目录并提供 PostgreSQL + pgvector；Docker Compose 不把 `apps/api/app/db/migrations` 挂载到 `/docker-entrypoint-initdb.d`，PostgreSQL 镜像也不打包该目录。因此全新 volume 与已有 volume 共用同一条应用迁移路径：API 镜像打包 `/app/app/db/migrations`，`api-entrypoint.sh` 在服务启动前作为普通 additive migration 的唯一控制面。它明确跳过破坏性的 `121_requirement_driven_rd_cutover.sql` 和四个大索引迁移 `125_rd_dispatch_due_index.sql` 至 `128_rd_dependency_successor_index.sql`。迁移 121 必须先完成围栏外只读预检，经 `draining` 收敛到零活动并进入不可回退旧运行时的 `cutover_locked`，再在健康标记和显式 cleanup 命令下执行。四个派发索引由正常 API 运行时的 repository schema-compatibility 路径接管：使用 autocommit 连接、共享的非阻塞 PostgreSQL advisory lock 和 `CREATE INDEX CONCURRENTLY`，有效索引直接复用，无效索引并发删除后重建，未取得锁的启动实例立即继续而不等待。数据库结构或种子数据变更不得依赖清空 volume。PostgreSQL 服务使用同主版本 pgvector 镜像，避免已有 PG18 数据目录被错误挂载到 PG16。
 
 ## 外部依赖
 

@@ -81,7 +81,10 @@ any task, Runner, attempt, event, or audit artifact is committed. The shared
 lock order prevents the cancel/suspend race from producing SQLSTATE `40P01`.
 
 Large dispatch indexes and destructive cleanup have different startup
-lifecycles. The ordinary API entrypoint excludes cleanup migration 121 and
+lifecycles. PostgreSQL initdb neither mounts nor packages application migration
+SQL, including for a fresh volume. The API image packages the migration
+directory, and the API entrypoint is the single ordinary migration control
+plane for fresh and existing volumes. It excludes cleanup migration 121 and
 index migrations 125-128. Cleanup 121 remains explicit and maintenance-fenced.
 For 125-128, non-test API repository initialization uses an autocommit
 compatibility connection, one non-blocking advisory lock, catalog
@@ -113,7 +116,10 @@ startup rechecks the indexes.
 - **Task 8** — `e775507e9` and `48e82eda2` separate ordinary startup migrations
   from explicit cleanup/concurrent large-index work and add the parent-run
   fence; `4623ddc13` canonicalizes final dispatch to run-then-item row locking
-  with post-lock provenance/status/version/due revalidation.
+  with post-lock provenance/status/version/due revalidation; `838a47a8a`
+  removes the PostgreSQL initdb application-migration mount, while `35010b4c`
+  hardens the regression proof that the API image/entrypoint owns ordinary
+  migration execution.
 
 Representative regression evidence is
 `test_postgres_autonomous_dispatch_persists_explicit_audit_bundle_without_reading_store_audits`,
@@ -121,6 +127,8 @@ Representative regression evidence is
 `test_postgres_expired_runner_safety_approval_renews_without_dispatch_artifacts`,
 `test_postgres_stale_reserved_worker_cannot_bypass_new_retry_backoff` and
 `test_repository_reserves_fair_dispatch_pages_across_restart_and_workers`, plus
+`test_postgres_initdb_cannot_execute_application_migrations`,
+`test_api_image_packages_migrations_at_entrypoint_default_path`,
 `test_api_entrypoint_runs_only_ordinary_additive_migrations`,
 `test_concurrent_index_compatibility_path_serializes_and_skips_valid_index` and
 `test_postgres_final_dispatch_and_cancel_use_run_then_work_item_lock_order` and

@@ -164,9 +164,11 @@ validation tooling.
 ### Task 8: Fence startup migrations and parent-run dispatch races
 
 **Files:**
+- Modify: `docker-compose.yml`
 - Modify: `infra/docker/api-entrypoint.sh`
 - Modify: `apps/api/app/core/persistence.py`
 - Modify: `apps/api/app/core/repositories/rd_collaboration_work_writes.py`
+- Test: `apps/api/tests/test_docker_migration_boundary.py`
 - Test: `apps/api/tests/test_api_entrypoint.py`
 - Test: `apps/api/tests/test_persistence_repository_boundaries.py`
 - Test: `apps/api/tests/test_rd_work_item_execution_postgres.py`
@@ -174,6 +176,10 @@ validation tooling.
 - [x] Prove the ordinary API entrypoint executes normal additive migrations but
   excludes explicit cleanup migration 121 and large dispatch-index migrations
   125-128.
+- [x] Remove the application-migration bind mount from PostgreSQL initdb so a
+  fresh volume cannot execute a second migration path. Prove the PostgreSQL
+  image contains no application SQL while the API image packages the entrypoint
+  default migration path.
 - [x] Delegate 125-128 to the non-test API repository compatibility path. Use
   an autocommit connection, one non-blocking PostgreSQL advisory lock, catalog
   validity/readiness checks, and concurrent drop/create; a second startup must
@@ -214,8 +220,13 @@ validation tooling.
 - **Task 8**：提交 `e775507e9` 将四个派发大索引迁移改为 advisory-locked
   concurrent compatibility 路径，提交 `48e82eda2` 让普通 API 启动明确排除
   121/125-128 并在最终派发重验父运行；`4623ddc13` 将最终事务锁序统一为
-  `rd_collaboration_runs -> rd_work_items` 并补齐锁后归属/状态/version/due 重验。
+  `rd_collaboration_runs -> rd_work_items` 并补齐锁后归属/状态/version/due 重验；
+  `838a47a8a` 移除 PostgreSQL initdb 的应用迁移挂载，使 API image/entrypoint
+  成为全新与存量 volume 的唯一普通迁移控制面，`35010b4c`
+  进一步收紧 Compose/PostgreSQL image 无 initdb 入口和 API entrypoint import-order 回归。
   验证引用：
+  `test_postgres_initdb_cannot_execute_application_migrations`、
+  `test_api_image_packages_migrations_at_entrypoint_default_path`、
   `test_api_entrypoint_runs_only_ordinary_additive_migrations`、
   `test_concurrent_index_compatibility_path_serializes_and_skips_valid_index`、
   `test_concurrent_index_compatibility_path_does_not_wait_for_another_startup`、

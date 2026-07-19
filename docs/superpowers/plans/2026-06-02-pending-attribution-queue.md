@@ -605,13 +605,17 @@ Document:
 
 - [x] **Step 2: Apply SQL to existing local DB**
 
-Run the migration against the current PostgreSQL container without clearing volumes:
+Rebuild/restart the API so its entrypoint applies the migration without clearing
+volumes, then verify the table from PostgreSQL:
 
 ```bash
-/Applications/Docker.app/Contents/Resources/bin/docker exec e-ai-brain-postgres psql -U ai_brain -d ai_brain -f /docker-entrypoint-initdb.d/013_pending_attribution_items.sql
+docker compose up -d --build api
+docker compose exec -T postgres psql -U ai_brain -d ai_brain -c "SELECT to_regclass('public.pending_attribution_items');"
 ```
 
-Expected: `CREATE TABLE` and index creation messages, or idempotent notices on rerun.
+Expected: `public.pending_attribution_items`. Application migrations are owned by
+the API image/entrypoint for both fresh and existing volumes; PostgreSQL initdb
+must not mount or execute `apps/api/app/db/migrations`.
 
 - [x] **Step 3: Browser smoke**
 

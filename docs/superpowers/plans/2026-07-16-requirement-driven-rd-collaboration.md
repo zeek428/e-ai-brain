@@ -918,11 +918,15 @@ The API and scripts never deploy. Run advisory preflight while `fence_mode=disab
 
 Run the Step 2 command plus `python3 scripts/rd_collaboration_upgrade_check.py --help` and `python3 scripts/rd_collaboration_cutover.py --help`, then commit `feat: validate rd collaboration cutover`.
 
-**Final runtime supplement (2026-07-20):** The ordinary container entrypoint
-must exclude not only explicit cleanup migration 121 but also dispatch index
-migrations 125-128. Migration 121 remains executable only through the fenced
-cleanup command. Migrations 125-128 are installed by non-test API repository
-compatibility initialization on an autocommit connection with one non-blocking
+**Final runtime supplement (2026-07-20):** PostgreSQL initdb must not mount or
+package any application migration SQL, including on a fresh volume. The API
+image packages `/app/app/db/migrations`, and its entrypoint is the single
+control plane for ordinary migrations on both fresh and existing volumes. The
+entrypoint must exclude not only explicit cleanup migration 121 but also
+dispatch index migrations 125-128. Migration 121 remains executable only
+through the fenced cleanup command. Migrations 125-128 are installed by
+non-test API repository compatibility initialization on an autocommit
+connection with one non-blocking
 advisory lock and concurrent index DDL; competing startups do not wait and a
 later startup revalidates index readiness. The final work-item dispatch bundle
 uses an initial non-locking parent-ID lookup and the canonical
@@ -930,6 +934,12 @@ uses an initial non-locking parent-ID lookup and the canonical
 ownership/status/version/due after both locks. A reservation captured before
 `waiting_human` suspension or cancellation therefore cannot create stale
 execution artifacts or a lock-order `40P01` deadlock.
+
+Regression evidence: `test_postgres_initdb_cannot_execute_application_migrations`
+pins the Compose/PostgreSQL image boundary,
+`test_api_image_packages_migrations_at_entrypoint_default_path` pins the API
+image path, and `test_api_entrypoint_runs_only_ordinary_additive_migrations`
+pins the 121/125-128 exclusions; commit `35010b4c` hardens these boundary tests.
 
 ### Task 15: Update Help, Regression Coverage, Browser Evidence, and Remote Branch
 

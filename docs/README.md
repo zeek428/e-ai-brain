@@ -26,7 +26,7 @@ AI Brain 是企业 AI 大脑平台项目。v1 以“研发大脑”为样板，M
 
 ## 实现者最短路径
 
-当前源码已包含 FastAPI + Ant Design Pro 的 MVP 真实系统骨架。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 启动，登录账号来自 PostgreSQL `users` 表，产品、版本、模块、Git 资源、相关系统、需求、AI 任务、人工确认、Graph 运行态、GitLab MR / GitHub PR 兼容快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、采集运行、待归属队列、GitLab 每日代码指标、Jenkins 发布记录、线上日志指标、用户使用指标、用户反馈、迭代规划建议/确认、生命周期上下文边、生命周期风险信号、首页看板快照、模拟 Issue 回写、模型网关配置/调用元数据和 AI 助手会话/消息已写入 PostgreSQL 结构表。当前仍处于 DB-first 迁移期：`/health` 返回 `data_access_mode=db_first_migration`，PostgreSQL 启动使用轻量 `PostgresRuntimeStore` repository 容器而不是 `PersistentMemoryStore.from_repository(...)` 恢复业务集合，请求结束全局 `persist()` 已从 API middleware 移除，`app_state_snapshots` 仅作为历史迁移表保留，不再作为生产业务状态恢复源或写入目标；进程内 `MemoryStore` 仅作为自动化测试 helper，不作为 FastAPI 本地开发持久化模式，PostgreSQL 请求上下文使用非 `MemoryStore` 的 repository source rows/read model 投影。只读缓存可为性能保留，但必须从 PostgreSQL 派生、可重建，且不得作为写接口事实源。数据库升级通过 `apps/api/app/db/migrations/*.sql` 可重复执行脚本完成，不需要也不应清空数据库卷。内部 GitLab / GitHub 预览和 diff 快照必须读取配置的只读 API 凭据；非 `code_review` AI 任务启动必须使用 active/default OpenAI-compatible 模型网关或环境模型网关，`code_review` 任务必须通过可插拔 `code_review_executor` 边界生成报告；默认外部执行器命令为空但模型网关可用时，会在该边界内使用 `model_gateway` 适配器。缺少可用配置时任务明确失败，不生成本地输出、示例数据或前端兜底行。
+当前源码已包含 FastAPI + Ant Design Pro 的 MVP 真实系统骨架。Docker 本地栈默认以 `PERSISTENCE_MODE=postgres` 启动，登录账号来自 PostgreSQL `users` 表，产品、版本、模块、Git 资源、相关系统、需求、AI 任务、人工确认、Graph 运行态、GitLab MR / GitHub PR 兼容快照、Code Review 报告、知识文档、知识 chunk、知识沉淀候选、审计事件、Bug 记录、采集运行、待归属队列、GitLab 每日代码指标、Jenkins 发布记录、线上日志指标、用户使用指标、用户反馈、迭代规划建议/确认、生命周期上下文边、生命周期风险信号、首页看板快照、模拟 Issue 回写、模型网关配置/调用元数据和 AI 助手会话/消息已写入 PostgreSQL 结构表。当前仍处于 DB-first 迁移期：`/health` 返回 `data_access_mode=db_first_migration`，PostgreSQL 启动使用轻量 `PostgresRuntimeStore` repository 容器而不是 `PersistentMemoryStore.from_repository(...)` 恢复业务集合，请求结束全局 `persist()` 已从 API middleware 移除，`app_state_snapshots` 仅作为历史迁移表保留，不再作为生产业务状态恢复源或写入目标；进程内 `MemoryStore` 仅作为自动化测试 helper，不作为 FastAPI 本地开发持久化模式，PostgreSQL 请求上下文使用非 `MemoryStore` 的 repository source rows/read model 投影。只读缓存可为性能保留，但必须从 PostgreSQL 派生、可重建，且不得作为写接口事实源。数据库升级通过 `apps/api/app/db/migrations/*.sql` 可重复执行脚本完成，不需要也不应清空数据库卷。即使在全新 `postgres_data` volume 上，PostgreSQL initdb 也不挂载或执行应用迁移 SQL；API 镜像中的 `/app/app/db/migrations` 和 `api-entrypoint.sh` 是普通迁移的唯一控制面，例外仅有受围栏的 cleanup 121 和运行时 concurrent compatibility 路径处理的 125-128。内部 GitLab / GitHub 预览和 diff 快照必须读取配置的只读 API 凭据；非 `code_review` AI 任务启动必须使用 active/default OpenAI-compatible 模型网关或环境模型网关，`code_review` 任务必须通过可插拔 `code_review_executor` 边界生成报告；默认外部执行器命令为空但模型网关可用时，会在该边界内使用 `model_gateway` 适配器。缺少可用配置时任务明确失败，不生成本地输出、示例数据或前端兜底行。
 
 PostgreSQL 服务默认使用本地项目镜像别名 `e-ai-brain-postgres-pgvector:0.8.2-pg18-trixie`，它对应官方 `pgvector/pgvector:0.8.2-pg18-trixie`，方便 Docker Desktop 中和 `e-ai-brain` 容器组一起管理，并避免已有 PG18 数据卷被错误挂载到 PG16 镜像。网络受限无法拉取官方镜像时，可用 `infra/docker/postgres-pgvector.Dockerfile` 基于本机已有 `postgres:18-alpine` 构建同主版本 fallback 镜像，并通过 `PGVECTOR_IMAGE` 指向它。
 
@@ -112,7 +112,8 @@ docker compose config
 # 启动本地开发栈
 docker compose up -d --build
 
-# 已有数据库卷升级时，API 启动入口按顺序执行普通 additive SQL
+# 全新或已有数据库卷都由 API 启动入口按顺序执行普通 additive SQL
+# PostgreSQL initdb 不挂载 apps/api/app/db/migrations，不是应用迁移执行面
 # 入口显式跳过 cleanup 121 和派发大索引 125-128：121 走受控 cutover，
 # 125-128 由 API repository compatibility 路径并发建索引
 # 不要通过删除 postgres_data 卷来规避迁移问题
