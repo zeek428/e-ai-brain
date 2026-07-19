@@ -991,6 +991,84 @@ def test_postgres_dispatch_bundle_rejects_a_reserved_approval_claim_without_prov
     _assert_no_dispatch_bundle_artifacts(repository, work_item_id=ids["work_item_id"])
 
 
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "approved_status",
+        "execution_allowed",
+        "nonreserved_approval",
+        "nonreserved_nested_approval",
+        "mutated_nested_approval",
+    ],
+)
+def test_postgres_dispatch_bundle_fails_closed_for_every_runner_safety_claim(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    claim: str,
+) -> None:
+    ids, _decision, _approval_request_id = _approve_runner_safety_gate(
+        repository,
+        monkeypatch,
+        prefix=f"runner-safety-final-claim-{claim.replace('_', '-')}",
+    )
+    original_dispatch = repository.dispatch_work_item_execution_bundle
+
+    def dispatch_with_crafted_claim(**kwargs):  # type: ignore[no-untyped-def]
+        runner_task = dict(kwargs["runner_task"])
+        request_config = dict(runner_task.get("request_config") or {})
+        safety = dict(request_config.get("ai_executor_safety") or {})
+        if claim == "approved_status":
+            request_config.pop("ai_executor_approval", None)
+            safety = {"status": "approved"}
+        elif claim == "execution_allowed":
+            request_config.pop("ai_executor_approval", None)
+            safety = {
+                "approval_required": True,
+                "execution_allowed": True,
+                "status": "blocked",
+            }
+        elif claim == "nonreserved_approval":
+            request_config["ai_executor_approval"] = {
+                "approval_request_id": "generic-approval-request"
+            }
+            safety = {"status": "not_required"}
+        elif claim == "nonreserved_nested_approval":
+            request_config.pop("ai_executor_approval", None)
+            safety = {
+                "approval": {"approval_request_id": "generic-approval-request"},
+                "status": "not_required",
+            }
+        else:
+            safety["approval"] = {
+                **dict(safety.get("approval") or {}),
+                "unexpected": "mutated-after-preflight",
+            }
+        request_config["ai_executor_safety"] = safety
+        runner_task["request_config"] = request_config
+        kwargs["runner_task"] = runner_task
+        if claim != "mutated_nested_approval":
+            kwargs.pop("runner_safety_approval_request", None)
+            kwargs.pop("runner_safety_decision", None)
+        return original_dispatch(**kwargs)
+
+    monkeypatch.setattr(
+        repository,
+        "dispatch_work_item_execution_bundle",
+        dispatch_with_crafted_claim,
+    )
+
+    with pytest.raises(RdCollaborationRepositoryError) as exc_info:
+        dispatch_ai_task_for_work_item(
+            PostgresRuntimeStore(repository),
+            collaboration_run_id=ids["run_id"],
+            work_item_id=ids["work_item_id"],
+        )
+
+    assert exc_info.value.code == "RD_DECISION_REQUIRED"
+    assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "ready"
+    _assert_no_dispatch_bundle_artifacts(repository, work_item_id=ids["work_item_id"])
+
+
 @pytest.mark.parametrize("interleaved_change", ["approval_expiry", "decision_mutation"])
 def test_postgres_dispatch_revalidates_runner_safety_after_preflight_before_commit(
     repository: PostgresSnapshotRepository,
@@ -1134,6 +1212,126 @@ def test_postgres_dispatch_rejects_approval_that_expires_while_waiting_for_its_r
     assert isinstance(outcome.get("error"), RdCollaborationRepositoryError)
     assert outcome["error"].code == "RD_DECISION_REQUIRED"  # type: ignore[union-attr]
     assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "ready"
+    _assert_no_dispatch_bundle_artifacts(repository, work_item_id=ids["work_item_id"])
+
+
+def test_postgres_dispatch_rolls_back_when_approval_expires_during_late_bundle_write(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids, _decision, approval_request_id = _approve_runner_safety_gate(
+        repository,
+        monkeypatch,
+        prefix="runner-safety-late-write-expiry",
+    )
+    expires_at = datetime.now(UTC) + timedelta(seconds=1.5)
+    with repository._connect() as connection:
+        approval = repository.get_ai_executor_approval_request(approval_request_id)["approval"]
+        connection.execute(
+            """
+            UPDATE ai_executor_approval_requests
+            SET approval = %s, expires_at = %s, updated_at = now()
+            WHERE id = %s
+            """,
+            (
+                Jsonb({**approval, "expires_at": expires_at.isoformat()}),
+                expires_at,
+                approval_request_id,
+            ),
+        )
+        connection.commit()
+
+    captured_bundle: dict[str, object] = {}
+    original_dispatch = repository.dispatch_work_item_execution_bundle
+
+    def capture_bundle(**kwargs):  # type: ignore[no-untyped-def]
+        captured_bundle.update(kwargs)
+        return original_dispatch(**kwargs)
+
+    monkeypatch.setattr(repository, "dispatch_work_item_execution_bundle", capture_bundle)
+    late_write_completed = Event()
+    allow_transaction_to_finish = Event()
+    original_upsert_audits = repository._upsert_audit_events
+
+    def pause_after_late_audit_write(cursor, audit_events):  # type: ignore[no-untyped-def]
+        assert original_upsert_audits is not None
+        original_upsert_audits(cursor, audit_events)
+        late_write_completed.set()
+        assert allow_transaction_to_finish.wait(timeout=10)
+
+    monkeypatch.setattr(repository, "_upsert_audit_events", pause_after_late_audit_write)
+    outcome: dict[str, object] = {}
+
+    def dispatch() -> None:
+        try:
+            outcome["result"] = dispatch_ai_task_for_work_item(
+                PostgresRuntimeStore(repository),
+                collaboration_run_id=ids["run_id"],
+                work_item_id=ids["work_item_id"],
+            )
+        except Exception as exc:  # noqa: BLE001 - thread transfers the exact failure
+            outcome["error"] = exc
+
+    thread = Thread(target=dispatch)
+    thread.start()
+    assert late_write_completed.wait(timeout=10)
+    remaining_seconds = (expires_at - datetime.now(UTC)).total_seconds()
+    if remaining_seconds > 0:
+        Event().wait(timeout=remaining_seconds + 0.2)
+    allow_transaction_to_finish.set()
+    thread.join(timeout=10)
+
+    assert not thread.is_alive()
+    assert "result" not in outcome
+    assert isinstance(outcome.get("error"), RdCollaborationRepositoryError)
+    assert outcome["error"].code == "RD_DECISION_REQUIRED"  # type: ignore[union-attr]
+    assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "ready"
+    task = captured_bundle["task"]
+    runner_task = captured_bundle["runner_task"]
+    attempt = captured_bundle["attempt"]
+    context_manifest = captured_bundle["context_manifest"]
+    agent_loop_run = captured_bundle["agent_loop_run"]
+    agent_budget_ledger = captured_bundle["agent_budget_ledger"]
+    event = captured_bundle["event"]
+    assert isinstance(task, dict)
+    assert isinstance(runner_task, dict)
+    assert isinstance(attempt, dict)
+    assert isinstance(context_manifest, dict)
+    assert isinstance(agent_loop_run, dict)
+    assert isinstance(agent_budget_ledger, dict)
+    assert isinstance(event, dict)
+    with repository._connect() as connection:
+        rolled_back = connection.execute(
+            """
+            SELECT
+              NOT EXISTS (SELECT 1 FROM ai_tasks WHERE id = %s),
+              NOT EXISTS (SELECT 1 FROM ai_executor_tasks WHERE id = %s),
+              NOT EXISTS (SELECT 1 FROM rd_work_item_attempts WHERE id = %s),
+              NOT EXISTS (
+                SELECT 1 FROM rd_work_item_attempts WHERE idempotency_key = %s
+              ),
+              NOT EXISTS (SELECT 1 FROM execution_context_manifests WHERE id = %s),
+              NOT EXISTS (SELECT 1 FROM agent_loop_runs WHERE id = %s),
+              NOT EXISTS (
+                SELECT 1 FROM trusted_delivery_records
+                WHERE record_type = 'agent_budget_ledger' AND id = %s
+              ),
+              NOT EXISTS (SELECT 1 FROM rd_collaboration_events WHERE id = %s),
+              NOT EXISTS (SELECT 1 FROM audit_events WHERE ai_task_id = %s)
+            """,
+            (
+                task["id"],
+                runner_task["id"],
+                attempt["id"],
+                attempt["idempotency_key"],
+                context_manifest["id"],
+                agent_loop_run["id"],
+                agent_budget_ledger["id"],
+                event["id"],
+                task["id"],
+            ),
+        ).fetchone()
+    assert rolled_back == (True,) * 9
     _assert_no_dispatch_bundle_artifacts(repository, work_item_id=ids["work_item_id"])
 
 

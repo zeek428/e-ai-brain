@@ -790,11 +790,15 @@ class RdCollaborationWorkWriteMixin:
         runner_task: dict[str, Any],
         runner_safety_approval_request: dict[str, Any] | None,
         runner_safety_decision: dict[str, Any] | None,
-    ) -> None:
+    ) -> str | None:
         request_config = runner_task.get("request_config") or {}
+        if not isinstance(request_config, dict):
+            raise self._runner_safety_dispatch_proof_error()
         claimed_approval = request_config.get("ai_executor_approval")
         safety_snapshot = request_config.get("ai_executor_safety") or {}
-        safety_approval = safety_snapshot.get("approval") or {}
+        if not isinstance(safety_snapshot, dict):
+            raise self._runner_safety_dispatch_proof_error()
+        safety_approval = safety_snapshot.get("approval")
         claimed_ids = {
             str(approval.get("approval_request_id") or "").strip()
             for approval in (claimed_approval, safety_approval)
@@ -808,10 +812,35 @@ class RdCollaborationWorkWriteMixin:
         provenance_supplied = (
             runner_safety_approval_request is not None or runner_safety_decision is not None
         )
-        if not reserved_ids:
+        nested_approval_claimed = isinstance(safety_approval, dict) and any(
+            (
+                safety_approval.get("approval_id"),
+                safety_approval.get("approval_request_id"),
+                safety_approval.get("approved") is True,
+                safety_approval.get("approved_at"),
+                safety_approval.get("approved_by"),
+                safety_approval.get("approved_operations"),
+                safety_approval.get("expires_at"),
+                safety_approval.get("mode") == "platform_human_approval",
+            )
+        )
+        ordinary_unapproved_execution = (
+            safety_snapshot.get("status") == "not_required"
+            and safety_snapshot.get("approval_required") is False
+        )
+        collaboration_safety_claimed = (
+            safety_snapshot.get("status") == "approved"
+            or (
+                safety_snapshot.get("execution_allowed") is True
+                and not ordinary_unapproved_execution
+            )
+            or "ai_executor_approval" in request_config
+            or nested_approval_claimed
+        )
+        if not collaboration_safety_claimed:
             if provenance_supplied:
                 raise self._runner_safety_dispatch_proof_error()
-            return
+            return None
         if (
             len(reserved_ids) != 1
             or claimed_ids != reserved_ids
@@ -905,6 +934,12 @@ class RdCollaborationWorkWriteMixin:
             "mode": "platform_human_approval",
             "policy_version": self._RUNNER_SAFETY_POLICY_VERSION,
         }
+        expected_safety_approval = {
+            **expected_approval,
+            "invalid_reasons": [],
+            "missing_fields": [],
+            "missing_operations": [],
+        }
         # ``now()`` is pinned to transaction start and can therefore remain
         # pre-expiry after this transaction waited on either provenance lock.
         cursor.execute("SELECT %s > clock_timestamp()", (expires_at,))
@@ -917,6 +952,7 @@ class RdCollaborationWorkWriteMixin:
             or canonical_request.get("runner_id") != runner_task.get("runner_id")
             or approval != expected_approval
             or claimed_approval != expected_approval
+            or safety_approval != expected_safety_approval
             or not approval_is_current
             or canonical_decision.get("id") != decision_id
             or canonical_decision.get("decision_type") != "runner_safety_approval"
@@ -934,6 +970,27 @@ class RdCollaborationWorkWriteMixin:
             or safety_snapshot.get("policy_version") != self._RUNNER_SAFETY_POLICY_VERSION
             or safety_snapshot.get("status") != "approved"
         ):
+            raise self._runner_safety_dispatch_proof_error()
+        return approval_request_id
+
+    def _revalidate_runner_safety_expiry_cursor(
+        self,
+        cursor: Any,
+        *,
+        approval_request_id: str | None,
+    ) -> None:
+        if approval_request_id is None:
+            return
+        cursor.execute(
+            """
+            SELECT expires_at > clock_timestamp()
+            FROM ai_executor_approval_requests
+            WHERE id = %s
+            """,
+            (approval_request_id,),
+        )
+        current = cursor.fetchone()
+        if current is None or current[0] is not True:
             raise self._runner_safety_dispatch_proof_error()
 
     def dispatch_work_item_execution_bundle(
@@ -1032,7 +1089,7 @@ class RdCollaborationWorkWriteMixin:
                 work_item_id=work_item_id,
                 attempt_id=attempt.get("id"),
             )
-        self._validate_runner_safety_dispatch_cursor(
+        runner_safety_approval_request_id = self._validate_runner_safety_dispatch_cursor(
             cursor,
             work_item_id=work_item_id,
             attempt=attempt,
@@ -1134,6 +1191,10 @@ class RdCollaborationWorkWriteMixin:
         if callback is None:
             raise RuntimeError("audit persistence callback is not configured")
         callback(cursor, audit_events)
+        self._revalidate_runner_safety_expiry_cursor(
+            cursor,
+            approval_request_id=runner_safety_approval_request_id,
+        )
         return {
             "work_item": persisted_work_item,
             "attempt": persisted_attempt,
