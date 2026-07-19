@@ -18,9 +18,9 @@ from app.core.repositories.rd_collaboration import (
 )
 from app.core.store import DEFAULT_BRAIN_APP_ID
 from app.services.agent_autonomy import (
-    attach_agent_loop_coding_task,
     autonomy_enabled,
-    start_agent_loop,
+    build_agent_loop_bundle,
+    save_agent_loop_bundle,
 )
 from app.services.ai_executor_runners import (
     create_ai_executor_task,
@@ -28,14 +28,19 @@ from app.services.ai_executor_runners import (
     sync_ai_executor_runner_store,
 )
 from app.services.execution_context_manifests import (
-    build_and_save_execution_context_manifest,
+    build_execution_context_manifest,
+    save_execution_context_manifest,
 )
 from app.services.knowledge_documents import (
     knowledge_query_repository,
     knowledge_repository_access_args,
 )
 from app.services.knowledge_search import memory_knowledge_search_candidates
-from app.services.operational_records import record_audit_event
+from app.services.operational_records import (
+    read_memory_dict,
+    record_audit_event,
+    save_single_repository_record,
+)
 from app.services.rd_policy_validation import (
     PolicyValidationError,
     rd_collaboration_deployment_enabled,
@@ -1388,14 +1393,14 @@ def render_executor_instruction(
     return instruction
 
 
-def queue_rd_task_executor_task(
+def prepare_rd_task_executor_task(
     *,
     current_store: Any,
     policy: dict[str, Any],
     task: dict[str, Any],
     user: dict[str, Any],
-    persist: bool = True,
 ) -> dict[str, Any]:
+    """Build Runner and execution-governance records without durable writes."""
     workspace_root = _ensure_non_blank(policy.get("workspace_root"), "workspace_root")
     knowledge_references = _task_knowledge_references(
         current_store=current_store,
@@ -1417,7 +1422,7 @@ def queue_rd_task_executor_task(
     )
     branch = _executor_branch(policy, task) or None
     repository_id = _executor_repository_id(policy, task) or None
-    context_manifest = build_and_save_execution_context_manifest(
+    context_manifest, context_manifest_audit_event = build_execution_context_manifest(
         branch=branch,
         current_store=current_store,
         knowledge_references=knowledge_references,
@@ -1426,10 +1431,9 @@ def queue_rd_task_executor_task(
         user=user,
     )
     context_manifest_id = context_manifest["id"]
-    agent_loop_run: dict[str, Any] | None = None
-    agent_loop_iteration: dict[str, Any] | None = None
+    agent_loop_bundle: dict[str, Any] | None = None
     if autonomy_enabled(policy):
-        agent_loop_run, agent_loop_iteration = start_agent_loop(
+        agent_loop_bundle = build_agent_loop_bundle(
             current_store,
             context_manifest=context_manifest,
             policy=policy,
@@ -1441,6 +1445,10 @@ def queue_rd_task_executor_task(
             "agent_iteration.change_summary、agent_iteration.test_evidence 和"
             " agent_iteration.failure_analysis；不得绕过安全边界或伪造测试证据。"
         )
+    agent_loop_run = dict(agent_loop_bundle["run"]) if agent_loop_bundle else None
+    agent_loop_iteration = (
+        dict(agent_loop_bundle["iterations"][0]) if agent_loop_bundle else None
+    )
     input_payload = {
         "branch": branch,
         "bug": (task.get("input_json") or {}).get("bug") or {},
@@ -1502,13 +1510,84 @@ def queue_rd_task_executor_task(
         scheduled_job_run_id=None,
         timeout_seconds=int(policy.get("timeout_seconds") or 1800),
         workspace_root=workspace_root,
-        persist=persist,
+        persist=False,
     )
-    if agent_loop_run is not None and agent_loop_iteration is not None:
-        attach_agent_loop_coding_task(
-            current_store,
-            coding_runner_task_id=runner_task["id"],
-            iteration_id=agent_loop_iteration["id"],
-            loop_run_id=agent_loop_run["id"],
+    if agent_loop_bundle is not None and agent_loop_iteration is not None:
+        agent_loop_iteration.update(
+            {
+                "coding_runner_task_id": runner_task["id"],
+                "updated_at": runner_task["created_at"],
+            }
         )
+        agent_loop_bundle["iterations"] = [agent_loop_iteration]
+        agent_loop_bundle["budget_ledger"] = {
+            **dict(agent_loop_bundle["budget_ledger"]),
+            "status": "settled",
+            "updated_at": runner_task["created_at"],
+        }
+    audit_events = [
+        event
+        for event in current_store.audit_events
+        if event.get("subject_id")
+        in {
+            context_manifest["id"],
+            (agent_loop_run or {}).get("id"),
+            runner_task["id"],
+        }
+    ]
+    return {
+        "agent_loop_bundle": agent_loop_bundle,
+        "audit_events": audit_events,
+        "context_manifest": context_manifest,
+        "context_manifest_audit_event": context_manifest_audit_event,
+        "runner_task": runner_task,
+    }
+
+
+def queue_rd_task_executor_task(
+    *,
+    current_store: Any,
+    policy: dict[str, Any],
+    task: dict[str, Any],
+    user: dict[str, Any],
+    persist: bool = True,
+) -> dict[str, Any]:
+    prepared = prepare_rd_task_executor_task(
+        current_store=current_store,
+        policy=policy,
+        task=task,
+        user=user,
+    )
+    runner_task = dict(prepared["runner_task"])
+    if not persist:
+        return runner_task
+    manifest_audit = prepared.get("context_manifest_audit_event")
+    if isinstance(manifest_audit, dict):
+        save_execution_context_manifest(
+            current_store,
+            audit_event=manifest_audit,
+            record=dict(prepared["context_manifest"]),
+        )
+    agent_loop_bundle = prepared.get("agent_loop_bundle")
+    if isinstance(agent_loop_bundle, dict):
+        save_agent_loop_bundle(current_store, agent_loop_bundle)
+    runner_audit = next(
+        (
+            event
+            for event in prepared["audit_events"]
+            if event.get("subject_type") == "ai_executor_task"
+            and event.get("subject_id") == runner_task["id"]
+        ),
+        None,
+    )
+    repository = getattr(current_store, "repository", None)
+    if repository is not None:
+        save_single_repository_record(
+            current_store,
+            "save_ai_executor_task_record",
+            runner_task,
+            audit_event=runner_audit,
+        )
+    else:
+        read_memory_dict(current_store, "ai_executor_tasks")[runner_task["id"]] = runner_task
     return runner_task

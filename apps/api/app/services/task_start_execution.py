@@ -15,6 +15,7 @@ from app.services.model_gateway import (
 from app.services.operational_records import read_memory_dict
 from app.services.rd_requirement_entry_adapters import require_v2_task_work_item_entrypoint
 from app.services.rd_task_executor_policies import (
+    prepare_rd_task_executor_task,
     queue_rd_task_executor_task,
     resolve_rd_task_executor_policy,
 )
@@ -438,13 +439,22 @@ def dispatch_ai_task_for_work_item(
         "permissions": ["system.admin"],
         "scope_summary": [{"scope_type": "global", "scope_id": "*", "access_level": "admin"}],
     }
-    runner_task = queue_rd_task_executor_task(
-        current_store=current_store,
-        policy=policy,
-        task=task,
-        user=system_actor,
-        persist=repository is None,
-    )
+    prepared_execution: dict[str, Any] | None = None
+    if repository is not None:
+        prepared_execution = prepare_rd_task_executor_task(
+            current_store=current_store,
+            policy=policy,
+            task=task,
+            user=system_actor,
+        )
+        runner_task = dict(prepared_execution["runner_task"])
+    else:
+        runner_task = queue_rd_task_executor_task(
+            current_store=current_store,
+            policy=policy,
+            task=task,
+            user=system_actor,
+        )
     frozen_execution_snapshot = deepcopy(policy["rd_execution_policy_snapshot"])
     runner_task["input_payload"] = {
         **dict(runner_task.get("input_payload") or {}),
@@ -520,6 +530,25 @@ def dispatch_ai_task_for_work_item(
                 task=task,
                 requirement=created.get("requirement"),
                 runner_task=runner_task,
+                context_manifest=dict(prepared_execution["context_manifest"]),
+                agent_loop_run=(
+                    dict(prepared_execution["agent_loop_bundle"]["run"])
+                    if prepared_execution.get("agent_loop_bundle")
+                    else None
+                ),
+                agent_loop_iterations=(
+                    [
+                        dict(iteration)
+                        for iteration in prepared_execution["agent_loop_bundle"]["iterations"]
+                    ]
+                    if prepared_execution.get("agent_loop_bundle")
+                    else []
+                ),
+                agent_budget_ledger=(
+                    dict(prepared_execution["agent_loop_bundle"]["budget_ledger"])
+                    if prepared_execution.get("agent_loop_bundle")
+                    else None
+                ),
                 attempt=attempt,
                 event={
                     "id": current_store.new_id("rd_collaboration_event"),
@@ -537,7 +566,11 @@ def dispatch_ai_task_for_work_item(
                 },
                 audit_events=[
                     event
-                    for event in (created.get("creation_audit_event"), audit_event)
+                    for event in (
+                        created.get("creation_audit_event"),
+                        *prepared_execution["audit_events"],
+                        audit_event,
+                    )
                     if isinstance(event, dict)
                 ],
             )

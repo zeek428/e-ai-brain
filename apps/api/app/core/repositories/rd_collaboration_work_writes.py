@@ -776,6 +776,10 @@ class RdCollaborationWorkWriteMixin:
         task: dict[str, Any],
         requirement: dict[str, Any] | None,
         runner_task: dict[str, Any],
+        context_manifest: dict[str, Any],
+        agent_loop_run: dict[str, Any] | None,
+        agent_loop_iterations: list[dict[str, Any]],
+        agent_budget_ledger: dict[str, Any] | None,
         attempt: dict[str, Any],
         event: dict[str, Any],
         audit_events: list[dict[str, Any]],
@@ -795,6 +799,10 @@ class RdCollaborationWorkWriteMixin:
                 task=task,
                 requirement=requirement,
                 runner_task=runner_task,
+                context_manifest=context_manifest,
+                agent_loop_run=agent_loop_run,
+                agent_loop_iterations=agent_loop_iterations,
+                agent_budget_ledger=agent_budget_ledger,
                 attempt=attempt,
                 event=event,
                 audit_events=audit_events,
@@ -810,6 +818,10 @@ class RdCollaborationWorkWriteMixin:
         task: dict[str, Any],
         requirement: dict[str, Any] | None,
         runner_task: dict[str, Any],
+        context_manifest: dict[str, Any],
+        agent_loop_run: dict[str, Any] | None,
+        agent_loop_iterations: list[dict[str, Any]],
+        agent_budget_ledger: dict[str, Any] | None,
         attempt: dict[str, Any],
         event: dict[str, Any],
         audit_events: list[dict[str, Any]],
@@ -852,11 +864,69 @@ class RdCollaborationWorkWriteMixin:
         upsert_runner_tasks = getattr(self, "upsert_ai_executor_tasks", None)
         if not callable(upsert_tasks) or not callable(upsert_runner_tasks):
             raise RuntimeError("task execution persistence callbacks are not configured")
+        governance_read_repository = getattr(
+            self,
+            "_execution_governance_read_repository",
+            None,
+        )
+        governance_write_repository = getattr(
+            governance_read_repository,
+            "_write_repository",
+            None,
+        )
+        upsert_manifests = getattr(
+            governance_write_repository,
+            "upsert_execution_context_manifests",
+            None,
+        )
+        upsert_loop_runs = getattr(
+            governance_write_repository,
+            "upsert_agent_loop_runs",
+            None,
+        )
+        upsert_loop_iterations = getattr(
+            governance_write_repository,
+            "upsert_agent_loop_iterations",
+            None,
+        )
+        if not all(
+            callable(callback)
+            for callback in (upsert_manifests, upsert_loop_runs, upsert_loop_iterations)
+        ):
+            raise RuntimeError("execution governance persistence callbacks are not configured")
         upsert_tasks(cursor, {task["id"]: task})
         if requirement is not None:
             if not callable(upsert_requirements):
                 raise RuntimeError("requirement execution persistence callback is not configured")
             upsert_requirements(cursor, {requirement["id"]: requirement})
+        upsert_manifests(cursor, {context_manifest["id"]: context_manifest})
+        if agent_budget_ledger is not None:
+            cursor.execute(
+                """
+                INSERT INTO trusted_delivery_records (
+                  record_type, id, product_id, payload_json, created_at, updated_at
+                )
+                VALUES ('agent_budget_ledger', %s, %s, %s, %s::timestamptz, %s::timestamptz)
+                ON CONFLICT (record_type, id) DO UPDATE SET
+                  product_id = EXCLUDED.product_id,
+                  payload_json = EXCLUDED.payload_json,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    agent_budget_ledger["id"],
+                    agent_budget_ledger.get("product_id"),
+                    Jsonb(agent_budget_ledger),
+                    agent_budget_ledger.get("created_at"),
+                    agent_budget_ledger.get("updated_at")
+                    or agent_budget_ledger.get("created_at"),
+                ),
+            )
+        if agent_loop_run is not None:
+            upsert_loop_runs(cursor, {agent_loop_run["id"]: agent_loop_run})
+            upsert_loop_iterations(
+                cursor,
+                {iteration["id"]: iteration for iteration in agent_loop_iterations},
+            )
         upsert_runner_tasks(cursor, {runner_task["id"]: runner_task})
         persisted_attempt = self._insert_attempt(cursor, attempt)
         cursor.execute(

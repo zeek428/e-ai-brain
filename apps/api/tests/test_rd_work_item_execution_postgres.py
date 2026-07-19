@@ -45,6 +45,7 @@ def _seed_dispatchable_work_item(
     repository: PostgresSnapshotRepository,
     *,
     prefix: str,
+    autonomy_mode: str = "single_pass",
     git_config: dict[str, object] | None = None,
     quality_gate_policy_id: str | None = None,
     seat_capacity: int = 1,
@@ -78,7 +79,14 @@ def _seed_dispatchable_work_item(
         prefix=prefix,
     )
     version_snapshot["payload_json"] = {
-        "autonomy_config": {"mode": "single_pass", "timeout_seconds": 60},
+        "autonomy_config": {
+            "cost_budget": 5.0,
+            "max_duration_seconds": 600,
+            "max_iterations": 3,
+            "mode": autonomy_mode,
+            "timeout_seconds": 60,
+            "token_budget": 10_000,
+        },
         "git_config": {"workspace_root": "/srv/rd-work", **(git_config or {})},
         "quality_gate_config": {
             "code_change_review_mode": "manual_review",
@@ -217,6 +225,28 @@ def _seed_dispatchable_work_item(
         "requirement_id": requirement_id,
         "product_id": ids["product"],
     }
+
+
+def _assert_no_autonomous_dispatch_records(
+    repository: PostgresSnapshotRepository,
+    *,
+    ai_task_id: str,
+    loop_run_ids: list[str] | None = None,
+) -> None:
+    assert repository.list_execution_context_manifests(
+        subject_id=ai_task_id,
+        subject_type="ai_task",
+    ) == []
+    assert repository.list_agent_loop_runs(ai_task_id=ai_task_id) == []
+    for loop_run_id in loop_run_ids or []:
+        assert repository.list_agent_loop_iterations(loop_run_id) == []
+    assert [
+        ledger
+        for ledger in repository.list_trusted_delivery_records(
+            record_type="agent_budget_ledger"
+        )
+        if ledger.get("ai_task_id") == ai_task_id
+    ] == []
 
 
 def _quality_gate_policy(
@@ -380,19 +410,35 @@ def test_postgres_dispatch_rolls_back_task_runner_attempt_event_and_audit_togeth
     repository: PostgresSnapshotRepository,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    ids = _seed_dispatchable_work_item(repository, prefix="work-item-atomic-rollback")
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-atomic-rollback",
+        autonomy_mode="autonomous_loop",
+    )
+    allocated_ids: dict[str, list[str]] = {"agent_loop_run": [], "task": []}
+    original_next_id = repository.next_id
+
+    def capture_task_id(prefix: str) -> str:
+        record_id = original_next_id(prefix)
+        if prefix in allocated_ids:
+            allocated_ids[prefix].append(record_id)
+        return record_id
 
     def fail_runner_insert(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("inject runner insert failure")
 
+    monkeypatch.setattr(repository, "next_id", capture_task_id)
     monkeypatch.setattr(repository, "upsert_ai_executor_tasks", fail_runner_insert)
 
-    with pytest.raises(RuntimeError, match="inject runner insert failure"):
+    dispatch_error: Exception | None = None
+    try:
         dispatch_ai_task_for_work_item(
             PostgresRuntimeStore(repository),
             collaboration_run_id=ids["run_id"],
             work_item_id=ids["work_item_id"],
         )
+    except Exception as exc:  # noqa: BLE001 - the regression inspects rollback after any failure
+        dispatch_error = exc
 
     work_item = repository.get_rd_work_item(ids["work_item_id"])
     assert work_item is not None and work_item["status"] == "ready"
@@ -404,22 +450,63 @@ def test_postgres_dispatch_rolls_back_task_runner_attempt_event_and_audit_togeth
     ] == []
     assert repository.list_ai_executor_tasks(ai_task_id=None) == []
     assert repository.list_rd_collaboration_events(ids["run_id"]) == []
+    assert len(allocated_ids["task"]) == 1
+    _assert_no_autonomous_dispatch_records(
+        repository,
+        ai_task_id=allocated_ids["task"][0],
+        loop_run_ids=allocated_ids["agent_loop_run"],
+    )
+    assert isinstance(dispatch_error, RuntimeError)
+    assert str(dispatch_error) == "inject runner insert failure"
 
 
 def test_concurrent_postgres_dispatch_reuses_one_active_task_attempt_and_runner(
     repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    ids = _seed_dispatchable_work_item(repository, prefix="work-item-atomic-concurrent")
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-atomic-concurrent",
+        autonomy_mode="autonomous_loop",
+    )
+    allocated_ids: dict[str, list[str]] = {"agent_loop_run": [], "task": []}
+    original_next_id = repository.next_id
 
-    def dispatch() -> dict[str, object]:
-        return dispatch_ai_task_for_work_item(
-            PostgresRuntimeStore(repository),
-            collaboration_run_id=ids["run_id"],
-            work_item_id=ids["work_item_id"],
-        )
+    def capture_task_id(prefix: str) -> str:
+        record_id = original_next_id(prefix)
+        if prefix in allocated_ids:
+            allocated_ids[prefix].append(record_id)
+        return record_id
+
+    monkeypatch.setattr(repository, "next_id", capture_task_id)
+
+    def dispatch() -> dict[str, object] | Exception:
+        try:
+            return dispatch_ai_task_for_work_item(
+                PostgresRuntimeStore(repository),
+                collaboration_run_id=ids["run_id"],
+                work_item_id=ids["work_item_id"],
+            )
+        except Exception as exc:  # noqa: BLE001 - preserve both concurrent outcomes
+            return exc
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        results = list(executor.map(lambda _: dispatch(), range(2)))
+        outcomes = list(executor.map(lambda _: dispatch(), range(2)))
+
+    persisted_task_ids = {
+        str(task["id"])
+        for task in repository.load_ai_tasks()["ai_tasks"].values()
+        if task.get("work_item_id") == ids["work_item_id"]
+    }
+    losing_task_ids = set(allocated_ids["task"]) - persisted_task_ids
+    for losing_task_id in losing_task_ids:
+        _assert_no_autonomous_dispatch_records(
+            repository,
+            ai_task_id=losing_task_id,
+        )
+
+    assert all(isinstance(outcome, dict) for outcome in outcomes)
+    results = [outcome for outcome in outcomes if isinstance(outcome, dict)]
 
     task_ids = {str(result["task"]["id"]) for result in results}
     attempt_ids = {str(result["attempt"]["id"]) for result in results}
@@ -435,6 +522,25 @@ def test_concurrent_postgres_dispatch_reuses_one_active_task_attempt_and_runner(
     assert len(persisted_tasks) == 1
     assert len(repository.list_rd_work_item_attempts(ids["work_item_id"])) == 1
     assert len(repository.list_ai_executor_tasks(ai_task_id=next(iter(task_ids)))) == 1
+    winning_task_id = next(iter(task_ids))
+    losing_task_ids = set(allocated_ids["task"]) - {winning_task_id}
+    assert len(losing_task_ids) == 1
+    manifests = repository.list_execution_context_manifests(
+        subject_id=winning_task_id,
+        subject_type="ai_task",
+    )
+    loop_runs = repository.list_agent_loop_runs(ai_task_id=winning_task_id)
+    assert len(manifests) == len(loop_runs) == 1
+    assert len(repository.list_agent_loop_iterations(loop_runs[0]["id"])) == 1
+    assert len(
+        [
+            ledger
+            for ledger in repository.list_trusted_delivery_records(
+                record_type="agent_budget_ledger"
+            )
+            if ledger.get("ai_task_id") == winning_task_id
+        ]
+    ) == 1
 
 
 def test_postgres_work_item_transition_rolls_back_task_attempt_event_and_audit(

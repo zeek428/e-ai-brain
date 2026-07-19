@@ -10,7 +10,6 @@ from app.api.deps import api_error
 from app.services.agent_budget_governance import (
     evaluate_agent_circuit_breaker,
     latest_agent_budget_ledger,
-    reserve_agent_budget,
     settle_agent_budget,
 )
 from app.services.ai_executor_task_creation import create_ai_executor_task
@@ -53,6 +52,50 @@ def _save_loop_bundle(
         iteration_store[iteration["id"]] = deepcopy(iteration)
 
 
+def build_agent_budget_record(
+    current_store: Any,
+    *,
+    ai_task_id: str,
+    cost_budget: float | None,
+    product_id: str | None,
+    token_budget: int | None,
+    now: str,
+) -> dict[str, Any]:
+    """Build a budget reservation without opening a persistence transaction."""
+    return {
+        "ai_task_id": ai_task_id,
+        "cost_budget": cost_budget,
+        "cost_reserved": float(cost_budget or 0),
+        "cost_settled": 0.0,
+        "created_at": now,
+        "id": current_store.new_id("agent_budget_ledger"),
+        "product_id": product_id,
+        "status": "reserved",
+        "token_budget": token_budget,
+        "token_reserved": int(token_budget or 0),
+        "token_settled": 0,
+        "updated_at": now,
+    }
+
+
+def save_agent_loop_bundle(current_store: Any, bundle: dict[str, Any]) -> None:
+    """Persist a previously built loop bundle for non-atomic callers."""
+    budget_ledger = dict(bundle["budget_ledger"])
+    repository = getattr(current_store, "repository", None)
+    save_budget = getattr(repository, "save_trusted_delivery_record", None)
+    if callable(save_budget):
+        save_budget(record=budget_ledger, record_type="agent_budget_ledger")
+    read_memory_dict(current_store, "agent_budget_ledgers")[budget_ledger["id"]] = deepcopy(
+        budget_ledger
+    )
+    _save_loop_bundle(
+        current_store,
+        audit_events=list(bundle.get("audit_events") or []),
+        iterations=list(bundle.get("iterations") or []),
+        run=dict(bundle["run"]),
+    )
+
+
 def _loop_and_iterations(
     current_store: Any,
     *,
@@ -90,13 +133,14 @@ def _loop_and_iterations(
     return deepcopy(run), [deepcopy(item) for item in iterations]
 
 
-def start_agent_loop(
+def build_agent_loop_bundle(
     current_store: Any,
     *,
     context_manifest: dict[str, Any],
     policy: dict[str, Any],
     task: dict[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> dict[str, Any]:
+    """Build the initial Agent Loop, iteration, audit and budget records only."""
     now = datetime.now(UTC).isoformat()
     run = {
         "id": current_store.new_id("agent_loop_run"),
@@ -162,16 +206,38 @@ def start_agent_loop(
             "max_iterations": run["max_iterations"],
         },
     )
-    budget_ledger = reserve_agent_budget(
+    budget_ledger = build_agent_budget_record(
         current_store,
         ai_task_id=task["id"],
         cost_budget=run.get("cost_budget"),
         product_id=task.get("product_id"),
         token_budget=run.get("token_budget"),
+        now=now,
     )
     run["budget_ledger_id"] = budget_ledger["id"]
-    _save_loop_bundle(current_store, audit_events=[audit], iterations=[iteration], run=run)
-    return deepcopy(run), deepcopy(iteration)
+    return {
+        "audit_events": [audit],
+        "budget_ledger": deepcopy(budget_ledger),
+        "iterations": [deepcopy(iteration)],
+        "run": deepcopy(run),
+    }
+
+
+def start_agent_loop(
+    current_store: Any,
+    *,
+    context_manifest: dict[str, Any],
+    policy: dict[str, Any],
+    task: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    bundle = build_agent_loop_bundle(
+        current_store,
+        context_manifest=context_manifest,
+        policy=policy,
+        task=task,
+    )
+    save_agent_loop_bundle(current_store, bundle)
+    return deepcopy(bundle["run"]), deepcopy(bundle["iterations"][0])
 
 
 def attach_agent_loop_coding_task(

@@ -128,7 +128,7 @@ def _manifest_records(
     ]
 
 
-def build_and_save_execution_context_manifest(
+def build_execution_context_manifest(
     *,
     branch: str | None,
     current_store: Any,
@@ -137,7 +137,8 @@ def build_and_save_execution_context_manifest(
     task: dict[str, Any],
     user: dict[str, Any],
     iteration_context: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Build a manifest and audit record without writing durable state."""
     product_id = str(task.get("product_id") or "").strip()
     require_product_scope(
         user,
@@ -205,7 +206,7 @@ def build_and_save_execution_context_manifest(
         None,
     )
     if duplicate is not None:
-        return deepcopy(duplicate)
+        return deepcopy(duplicate), None
 
     now = datetime.now(UTC).isoformat()
     record = {
@@ -232,6 +233,15 @@ def build_and_save_execution_context_manifest(
             "version": record["version"],
         },
     )
+    return deepcopy(record), audit_event
+
+
+def save_execution_context_manifest(
+    current_store: Any,
+    *,
+    audit_event: dict[str, Any] | None,
+    record: dict[str, Any],
+) -> dict[str, Any]:
     repository = getattr(current_store, "repository", None)
     save_record = getattr(repository, "save_execution_context_manifest_record", None)
     if callable(save_record):
@@ -239,6 +249,34 @@ def build_and_save_execution_context_manifest(
         return deepcopy(persisted or record)
     read_memory_dict(current_store, "execution_context_manifests")[record["id"]] = record
     return deepcopy(record)
+
+
+def build_and_save_execution_context_manifest(
+    *,
+    branch: str | None,
+    current_store: Any,
+    knowledge_references: list[dict[str, Any]],
+    repository_ref: dict[str, Any],
+    task: dict[str, Any],
+    user: dict[str, Any],
+    iteration_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    record, audit_event = build_execution_context_manifest(
+        branch=branch,
+        current_store=current_store,
+        iteration_context=iteration_context,
+        knowledge_references=knowledge_references,
+        repository_ref=repository_ref,
+        task=task,
+        user=user,
+    )
+    if audit_event is None:
+        return record
+    return save_execution_context_manifest(
+        current_store,
+        audit_event=audit_event,
+        record=record,
+    )
 
 
 def execution_context_manifest_for_task(
