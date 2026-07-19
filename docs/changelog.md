@@ -15,6 +15,7 @@
 - 修复钉钉 AI 表格动作在连接未配置 Base ID 时字段不可输入的问题，支持动作级兜底输入并保留连接级自动带出。
 
 ### Changed
+- 修复 Docker fresh-volume 数据库迁移双控制面：PostgreSQL initdb 不再挂载或执行应用迁移，普通迁移统一由 API image/entrypoint 执行；121 保持受围栏显式 cleanup，125-128 保持运行时 concurrent compatibility，并新增 Compose/API image 边界回归。
 - 加固研发协同启动迁移与最终派发锁序：普通 API 启动明确排除显式 cleanup 迁移 121 和派发大索引 125-128，四个大索引改由 autocommit repository compatibility 路径通过非阻塞 advisory lock 与 concurrent DDL 校验/创建；最终派发先无锁读取工作项父运行标识，再按 `rd_collaboration_runs -> rd_work_items` 加锁并重验归属、状态、版本和到期边界，与取消/暂停并发时不会产生 `40P01`，也不会向暂停运行写入陈旧任务、Runner、attempt、事件或审计。
 - 加固研发协同自动派发的一致性：执行上下文清单、Agent 自治循环记录、预算台账和显式构造的审计 bundle 现在与 AI 任务、Runner、attempt、事件在同一 PostgreSQL 事务内写入；准备阶段不再读取运行态 `audit_events` 作为中间数据，Runner 插入失败或并发竞争失败不会遗留孤立的持久化副作用。
 - 研发协同自动派发会区分暂时性重试、容量延后与不可恢复的冻结岗位/策略/执行器配置故障；不可恢复故障会暂停对应工作项并创建可重放的人工决策，容量不足仍保持就绪等待，Worker 观测会分别记录延后、升级和可重试结果。
