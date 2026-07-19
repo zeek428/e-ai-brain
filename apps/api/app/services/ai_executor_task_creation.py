@@ -9,6 +9,7 @@ from app.services.ai_executor_runner_approvals import (
 )
 from app.services.ai_executor_runner_safety import runner_task_safety_snapshot
 from app.services.operational_records import (
+    build_audit_event,
     read_memory_dict,
     record_audit_event,
     save_single_repository_record,
@@ -59,7 +60,8 @@ def create_ai_executor_task(
     quality_gate_run_id: str | None = None,
     task_kind: str = "coding",
     persist: bool = True,
-) -> dict[str, Any]:
+    return_audit_event: bool = False,
+) -> dict[str, Any] | tuple[dict[str, Any], dict[str, Any]]:
     now = datetime.now(UTC).isoformat()
     task_id = current_store.new_id("ai_executor_task")
     safety_snapshot = runner_task_safety_snapshot(
@@ -152,31 +154,45 @@ def create_ai_executor_task(
         "updated_at": now,
         "workspace_root": workspace_root,
     }
-    audit_event = record_audit_event(
-        current_store,
-        event_type="ai_executor_task.queued",
-        actor_id=created_by,
-        subject_type="ai_executor_task",
-        subject_id=task_id,
-        payload={
-            "executor_type": executor_type,
-            "runner_id": runner_id,
-            "scheduled_job_id": scheduled_job_id,
-            "scheduled_job_run_id": scheduled_job_run_id,
-            "ai_task_id": ai_task_id,
-            "context_manifest_id": context_manifest_id,
-            "approval_id": (safety_snapshot.get("approval") or {}).get("approval_id"),
-            "approved_by": (safety_snapshot.get("approval") or {}).get("approved_by"),
-            "approved_operations": (safety_snapshot.get("approval") or {}).get(
-                "approved_operations",
-            )
-            or [],
-            "risk_level": safety_snapshot["risk_level"],
-            "safety_status": safety_snapshot["status"],
-            "task_kind": task_kind,
-            "workspace_root": workspace_root,
-        },
+    audit_payload = {
+        "executor_type": executor_type,
+        "runner_id": runner_id,
+        "scheduled_job_id": scheduled_job_id,
+        "scheduled_job_run_id": scheduled_job_run_id,
+        "ai_task_id": ai_task_id,
+        "context_manifest_id": context_manifest_id,
+        "approval_id": (safety_snapshot.get("approval") or {}).get("approval_id"),
+        "approved_by": (safety_snapshot.get("approval") or {}).get("approved_by"),
+        "approved_operations": (safety_snapshot.get("approval") or {}).get(
+            "approved_operations",
+        )
+        or [],
+        "risk_level": safety_snapshot["risk_level"],
+        "safety_status": safety_snapshot["status"],
+        "task_kind": task_kind,
+        "workspace_root": workspace_root,
+    }
+    audit_event = (
+        record_audit_event(
+            current_store,
+            event_type="ai_executor_task.queued",
+            actor_id=created_by,
+            subject_type="ai_executor_task",
+            subject_id=task_id,
+            payload=audit_payload,
+        )
+        if persist
+        else build_audit_event(
+            current_store,
+            event_type="ai_executor_task.queued",
+            actor_id=created_by,
+            subject_type="ai_executor_task",
+            subject_id=task_id,
+            payload=audit_payload,
+        )
     )
     if persist:
         _persist_ai_executor_task(current_store, task, audit_event=audit_event)
+    if return_audit_event:
+        return task, audit_event
     return task

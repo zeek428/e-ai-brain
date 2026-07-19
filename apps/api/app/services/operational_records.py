@@ -120,6 +120,32 @@ def _audit_events_collection(current_store: Any) -> list[dict[str, Any]]:
     return _memory_list(current_store, "audit_events")
 
 
+def build_audit_event(
+    current_store: Any,
+    *,
+    event_type: str,
+    actor_id: str,
+    subject_type: str,
+    subject_id: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create an audit event for a caller-owned persistence bundle."""
+    return {
+        "id": current_store.new_id("audit_event"),
+        "event_type": event_type,
+        "actor_id": actor_id,
+        "subject_type": subject_type,
+        "subject_id": subject_id,
+        "payload": payload or {},
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+
+
+def save_memory_audit_event(current_store: Any, event: dict[str, Any]) -> None:
+    """Keep the test-only MemoryStore fallback compatible with built events."""
+    _audit_events_collection(current_store).append(event)
+
+
 def record_audit_event(
     current_store: Any,
     *,
@@ -138,17 +164,15 @@ def record_audit_event(
             subject_id=subject_id,
             payload=payload,
         )
-    now = datetime.now(UTC).isoformat()
-    event = {
-        "id": current_store.new_id("audit_event"),
-        "event_type": event_type,
-        "actor_id": actor_id,
-        "subject_type": subject_type,
-        "subject_id": subject_id,
-        "payload": payload or {},
-        "created_at": now,
-    }
-    _audit_events_collection(current_store).append(event)
+    event = build_audit_event(
+        current_store,
+        event_type=event_type,
+        actor_id=actor_id,
+        subject_type=subject_type,
+        subject_id=subject_id,
+        payload=payload,
+    )
+    save_memory_audit_event(current_store, event)
     return event
 
 

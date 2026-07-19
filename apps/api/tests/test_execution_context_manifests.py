@@ -107,6 +107,14 @@ def test_context_manifest_is_versioned_deduplicated_and_redacted() -> None:
     assert second["version"] == 2
     assert second["content_hash"] != first["content_hash"]
     assert execution_context_manifest_for_task(store, task_id=task["id"]) == second
+    assert [
+        event["event_type"]
+        for event in store.audit_events
+        if event.get("subject_id") in {first["id"], second["id"]}
+    ] == [
+        "execution_context_manifest.created",
+        "execution_context_manifest.created",
+    ]
 
 
 def test_context_manifest_rejects_out_of_scope_product() -> None:

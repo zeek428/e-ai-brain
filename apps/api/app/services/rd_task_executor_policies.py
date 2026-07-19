@@ -39,6 +39,7 @@ from app.services.knowledge_search import memory_knowledge_search_candidates
 from app.services.operational_records import (
     read_memory_dict,
     record_audit_event,
+    save_memory_audit_event,
     save_single_repository_record,
 )
 from app.services.rd_policy_validation import (
@@ -1491,7 +1492,7 @@ def prepare_rd_task_executor_task(
         },
         "source": "rd_task_executor_policy",
     }
-    runner_task = create_ai_executor_task(
+    runner_task_result = create_ai_executor_task(
         current_store,
         action_id=None,
         agent_loop_iteration_id=(agent_loop_iteration or {}).get("id"),
@@ -1511,7 +1512,9 @@ def prepare_rd_task_executor_task(
         timeout_seconds=int(policy.get("timeout_seconds") or 1800),
         workspace_root=workspace_root,
         persist=False,
+        return_audit_event=True,
     )
+    runner_task, runner_task_audit_event = runner_task_result
     if agent_loop_bundle is not None and agent_loop_iteration is not None:
         agent_loop_iteration.update(
             {
@@ -1527,13 +1530,12 @@ def prepare_rd_task_executor_task(
         }
     audit_events = [
         event
-        for event in current_store.audit_events
-        if event.get("subject_id")
-        in {
-            context_manifest["id"],
-            (agent_loop_run or {}).get("id"),
-            runner_task["id"],
-        }
+        for event in (
+            context_manifest_audit_event,
+            *((agent_loop_bundle or {}).get("audit_events") or []),
+            runner_task_audit_event,
+        )
+        if isinstance(event, dict)
     ]
     return {
         "agent_loop_bundle": agent_loop_bundle,
@@ -1590,4 +1592,6 @@ def queue_rd_task_executor_task(
         )
     else:
         read_memory_dict(current_store, "ai_executor_tasks")[runner_task["id"]] = runner_task
+        if isinstance(runner_audit, dict):
+            save_memory_audit_event(current_store, runner_audit)
     return runner_task

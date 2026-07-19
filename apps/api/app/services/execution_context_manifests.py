@@ -7,7 +7,11 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
-from app.services.operational_records import read_memory_dict, record_audit_event
+from app.services.operational_records import (
+    build_audit_event,
+    read_memory_dict,
+    save_memory_audit_event,
+)
 from app.services.product_scope import require_product_scope
 
 SENSITIVE_KEY_FRAGMENTS = (
@@ -220,7 +224,7 @@ def build_execution_context_manifest(
         "created_at": now,
         **manifest_content,
     }
-    audit_event = record_audit_event(
+    audit_event = build_audit_event(
         current_store,
         event_type="execution_context_manifest.created",
         actor_id=user["id"],
@@ -248,6 +252,8 @@ def save_execution_context_manifest(
         persisted = save_record(record, audit_event=audit_event)
         return deepcopy(persisted or record)
     read_memory_dict(current_store, "execution_context_manifests")[record["id"]] = record
+    if audit_event is not None:
+        save_memory_audit_event(current_store, audit_event)
     return deepcopy(record)
 
 

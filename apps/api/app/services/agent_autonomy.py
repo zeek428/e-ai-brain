@@ -17,7 +17,12 @@ from app.services.execution_context_manifests import (
     build_and_save_execution_context_manifest,
     execution_context_manifest_for_task,
 )
-from app.services.operational_records import read_memory_dict, record_audit_event
+from app.services.operational_records import (
+    build_audit_event,
+    read_memory_dict,
+    record_audit_event,
+    save_memory_audit_event,
+)
 from app.services.quality_gates import quality_gate_allows_auto_merge
 
 SAFETY_STOP_REASON_CODES = {
@@ -85,6 +90,10 @@ def save_agent_loop_bundle(current_store: Any, bundle: dict[str, Any]) -> None:
     save_budget = getattr(repository, "save_trusted_delivery_record", None)
     if callable(save_budget):
         save_budget(record=budget_ledger, record_type="agent_budget_ledger")
+    else:
+        for audit_event in bundle.get("audit_events") or []:
+            if isinstance(audit_event, dict):
+                save_memory_audit_event(current_store, audit_event)
     read_memory_dict(current_store, "agent_budget_ledgers")[budget_ledger["id"]] = deepcopy(
         budget_ledger
     )
@@ -193,7 +202,7 @@ def build_agent_loop_bundle(
         "created_at": now,
         "updated_at": now,
     }
-    audit = record_audit_event(
+    audit = build_audit_event(
         current_store,
         event_type="agent_loop.started",
         actor_id=str(task.get("created_by") or "system"),

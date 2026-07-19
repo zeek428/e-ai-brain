@@ -469,7 +469,12 @@ def test_postgres_dispatch_rolls_back_task_runner_attempt_event_and_audit_togeth
         prefix="work-item-atomic-rollback",
         autonomy_mode="autonomous_loop",
     )
-    allocated_ids: dict[str, list[str]] = {"agent_loop_run": [], "task": []}
+    allocated_ids: dict[str, list[str]] = {
+        "agent_loop_run": [],
+        "ai_executor_task": [],
+        "execution_context_manifest": [],
+        "task": [],
+    }
     original_next_id = repository.next_id
 
     def capture_task_id(prefix: str) -> str:
@@ -510,8 +515,62 @@ def test_postgres_dispatch_rolls_back_task_runner_attempt_event_and_audit_togeth
         ai_task_id=allocated_ids["task"][0],
         loop_run_ids=allocated_ids["agent_loop_run"],
     )
+    assert [
+        event
+        for event in repository.list_audit_events()
+        if event.get("subject_id")
+        in {
+            allocated_ids["ai_executor_task"][0],
+            allocated_ids["execution_context_manifest"][0],
+            allocated_ids["agent_loop_run"][0],
+            ids["work_item_id"],
+        }
+    ] == []
     assert isinstance(dispatch_error, RuntimeError)
     assert str(dispatch_error) == "inject runner insert failure"
+
+
+def test_postgres_autonomous_dispatch_persists_explicit_audit_bundle_without_reading_store_audits(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    """Dispatch preparation must pass audit records explicitly to PostgreSQL."""
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-explicit-audit-bundle",
+        autonomy_mode="autonomous_loop",
+    )
+
+    class AppendOnlyAuditEvents(list[dict[str, object]]):
+        def __iter__(self):  # type: ignore[override]
+            raise AssertionError("dispatch preparation must not read current_store.audit_events")
+
+    store = PostgresRuntimeStore(repository)
+    store.audit_events = AppendOnlyAuditEvents()
+
+    dispatched = dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id=ids["run_id"],
+        work_item_id=ids["work_item_id"],
+    )
+
+    audit_types = {
+        str(event["event_type"])
+        for event in repository.list_audit_events()
+        if event.get("subject_id")
+        in {
+            dispatched["runner_task"]["id"],
+            dispatched["task"]["id"],
+            dispatched["runner_task"]["context_manifest_id"],
+            dispatched["runner_task"]["agent_loop_run_id"],
+            ids["work_item_id"],
+        }
+    }
+    assert {
+        "agent_loop.started",
+        "ai_executor_task.queued",
+        "execution_context_manifest.created",
+        "rd_work_item.ai_task_dispatched",
+    } <= audit_types
 
 
 def test_postgres_safety_rejected_dispatch_retry_leaves_no_preparation_records(
