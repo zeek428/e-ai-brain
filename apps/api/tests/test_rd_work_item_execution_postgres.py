@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from threading import Event, Thread
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from fastapi import HTTPException
@@ -18,6 +20,7 @@ from app.main import app
 from app.services.ai_executor_runner_approvals import (
     approve_plugin_action_ai_executor_response,
 )
+from app.services.ai_executor_runner_safety import runner_task_safety_snapshot
 from app.services.ai_executor_runners import _sync_runner_completion_to_ai_task
 from app.services.quality_gates import resolve_pre_merge_quality_gate_policy
 from app.services.rd_collaboration_auto_dispatch import dispatch_ready_ai_work_items
@@ -311,6 +314,35 @@ def _assert_no_dispatch_bundle_artifacts(
             """
         ).fetchone()
     assert counts == (0, 0, 0, 0, 0)
+
+
+def _capture_postgres_dispatch_bundle(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    ids: dict[str, str],
+) -> tuple[Callable[..., dict[str, Any]], dict[str, Any]]:
+    original_dispatch = repository.dispatch_work_item_execution_bundle
+    captured_bundle: dict[str, Any] = {}
+
+    def capture_bundle(**kwargs: Any) -> dict[str, Any]:
+        captured_bundle.update(kwargs)
+        return {
+            "attempt": kwargs["attempt"],
+            "runner_task": kwargs["runner_task"],
+            "task": kwargs["task"],
+        }
+
+    monkeypatch.setattr(repository, "dispatch_work_item_execution_bundle", capture_bundle)
+    dispatch_ai_task_for_work_item(
+        PostgresRuntimeStore(repository),
+        collaboration_run_id=ids["run_id"],
+        work_item_id=ids["work_item_id"],
+    )
+    assert captured_bundle
+    assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "ready"
+    _assert_no_dispatch_bundle_artifacts(repository, work_item_id=ids["work_item_id"])
+    return original_dispatch, captured_bundle
 
 
 def _quality_gate_policy(
@@ -989,6 +1021,231 @@ def test_postgres_dispatch_bundle_rejects_a_reserved_approval_claim_without_prov
     assert exc_info.value.code == "RD_DECISION_REQUIRED"
     assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "ready"
     _assert_no_dispatch_bundle_artifacts(repository, work_item_id=ids["work_item_id"])
+
+
+def test_postgres_dispatch_bundle_directly_rejects_canonical_blocked_safety_snapshot(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="runner-safety-direct-canonical-blocked",
+    )
+    original_dispatch, bundle = _capture_postgres_dispatch_bundle(
+        repository,
+        monkeypatch,
+        ids=ids,
+    )
+    runner_task = dict(bundle["runner_task"])
+    request_config = dict(runner_task["request_config"])
+    blocked_snapshot = runner_task_safety_snapshot(
+        instruction="Run git push",
+        request_config=None,
+    )
+    assert blocked_snapshot["status"] == "blocked"
+    request_config["ai_executor_safety"] = blocked_snapshot
+    runner_task["request_config"] = request_config
+
+    with pytest.raises(RdCollaborationRepositoryError) as exc_info:
+        original_dispatch(**{**bundle, "runner_task": runner_task})
+
+    assert exc_info.value.code == "RD_DECISION_REQUIRED"
+    assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "ready"
+    _assert_no_dispatch_bundle_artifacts(repository, work_item_id=ids["work_item_id"])
+
+
+@pytest.mark.parametrize(
+    ("field", "malformed_value"),
+    [
+        pytest.param("approval", {}, id="empty-approval"),
+        pytest.param("approval_request", {}, id="empty-approval-request"),
+        pytest.param("approval_required", 0, id="integer-approval-required"),
+        pytest.param("blocked_operations", {}, id="mapping-blocked-operations"),
+        pytest.param("execution_allowed", False, id="execution-disallowed"),
+        pytest.param("findings", None, id="null-findings"),
+        pytest.param("policy_version", "", id="empty-policy-version"),
+        pytest.param("required_action", "", id="empty-required-action"),
+        pytest.param("risk_level", "", id="empty-risk-level"),
+        pytest.param("status", "", id="empty-status"),
+    ],
+)
+def test_postgres_dispatch_bundle_directly_rejects_malformed_falsey_safety_fields(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    malformed_value: object,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix=f"runner-safety-direct-malformed-{field.replace('_', '-')}",
+    )
+    original_dispatch, bundle = _capture_postgres_dispatch_bundle(
+        repository,
+        monkeypatch,
+        ids=ids,
+    )
+    runner_task = dict(bundle["runner_task"])
+    request_config = dict(runner_task["request_config"])
+    safety = dict(request_config["ai_executor_safety"])
+    safety[field] = malformed_value
+    request_config["ai_executor_safety"] = safety
+    runner_task["request_config"] = request_config
+
+    with pytest.raises(RdCollaborationRepositoryError) as exc_info:
+        original_dispatch(**{**bundle, "runner_task": runner_task})
+
+    assert exc_info.value.code == "RD_DECISION_REQUIRED"
+    assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "ready"
+    _assert_no_dispatch_bundle_artifacts(repository, work_item_id=ids["work_item_id"])
+
+
+@pytest.mark.parametrize(
+    ("field", "malformed_value"),
+    [
+        pytest.param("approved", 0, id="integer-approved"),
+        pytest.param("approved_operations", None, id="null-approved-operations"),
+        pytest.param("invalid_reasons", None, id="null-invalid-reasons"),
+        pytest.param("missing_fields", [], id="empty-missing-fields"),
+        pytest.param("missing_operations", None, id="null-missing-operations"),
+        pytest.param("mode", "", id="empty-required-approval-mode"),
+    ],
+)
+def test_postgres_dispatch_bundle_directly_rejects_malformed_falsey_nested_approval_fields(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    malformed_value: object,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix=f"runner-safety-direct-malformed-approval-{field.replace('_', '-')}",
+    )
+    original_dispatch, bundle = _capture_postgres_dispatch_bundle(
+        repository,
+        monkeypatch,
+        ids=ids,
+    )
+    runner_task = dict(bundle["runner_task"])
+    request_config = dict(runner_task["request_config"])
+    safety = dict(request_config["ai_executor_safety"])
+    approval = dict(safety["approval"])
+    approval[field] = malformed_value
+    safety["approval"] = approval
+    request_config["ai_executor_safety"] = safety
+    runner_task["request_config"] = request_config
+
+    with pytest.raises(RdCollaborationRepositoryError) as exc_info:
+        original_dispatch(**{**bundle, "runner_task": runner_task})
+
+    assert exc_info.value.code == "RD_DECISION_REQUIRED"
+    assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "ready"
+    _assert_no_dispatch_bundle_artifacts(repository, work_item_id=ids["work_item_id"])
+
+
+def test_postgres_dispatch_bundle_directly_accepts_exact_canonical_low_risk_snapshot(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="runner-safety-direct-canonical-low-risk",
+    )
+    original_dispatch, bundle = _capture_postgres_dispatch_bundle(
+        repository,
+        monkeypatch,
+        ids=ids,
+    )
+    runner_task = bundle["runner_task"]
+    assert runner_task["request_config"]["ai_executor_safety"] == runner_task_safety_snapshot(
+        instruction="Read files and run tests",
+        request_config=None,
+    )
+
+    persisted = original_dispatch(**bundle)
+
+    assert persisted["work_item"]["status"] == "running"
+    assert len(repository.list_rd_work_item_attempts(ids["work_item_id"])) == 1
+    assert len(repository.list_ai_executor_tasks(ai_task_id=None)) == 1
+
+
+def test_postgres_dispatch_bundle_directly_accepts_canonical_initial_approval_proof(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids, _decision, _approval_request_id = _approve_runner_safety_gate(
+        repository,
+        monkeypatch,
+        prefix="runner-safety-direct-initial-approval",
+    )
+    original_dispatch, bundle = _capture_postgres_dispatch_bundle(
+        repository,
+        monkeypatch,
+        ids=ids,
+    )
+
+    persisted = original_dispatch(**bundle)
+
+    assert persisted["work_item"]["status"] == "running"
+    assert len(repository.list_rd_work_item_attempts(ids["work_item_id"])) == 1
+    assert len(repository.list_ai_executor_tasks(ai_task_id=None)) == 1
+
+
+def test_postgres_dispatch_bundle_directly_accepts_canonical_renewal_approval_proof(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids, _decision, initial_approval_request_id = _approve_runner_safety_gate(
+        repository,
+        monkeypatch,
+        prefix="runner-safety-direct-renewal-approval",
+    )
+    initial_record = repository.get_ai_executor_approval_request(initial_approval_request_id)
+    expired_at = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+    with repository._connect() as connection:
+        connection.execute(
+            """
+            UPDATE ai_executor_approval_requests
+            SET approval = %s, expires_at = %s
+            WHERE id = %s
+            """,
+            (
+                Jsonb({**initial_record["approval"], "expires_at": expired_at}),
+                expired_at,
+                initial_approval_request_id,
+            ),
+        )
+        connection.commit()
+    renewed_gate = dispatch_ready_ai_work_items(PostgresRuntimeStore(repository))
+    assert renewed_gate["escalated_work_item_ids"] == [ids["work_item_id"]]
+    renewal_decision = next(
+        decision
+        for decision in repository.list_decision_requests(
+            subject_type="rd_work_item",
+            subject_id=ids["work_item_id"],
+        )
+        if decision["status"] == "pending"
+    )
+    apply_decision(
+        PostgresRuntimeStore(repository),
+        decision_request_id=renewal_decision["id"],
+        selected_option="authorize_blocked_operations",
+        input_value={},
+        comment=None,
+        actor={"id": "user_reviewer", "roles": []},
+        version=1,
+        idempotency_key="runner-safety-direct-renewal-approve",
+    )
+    original_dispatch, bundle = _capture_postgres_dispatch_bundle(
+        repository,
+        monkeypatch,
+        ids=ids,
+    )
+
+    persisted = original_dispatch(**bundle)
+
+    assert persisted["work_item"]["status"] == "running"
+    assert len(repository.list_rd_work_item_attempts(ids["work_item_id"])) == 1
+    assert len(repository.list_ai_executor_tasks(ai_task_id=None)) == 1
 
 
 @pytest.mark.parametrize(

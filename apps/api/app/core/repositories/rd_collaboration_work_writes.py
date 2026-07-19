@@ -29,6 +29,40 @@ from app.core.repositories.rd_collaboration_shared import (
 
 class RdCollaborationWorkWriteMixin:
     _RUNNER_SAFETY_POLICY_VERSION = "runner_safety_v1"
+    _RUNNER_SAFETY_NO_APPROVAL_SNAPSHOT = {
+        "approval": {
+            "approved": False,
+            "approval_id": None,
+            "approval_request_id": None,
+            "approved_at": None,
+            "approved_by": None,
+            "approved_operations": [],
+            "expires_at": None,
+            "invalid_reasons": [],
+            "missing_fields": [
+                "approval_id",
+                "approved",
+                "approved_at",
+                "approved_by",
+                "approved_operations",
+                "expires_at",
+                "mode",
+                "policy_version",
+            ],
+            "missing_operations": [],
+            "mode": "platform_human_approval_required",
+            "policy_version": None,
+        },
+        "approval_required": False,
+        "blocked_operations": [],
+        "enforcement": "server_preflight_and_runner_guard",
+        "execution_allowed": True,
+        "findings": [],
+        "policy_version": _RUNNER_SAFETY_POLICY_VERSION,
+        "required_action": None,
+        "risk_level": "low",
+        "status": "not_required",
+    }
     _INTEGRATION_WORK_ITEM_TYPES = {
         "automated_testing",
         "integration",
@@ -781,6 +815,22 @@ class RdCollaborationWorkWriteMixin:
             "runner safety dispatch is not bound to canonical approval evidence",
         )
 
+    @classmethod
+    def _strict_runner_safety_value_matches(cls, actual: Any, expected: Any) -> bool:
+        if type(actual) is not type(expected):
+            return False
+        if isinstance(expected, dict):
+            return actual.keys() == expected.keys() and all(
+                cls._strict_runner_safety_value_matches(actual[key], value)
+                for key, value in expected.items()
+            )
+        if isinstance(expected, list):
+            return len(actual) == len(expected) and all(
+                cls._strict_runner_safety_value_matches(actual_item, expected_item)
+                for actual_item, expected_item in zip(actual, expected, strict=True)
+            )
+        return bool(actual == expected)
+
     def _validate_runner_safety_dispatch_cursor(
         self,
         cursor: Any,
@@ -812,32 +862,14 @@ class RdCollaborationWorkWriteMixin:
         provenance_supplied = (
             runner_safety_approval_request is not None or runner_safety_decision is not None
         )
-        nested_approval_claimed = isinstance(safety_approval, dict) and any(
-            (
-                safety_approval.get("approval_id"),
-                safety_approval.get("approval_request_id"),
-                safety_approval.get("approved") is True,
-                safety_approval.get("approved_at"),
-                safety_approval.get("approved_by"),
-                safety_approval.get("approved_operations"),
-                safety_approval.get("expires_at"),
-                safety_approval.get("mode") == "platform_human_approval",
+        canonical_no_approval_execution = (
+            "ai_executor_approval" not in request_config
+            and self._strict_runner_safety_value_matches(
+                safety_snapshot,
+                self._RUNNER_SAFETY_NO_APPROVAL_SNAPSHOT,
             )
         )
-        ordinary_unapproved_execution = (
-            safety_snapshot.get("status") == "not_required"
-            and safety_snapshot.get("approval_required") is False
-        )
-        collaboration_safety_claimed = (
-            safety_snapshot.get("status") == "approved"
-            or (
-                safety_snapshot.get("execution_allowed") is True
-                and not ordinary_unapproved_execution
-            )
-            or "ai_executor_approval" in request_config
-            or nested_approval_claimed
-        )
-        if not collaboration_safety_claimed:
+        if canonical_no_approval_execution:
             if provenance_supplied:
                 raise self._runner_safety_dispatch_proof_error()
             return None
