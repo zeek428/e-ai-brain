@@ -421,6 +421,8 @@ def dispatch_ai_task_for_work_item(
     *,
     collaboration_run_id: str,
     work_item_id: str,
+    expected_work_item_version: int | None = None,
+    dispatch_due_at: datetime | None = None,
 ) -> dict[str, Any]:
     """Dispatch a ready AI work item through its frozen employee/executor pair.
 
@@ -709,7 +711,12 @@ def dispatch_ai_task_for_work_item(
         try:
             persisted = dispatch_bundle(
                 work_item_id=work_item_id,
-                expected_version=int(work_item["version"]) - 1,
+                expected_version=(
+                    expected_work_item_version
+                    if expected_work_item_version is not None
+                    else int(work_item["version"]) - 1
+                ),
+                dispatch_due_at=dispatch_due_at,
                 task=task,
                 requirement=created.get("requirement"),
                 runner_task=runner_task,

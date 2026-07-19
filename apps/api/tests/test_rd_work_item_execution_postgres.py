@@ -5,7 +5,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from threading import Event, Thread
+from threading import Event, Thread, current_thread
 from types import SimpleNamespace
 from typing import Any
 
@@ -779,6 +779,101 @@ def test_postgres_successful_dispatch_atomically_clears_retry_state(
     assert persisted["dispatch_failure_count"] == 0
     assert persisted["last_dispatch_error_code"] is None
     assert persisted["next_dispatch_at"] is None
+
+
+def test_postgres_stale_reserved_worker_cannot_bypass_new_retry_backoff(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import rd_collaboration_auto_dispatch
+
+    ids = _seed_dispatchable_work_item(repository, prefix="dispatch-retry-reservation")
+    observed_at = datetime.now(UTC).replace(microsecond=0)
+    reservation_complete = Event()
+    release_stale_worker = Event()
+    original_reserve = repository.reserve_due_rd_dispatch_candidates
+    original_dispatch = rd_collaboration_auto_dispatch.dispatch_ai_task_for_work_item
+
+    def reserve_with_barrier(**kwargs):  # type: ignore[no-untyped-def]
+        reserved = original_reserve(**kwargs)
+        if current_thread().name == "stale-dispatch-worker":
+            reservation_complete.set()
+            assert release_stale_worker.wait(timeout=10)
+        return reserved
+
+    def dispatch_with_one_retryable_fault(*args, **kwargs):  # type: ignore[no-untyped-def]
+        if current_thread().name == "retry-recording-worker":
+            raise HTTPException(status_code=503, detail={"code": "UPSTREAM_TIMEOUT"})
+        return original_dispatch(*args, **kwargs)
+
+    monkeypatch.setattr(repository, "reserve_due_rd_dispatch_candidates", reserve_with_barrier)
+    monkeypatch.setattr(
+        rd_collaboration_auto_dispatch,
+        "dispatch_ai_task_for_work_item",
+        dispatch_with_one_retryable_fault,
+    )
+    outcomes: dict[str, dict[str, list[str]]] = {}
+
+    def run_worker(name: str) -> None:
+        outcomes[name] = dispatch_ready_ai_work_items(
+            PostgresRuntimeStore(repository),
+            now=observed_at,
+        )
+
+    stale_worker = Thread(
+        target=run_worker,
+        args=("stale",),
+        name="stale-dispatch-worker",
+    )
+    stale_worker.start()
+    assert reservation_complete.wait(timeout=10)
+
+    retry_worker = Thread(
+        target=run_worker,
+        args=("retry",),
+        name="retry-recording-worker",
+    )
+    retry_worker.start()
+    retry_worker.join(timeout=10)
+    assert not retry_worker.is_alive()
+    assert outcomes["retry"]["retryable_work_item_ids"] == [ids["work_item_id"]]
+
+    backed_off = repository.get_rd_work_item(ids["work_item_id"])
+    assert backed_off is not None
+    assert backed_off["status"] == "ready"
+    assert backed_off["dispatch_failure_count"] == 1
+    assert backed_off["last_dispatch_error_code"] == "RD_AUTO_DISPATCH_RETRYABLE"
+    assert backed_off["next_dispatch_at"] == observed_at + timedelta(seconds=5)
+
+    release_stale_worker.set()
+    stale_worker.join(timeout=10)
+    assert not stale_worker.is_alive()
+    assert outcomes["stale"]["dispatched_work_item_ids"] == []
+    assert outcomes["stale"]["skipped_work_item_ids"] == [ids["work_item_id"]]
+
+    still_backed_off = repository.get_rd_work_item(ids["work_item_id"])
+    assert still_backed_off == backed_off
+    _assert_no_dispatch_bundle_artifacts(repository, work_item_id=ids["work_item_id"])
+
+    early = dispatch_ready_ai_work_items(
+        PostgresRuntimeStore(repository),
+        now=backed_off["next_dispatch_at"] - timedelta(microseconds=1),
+    )
+    assert early["dispatched_work_item_ids"] == []
+    assert repository.get_rd_work_item(ids["work_item_id"]) == backed_off
+    _assert_no_dispatch_bundle_artifacts(repository, work_item_id=ids["work_item_id"])
+
+    due = dispatch_ready_ai_work_items(
+        PostgresRuntimeStore(repository),
+        now=backed_off["next_dispatch_at"],
+    )
+    assert due["dispatched_work_item_ids"] == [ids["work_item_id"]]
+    dispatched = repository.get_rd_work_item(ids["work_item_id"])
+    assert dispatched is not None
+    assert dispatched["status"] == "running"
+    assert dispatched["dispatch_failure_count"] == 0
+    assert dispatched["last_dispatch_error_code"] is None
+    assert dispatched["next_dispatch_at"] is None
 
 
 def test_postgres_retry_record_is_rejected_after_candidate_becomes_stale(

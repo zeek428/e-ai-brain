@@ -1155,6 +1155,7 @@ class RdCollaborationWorkWriteMixin:
         *,
         work_item_id: str,
         expected_version: int,
+        dispatch_due_at: datetime | None = None,
         task: dict[str, Any],
         requirement: dict[str, Any] | None,
         runner_task: dict[str, Any],
@@ -1180,6 +1181,7 @@ class RdCollaborationWorkWriteMixin:
                 cursor,
                 work_item_id=work_item_id,
                 expected_version=expected_version,
+                dispatch_due_at=dispatch_due_at,
                 task=task,
                 requirement=requirement,
                 runner_task=runner_task,
@@ -1201,6 +1203,7 @@ class RdCollaborationWorkWriteMixin:
         *,
         work_item_id: str,
         expected_version: int,
+        dispatch_due_at: datetime | None = None,
         task: dict[str, Any],
         requirement: dict[str, Any] | None,
         runner_task: dict[str, Any],
@@ -1222,6 +1225,15 @@ class RdCollaborationWorkWriteMixin:
             )
         if int(work_item["version"]) != int(expected_version):
             raise RdCollaborationVersionConflictError(int(work_item["version"]))
+        if dispatch_due_at is not None:
+            if dispatch_due_at.tzinfo is None:
+                dispatch_due_at = dispatch_due_at.replace(tzinfo=UTC)
+            next_dispatch_at = work_item.get("next_dispatch_at")
+            if next_dispatch_at is not None and next_dispatch_at > dispatch_due_at:
+                raise RdCollaborationRepositoryError(
+                    "RD_DISPATCH_RESERVATION_STALE",
+                    "automatic dispatch reservation is no longer due",
+                )
         cursor.execute(
             "SELECT * FROM rd_run_seats WHERE id = %s FOR UPDATE",
             (work_item.get("owner_seat_id"),),
@@ -1332,6 +1344,11 @@ class RdCollaborationWorkWriteMixin:
                 last_dispatch_error_code = NULL, next_dispatch_at = NULL,
                 version = version + 1, updated_at = now()
             WHERE id = %s AND version = %s AND status = ANY(%s)
+              AND (
+                %s::timestamptz IS NULL
+                OR next_dispatch_at IS NULL
+                OR next_dispatch_at <= %s::timestamptz
+              )
             RETURNING *
             """,
             (
@@ -1340,6 +1357,8 @@ class RdCollaborationWorkWriteMixin:
                 work_item_id,
                 expected_version,
                 ["ready", "rework_required"],
+                dispatch_due_at,
+                dispatch_due_at,
             ),
         )
         persisted_work_item = _row_dict(cursor, cursor.fetchone())

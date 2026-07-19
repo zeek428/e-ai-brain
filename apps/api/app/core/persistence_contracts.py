@@ -367,6 +367,7 @@ class RdCollaborationRepository(Protocol):
         *,
         work_item_id: str,
         expected_version: int,
+        dispatch_due_at: datetime | None = None,
         task: dict[str, Any],
         requirement: dict[str, Any] | None,
         runner_task: dict[str, Any],

@@ -122,7 +122,7 @@ def dispatch_ready_ai_work_items(
         else:
             retryable.append(work_item_id)
 
-    candidate_pages: list[tuple[str, list[dict[str, Any]]]] = []
+    candidate_pages: list[tuple[str, list[dict[str, Any]], bool]] = []
     repository = getattr(store, "repository", None)
     reserve_candidates = getattr(repository, "reserve_due_rd_dispatch_candidates", None)
     if callable(reserve_candidates):
@@ -130,7 +130,7 @@ def dispatch_ready_ai_work_items(
             dict(item)
             for item in reserve_candidates(
                 limit=limit,
-                due_at=scheduler_now,
+                due_at=observed_at,
             )
         ][:limit]
         candidates_by_run: dict[str, list[dict[str, Any]]] = {}
@@ -146,7 +146,7 @@ def dispatch_ready_ai_work_items(
                 now=scheduler_now,
                 candidate_items=candidates,
             )
-            candidate_pages.append((run_id, page))
+            candidate_pages.append((run_id, page, True))
     else:
         runs = [
             run
@@ -190,9 +190,9 @@ def dispatch_ready_ai_work_items(
             if next_cursor is not None:
                 cursor_state["runs"][run_id] = _encode_cursor(next_cursor)
             cursor_state["last_run_id"] = run_id
-            candidate_pages.append((run_id, page))
+            candidate_pages.append((run_id, page, False))
 
-    for run_id, page in candidate_pages:
+    for run_id, page, reservation_bound in candidate_pages:
         for work_item in page:
             if work_item.get("status") not in {"ready", "rework_required"}:
                 continue
@@ -222,12 +222,27 @@ def dispatch_ready_ai_work_items(
                     human_review_required.append(work_item_id)
                     continue
             try:
+                reservation_kwargs = (
+                    {
+                        "expected_work_item_version": int(work_item.get("version") or 1),
+                        "dispatch_due_at": observed_at,
+                    }
+                    if reservation_bound
+                    else {}
+                )
                 dispatch_ai_task_for_work_item(
                     store,
                     collaboration_run_id=run_id,
                     work_item_id=work_item_id,
+                    **reservation_kwargs,
                 )
             except (HTTPException, RdCollaborationRepositoryError) as exc:
+                if isinstance(exc, RdCollaborationRepositoryError) and exc.code in {
+                    "RD_DISPATCH_RESERVATION_STALE",
+                    "RD_VERSION_CONFLICT",
+                }:
+                    skipped.append(work_item_id)
+                    continue
                 fault = classify_dispatch_fault(exc)
                 if fault.outcome == "deferred":
                     capacity_deferred.append(work_item_id)
