@@ -233,6 +233,21 @@ export async function startRdCollaborationRun(
   });
 }
 
+export async function restartRdCollaborationRun(
+  versionId: string,
+  payload: { reason?: string; request_id: string; scope_version: number; terminal_run_id: string },
+) {
+  const token = requireAccessToken();
+  return apiRequest<RdCollaborationRun>(
+    `/api/product-versions/${versionId}/collaboration-runs/restart`,
+    {
+      body: payload,
+      method: 'POST',
+      token,
+    },
+  );
+}
+
 export async function fetchRdWorkItems(runId: string) {
   const token = requireAccessToken();
   return apiRequest<{ dependencies: RdWorkItemDependency[]; items: RdWorkItem[] }>(

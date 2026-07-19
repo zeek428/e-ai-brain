@@ -26,6 +26,7 @@ export type ProductVersionRecord = {
   productId?: string;
   productName?: string;
   releaseDate?: string;
+  scopeVersion?: number;
   startDate?: string;
   status: 'active' | 'archived' | 'planning' | 'released' | 'testing';
   updatedAt?: string;

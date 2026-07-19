@@ -32,8 +32,12 @@ TASK_WORKFLOW_COLLECTION_KEYS = {
     "product_version_branch_configs": "product_version_branch_configs",
     "product_versions": "product_versions",
     "products": "products",
+    "rd_collaboration_runs": "rd_collaboration_runs",
+    "rd_run_seats": "rd_run_seats",
+    "rd_work_items": "rd_work_items",
     "related_systems": "related_systems",
     "requirements": "requirements",
+    "decision_requests": "decision_requests",
 }
 
 
@@ -74,6 +78,10 @@ class TaskWorkflowSourceStore:
         self.graph_runs: dict[str, dict[str, Any]] = {}
         self.graph_checkpoints: dict[str, dict[str, Any]] = {}
         self.human_reviews: dict[str, dict[str, Any]] = {}
+        self.rd_collaboration_runs: dict[str, dict[str, Any]] = {}
+        self.rd_run_seats: dict[str, dict[str, Any]] = {}
+        self.rd_work_items: dict[str, dict[str, Any]] = {}
+        self.decision_requests: dict[str, dict[str, Any]] = {}
         self.audit_events: list[dict[str, Any]] = []
         self.counters: dict[str, int] = {}
 

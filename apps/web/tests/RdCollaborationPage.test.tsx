@@ -19,6 +19,20 @@ afterEach(() => {
 });
 
 describe('RdCollaborationPage', () => {
+  it('directs users without a collaboration run back to the iteration version overview', () => {
+    window.history.pushState({}, '', '/delivery/rd-collaboration');
+
+    render(<RdCollaborationPage />);
+
+    expect(screen.getByText(/请从迭代版本总览启动或继续研发协同。/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '前往迭代版本' })).toHaveAttribute(
+      'href',
+      '/delivery/versions',
+    );
+    expect(screen.queryByLabelText('规划版本 ID')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('范围版本')).not.toBeInTheDocument();
+  });
+
   it('shows work-item dependencies and resolves a frozen human decision without deployment', async () => {
     window.history.pushState({}, '', '/delivery/rd-collaboration?run_id=run_001');
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');

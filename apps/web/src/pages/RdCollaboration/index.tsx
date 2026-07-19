@@ -1,10 +1,9 @@
-import { Alert, Button, Card, Descriptions, Form, Input, InputNumber, Spin, Tabs, Tag, Typography, message } from 'antd';
+import { Alert, Button, Card, Descriptions, Spin, Tabs, Tag, Typography } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   fetchRdCollaborationRun,
   fetchRdWorkItems,
-  startRdCollaborationRun,
   type RdCollaborationRun,
   type RdWorkItem,
   type RdWorkItemDependency,
@@ -14,23 +13,16 @@ import { DecisionPanel } from './DecisionPanel';
 import { DeploymentPanel } from './DeploymentPanel';
 import { WorkItemDag } from './WorkItemDag';
 
-type StartRunFormValues = {
-  scopeVersion: number;
-  versionId: string;
-};
-
 function readRunId() {
   return new URLSearchParams(window.location.search).get('run_id') ?? undefined;
 }
 
 export default function RdCollaborationPage() {
-  const [form] = Form.useForm<StartRunFormValues>();
-  const [runId, setRunId] = useState(readRunId);
+  const runId = readRunId();
   const [run, setRun] = useState<RdCollaborationRun>();
   const [items, setItems] = useState<RdWorkItem[]>([]);
   const [dependencies, setDependencies] = useState<RdWorkItemDependency[]>([]);
   const [loading, setLoading] = useState(false);
-  const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string>();
 
   const reload = useCallback(async () => {
@@ -62,24 +54,6 @@ export default function RdCollaborationPage() {
     return () => globalThis.clearTimeout(timer);
   }, [reload]);
 
-  const start = async () => {
-    const values = await form.validateFields();
-    setStarting(true);
-    try {
-      const created = await startRdCollaborationRun(values.versionId.trim(), {
-        request_id: crypto.randomUUID(),
-        scope_version: values.scopeVersion,
-      });
-      setRunId(created.id);
-      window.history.replaceState({}, '', `/delivery/rd-collaboration?run_id=${encodeURIComponent(created.id)}`);
-      message.success('研发协作运行已启动，平台将按冻结策略创建并调度工作项');
-    } catch (startError) {
-      message.error(formatMutationError(startError));
-    } finally {
-      setStarting(false);
-    }
-  };
-
   const completedCount = useMemo(
     () => items.filter((item) => item.status === 'completed').length,
     [items],
@@ -97,16 +71,13 @@ export default function RdCollaborationPage() {
         type="info"
       />
       {!runId ? (
-        <Card style={{ marginTop: 16 }} title="启动版本协作">
-          <Form form={form} layout="inline" initialValues={{ scopeVersion: 1 }}>
-            <Form.Item label="规划版本 ID" name="versionId" rules={[{ required: true, whitespace: true }]}>
-              <Input placeholder="例如 version_202607" />
-            </Form.Item>
-            <Form.Item label="范围版本" name="scopeVersion" rules={[{ required: true }]}>
-              <InputNumber min={1} />
-            </Form.Item>
-            <Button loading={starting} type="primary" onClick={() => void start()}>启动协作运行</Button>
-          </Form>
+        <Card style={{ marginTop: 16 }} title="从迭代版本进入">
+          <Alert
+            action={<Button href="/delivery/versions" size="small" type="primary">前往迭代版本</Button>}
+            description="请从迭代版本总览启动或继续研发协同。版本页会冻结范围和研发执行策略，避免手工输入版本标识绕过版本治理。"
+            showIcon
+            type="info"
+          />
         </Card>
       ) : null}
       {error ? <Alert action={<Button size="small" onClick={() => void reload()}>重试</Button>} style={{ marginTop: 16 }} title={error} type="error" /> : null}

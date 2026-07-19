@@ -1,21 +1,3 @@
-const loopbackHostnames = new Set(['127.0.0.1', 'localhost', '::1']);
-
-function isPrivateIpv4Hostname(hostname: string) {
-  const parts = hostname.split('.').map((part) => Number(part));
-  if (
-    parts.length !== 4 ||
-    parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
-  ) {
-    return false;
-  }
-  const [first, second] = parts;
-  return (
-    first === 10 ||
-    (first === 172 && second >= 16 && second <= 31) ||
-    (first === 192 && second === 168)
-  );
-}
-
 function defaultDevelopmentApiBaseUrl() {
   if (process.env.NODE_ENV !== 'development') {
     return '';
@@ -23,14 +5,10 @@ function defaultDevelopmentApiBaseUrl() {
   if (typeof window === 'undefined') {
     return 'http://127.0.0.1:8000';
   }
-  const { hostname, protocol } = window.location;
-  if (isPrivateIpv4Hostname(hostname)) {
-    return `${protocol}//${hostname}:8000`;
-  }
-  if (hostname && !loopbackHostnames.has(hostname)) {
-    return '';
-  }
-  return 'http://127.0.0.1:8000';
+  // Browser requests stay same-origin in development so the checked-in Umi
+  // `/api` proxy owns the API connection. This also avoids a separate CORS
+  // dependency for localhost and private-network development hosts.
+  return '';
 }
 
 const defaultApiBaseUrl = defaultDevelopmentApiBaseUrl();

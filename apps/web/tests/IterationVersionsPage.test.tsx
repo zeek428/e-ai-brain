@@ -492,6 +492,13 @@ describe('IterationVersionsPage', () => {
             ],
             knowledge_deposits: [],
             releases: [],
+            rd_collaboration: {
+              action: {
+                label: '启动研发协同',
+                type: 'start',
+              },
+              active_run: null,
+            },
             requirement_status_counts: [],
             requirements: [],
             summary: {},
@@ -505,8 +512,20 @@ describe('IterationVersionsPage', () => {
               product_code: 'AI-BRAIN',
               product_id: 'product_api',
               product_name: 'AI Brain',
+              scope_version: 7,
               status: 'active',
             },
+          },
+        });
+      }
+      if (path === '/api/product-versions/version_dashboard/collaboration-runs' && method === 'POST') {
+        expect(JSON.parse(String(init?.body))).toMatchObject({ scope_version: 7 });
+        return jsonResponse({
+          data: {
+            delivery_target: 'ready_for_release',
+            id: 'run_started_from_version',
+            product_version_id: 'version_dashboard',
+            status: 'planning',
           },
         });
       }
@@ -525,6 +544,17 @@ describe('IterationVersionsPage', () => {
     expect(await screen.findByText('版本总览 · 2026-dashboard')).toBeInTheDocument();
     expect(screen.getAllByText('后端范围可推进').length).toBeGreaterThan(0);
     expect(screen.getAllByText('后端阶段总览覆盖需求范围').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('button', { name: '启动研发协同' }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET']),
+      ).toContainEqual([
+        '/api/product-versions/version_dashboard/collaboration-runs',
+        'POST',
+      ]),
+    );
+    expect(window.location.pathname).toBe('/delivery/rd-collaboration');
+    expect(window.location.search).toBe('?run_id=run_started_from_version');
     expect(screen.queryByText('代码分支 · 2026-dashboard')).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([path]) => path)).toContain(
       '/api/product-versions?page=1&page_size=100&sort_by=created_at&sort_order=desc',
@@ -1245,6 +1275,26 @@ describe('IterationVersionsPage', () => {
                 status: 'failed',
               },
             ],
+            rd_collaboration: {
+              action: {
+                label: '继续研发协同',
+                run_id: 'run_dashboard',
+                type: 'continue',
+              },
+              active_run: {
+                blocked_work_item_count: 1,
+                delivery_target: 'ready_for_release',
+                id: 'run_dashboard',
+                pending_decision_count: 1,
+                role_codes: ['developer', 'tester'],
+                run_generation: 1,
+                scope_version: 2,
+                seat_count: 2,
+                status: 'waiting_human',
+                total_work_item_count: 3,
+                waiting_human_work_item_count: 1,
+              },
+            },
             deployments: [],
             requirement_status_counts: [
               { count: 1, status: 'developing' },
@@ -1364,6 +1414,9 @@ describe('IterationVersionsPage', () => {
     );
 
     expect(await screen.findByText('版本总览 · 2026-dashboard')).toBeInTheDocument();
+    expect(screen.getAllByText('研发协同').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('开发员工、测试员工').length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: '继续研发协同' }).length).toBeGreaterThan(0);
     expect(screen.getByText('下一步行动')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /推进到测试中/ }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole('button', { name: /查看需求/ }).length).toBeGreaterThan(0);

@@ -822,6 +822,24 @@ class RdCollaborationWorkWriteMixin:
             )
         if int(work_item["version"]) != int(expected_version):
             raise RdCollaborationVersionConflictError(int(work_item["version"]))
+        cursor.execute(
+            "SELECT * FROM rd_run_seats WHERE id = %s FOR UPDATE",
+            (work_item.get("owner_seat_id"),),
+        )
+        owner_seat = _row_dict(cursor, cursor.fetchone())
+        if owner_seat is None or owner_seat.get("status") != "active":
+            raise RdCollaborationRepositoryError(
+                "RD_ROLE_ASSIGNMENT_REQUIRED", "frozen work-item owner seat is unavailable"
+            )
+        cursor.execute(
+            "SELECT count(*) FROM rd_work_items WHERE owner_seat_id = %s AND status = 'running'",
+            (owner_seat["id"],),
+        )
+        occupied_count = int(cursor.fetchone()[0])
+        if occupied_count >= int(owner_seat.get("capacity") or 1):
+            raise RdCollaborationRepositoryError(
+                "RD_SEAT_CAPACITY_EXHAUSTED", "frozen collaboration seat is at capacity"
+            )
         if attempt.get("work_item_id") != work_item_id:
             raise self._idempotency_conflict(
                 "attempt belongs to a different work item",
@@ -1066,6 +1084,108 @@ class RdCollaborationWorkWriteMixin:
 
     def save_decision_request_record(self, record: dict[str, Any]) -> dict[str, Any]:
         return self._in_transaction(lambda cursor: self._insert_decision_request(cursor, record))
+
+    def suspend_work_item_for_decision(
+        self,
+        *,
+        work_item_id: str,
+        decision_request: dict[str, Any],
+        expected_version: int,
+    ) -> dict[str, dict[str, Any]]:
+        """Atomically bind a human decision to an eligible work item."""
+        return self._in_transaction(
+            lambda cursor: self._suspend_work_item_for_decision_cursor(
+                cursor,
+                work_item_id=work_item_id,
+                decision_request=decision_request,
+                expected_version=expected_version,
+            )
+        )
+
+    def _suspend_work_item_for_decision_cursor(
+        self,
+        cursor: Any,
+        *,
+        work_item_id: str,
+        decision_request: dict[str, Any],
+        expected_version: int,
+    ) -> dict[str, dict[str, Any]]:
+        with nullcontext():
+            with nullcontext(cursor) as cursor:
+                cursor.execute(
+                    "SELECT collaboration_run_id FROM rd_work_items WHERE id = %s",
+                    (work_item_id,),
+                )
+                identity = cursor.fetchone()
+                if identity is None:
+                    raise RdCollaborationRepositoryError(
+                        "RD_WORK_ITEM_STATE_INVALID",
+                        "work item does not exist",
+                    )
+                cursor.execute(
+                    "SELECT * FROM rd_collaboration_runs WHERE id = %s FOR UPDATE",
+                    (identity[0],),
+                )
+                run = _row_dict(cursor, cursor.fetchone())
+                cursor.execute(
+                    "SELECT * FROM rd_work_items WHERE id = %s FOR UPDATE",
+                    (work_item_id,),
+                )
+                work_item = _row_dict(cursor, cursor.fetchone())
+                if run is None or work_item is None:
+                    raise RdCollaborationRepositoryError(
+                        "RD_WORK_ITEM_STATE_INVALID",
+                        "work item provenance is unavailable",
+                    )
+                if int(work_item["version"]) != int(expected_version):
+                    raise RdCollaborationVersionConflictError(int(work_item["version"]))
+                if run["status"] not in {"running", "integrating", "verifying"}:
+                    raise RdCollaborationRepositoryError(
+                        "RD_WORK_ITEM_STATE_INVALID",
+                        "collaboration run cannot pause a work item in its current phase",
+                    )
+                if work_item["status"] not in {"ready", "rework_required"}:
+                    raise RdCollaborationRepositoryError(
+                        "RD_WORK_ITEM_STATE_INVALID",
+                        "work item cannot be paused from its current state",
+                    )
+                cursor.execute("SELECT now() < %s", (decision_request.get("expires_at"),))
+                if (
+                    decision_request.get("brain_app_id", "rd_brain") != run["brain_app_id"]
+                    or decision_request.get("product_id") != run["product_id"]
+                    or decision_request.get("subject_type") != "rd_work_item"
+                    or decision_request.get("subject_id") != work_item_id
+                    or int(decision_request.get("plan_version") or 0)
+                    != int(run.get("plan_version") or 0)
+                    or decision_request.get("status", "pending") != "pending"
+                    or not bool(cursor.fetchone()[0])
+                ):
+                    raise RdCollaborationRepositoryError(
+                        "RD_DECISION_REQUIRED",
+                        "decision request is not bound to the current work item plan",
+                    )
+                persisted_decision = self._insert_decision_request(cursor, decision_request)
+                cursor.execute(
+                    """
+                    UPDATE rd_work_items
+                    SET status = 'waiting_human', resume_state = 'ready',
+                        suspended_attempt_id = NULL,
+                        suspended_decision_request_id = %s,
+                        suspended_at = now(), lease_owner = NULL,
+                        lease_expires_at = NULL, version = version + 1,
+                        updated_at = now()
+                    WHERE id = %s
+                    RETURNING *
+                    """,
+                    (persisted_decision["id"], work_item_id),
+                )
+                paused_work_item = _row_dict(cursor, cursor.fetchone())
+                if paused_work_item is None:
+                    raise RuntimeError("work item suspension did not return a row")
+                return {
+                    "decision_request": persisted_decision,
+                    "work_item": paused_work_item,
+                }
 
     def claim_ready_work_item(
         self,

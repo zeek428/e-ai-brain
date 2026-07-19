@@ -67,6 +67,7 @@ __all__ = [
     "delete_model_gateway_config_record",
     "derive_code_review_risk_level",
     "embedding_connection_mode",
+    "call_model_gateway_for_json_object",
     "get_model_gateway_config_record",
     "model_gateway_config_records",
     "model_gateway_configs_after_default",
@@ -111,6 +112,123 @@ class ModelGatewayConfigError(Exception):
     def __init__(self, message: str, current_step: str = "model_gateway_config_invalid"):
         super().__init__(message)
         self.current_step = current_step
+
+
+def _parse_model_gateway_json_object(response_payload: dict[str, Any]) -> dict[str, Any]:
+    choices = response_payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise ValueError("Model gateway response is missing choices")
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    if not isinstance(message, dict):
+        raise ValueError("Model gateway response is missing message")
+    content = message.get("content")
+    if isinstance(content, str):
+        parsed = json.loads(content)
+    elif isinstance(content, dict):
+        parsed = content
+    else:
+        raise ValueError("Model gateway response content must be a JSON object")
+    if not isinstance(parsed, dict):
+        raise ValueError("Model gateway response content must be a JSON object")
+    return parsed
+
+
+def call_model_gateway_for_json_object(
+    current_store: Any,
+    *,
+    purpose: str,
+    messages: list[dict[str, str]],
+    opener: Any | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Call the configured chat gateway for a purpose-specific JSON contract.
+
+    Unlike ``call_model_gateway_for_task``, this boundary deliberately does
+    not impose an AI-task output schema.  It is for server-owned structured
+    proposals such as collaboration planning; callers still validate and
+    persist the returned JSON through their domain command.
+    """
+    config = default_model_gateway_config(current_store)
+    if not config:
+        if settings.model_gateway_status != "configured":
+            raise ModelGatewayConfigError(
+                "No active/default model gateway config is configured",
+                current_step="model_gateway_config_invalid",
+            )
+        config = {
+            "api_key": settings.model_gateway_api_key,
+            "base_url": settings.model_gateway_base_url,
+            "default_chat_model": settings.model_gateway_default_chat_model,
+            "id": None,
+            "provider": "openai_compatible",
+            "timeout_seconds": 60,
+        }
+    if config.get("provider") != "openai_compatible":
+        raise ModelGatewayConfigError("Active model gateway provider is not supported")
+    if not config.get("api_key"):
+        raise ModelGatewayConfigError("Active model gateway config is missing api_key")
+    provider = str(config["provider"])
+    model = str(config["default_chat_model"])
+    body = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.2,
+        "response_format": {"type": "json_object"},
+    }
+    request = UrlRequest(
+        model_gateway_chat_completions_url(str(config["base_url"])),
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {config['api_key']}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    started = perf_counter()
+    try:
+        response_payload = read_model_gateway_json_response(
+            request,
+            timeout_seconds=int(config.get("timeout_seconds") or 60),
+            urlopen_func=opener or urlopen,
+        )
+        output = _parse_model_gateway_json_object(response_payload)
+        log = model_gateway_log(
+            current_store,
+            purpose=purpose,
+            provider=provider,
+            model=model,
+            config_id=config.get("id"),
+            tokens=openai_usage_tokens(
+                response_payload.get("usage"),
+                messages=messages,
+                output=output,
+            ),
+            latency_ms=int((perf_counter() - started) * 1000),
+            status="succeeded",
+        )
+        return output, log
+    except (
+        AttributeError,
+        HTTPError,
+        URLError,
+        OSError,
+        json.JSONDecodeError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        prompt_tokens = estimate_tokens(messages)
+        log = model_gateway_log(
+            current_store,
+            purpose=purpose,
+            provider=provider,
+            model=model,
+            config_id=config.get("id"),
+            tokens={"prompt": prompt_tokens, "completion": 0, "total": prompt_tokens},
+            latency_ms=int((perf_counter() - started) * 1000),
+            status="failed",
+            error="Model gateway request failed",
+        )
+        raise ModelGatewayCallError(log) from exc
 
 
 def call_openai_compatible_model_gateway(

@@ -5,11 +5,90 @@ from fastapi.testclient import TestClient
 
 import app.main as main
 import app.services.model_gateway as model_gateway_service
+from app.core.store import MemoryStore
 from app.main import app
+from app.services.model_gateway import call_model_gateway_for_json_object
 from app.services.model_gateway_listing import list_model_gateway_configs_response
 from tests.requirement_fixtures import seed_accepted_assessment_provenance
 
 client = TestClient(app)
+
+
+def test_structured_json_gateway_call_accepts_a_planner_schema_without_task_specific_fields() -> (
+    None
+):
+    store = MemoryStore()
+    store.model_gateway_configs["gateway-1"] = {
+        "id": "gateway-1",
+        "api_key": "sk-planner-test",
+        "base_url": "https://planner.example.com/v1",
+        "default_chat_model": "planner-model",
+        "is_default": True,
+        "provider": "openai_compatible",
+        "status": "active",
+        "timeout_seconds": 9,
+    }
+    requests: list[dict] = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "work_items": [{"id": "design"}],
+                                        "dependencies": [],
+                                    }
+                                )
+                            }
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 7, "completion_tokens": 5, "total_tokens": 12},
+                }
+            ).encode()
+
+    def fake_urlopen(request, timeout):
+        requests.append(
+            {
+                "body": json.loads(request.data.decode()),
+                "timeout": timeout,
+                "url": request.full_url,
+            }
+        )
+        return FakeResponse()
+
+    output, log = call_model_gateway_for_json_object(
+        store,
+        purpose="rd_collaboration_work_item_planning",
+        messages=[{"role": "system", "content": "return a plan"}],
+        opener=fake_urlopen,
+    )
+
+    assert output == {"work_items": [{"id": "design"}], "dependencies": []}
+    assert requests == [
+        {
+            "body": {
+                "messages": [{"role": "system", "content": "return a plan"}],
+                "model": "planner-model",
+                "response_format": {"type": "json_object"},
+                "temperature": 0.2,
+            },
+            "timeout": 9,
+            "url": "https://planner.example.com/v1/chat/completions",
+        }
+    ]
+    assert log | {"purpose": "rd_collaboration_work_item_planning", "status": "succeeded"} == log
+    assert "prompt" not in log
+    assert "output" not in log
 
 
 def auth_headers(username: str = "admin@example.com", password: str = "admin123") -> dict[str, str]:

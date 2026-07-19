@@ -64,7 +64,12 @@ import {
   updateProductVersionBranchConfig,
   updateProductVersion,
 } from '../../services/aiBrain';
+import {
+  restartRdCollaborationRun,
+  startRdCollaborationRun,
+} from '../../services/rdCollaborationClient';
 import { formatMutationError, trimText } from '../../utils/managementCrud';
+import { navigateTo } from '../../utils/navigation';
 import { VersionDashboardModal } from './components/VersionDashboardModal';
 import { RequirementGroupingPanel } from './RequirementGroupingPanel';
 
@@ -417,6 +422,52 @@ export default function IterationVersionsPage() {
       message.error(formatMutationError(loadError));
     }
   }, []);
+
+  const openRdCollaborationRun = useCallback((runId: string) => {
+    navigateTo(
+      `/delivery/rd-collaboration?run_id=${encodeURIComponent(runId)}`,
+    );
+  }, []);
+
+  const handleRdCollaborationAction = useCallback(
+    async (
+      action: NonNullable<ProductVersionDashboard['rdCollaboration']>['action'],
+      version: ProductVersionRecord,
+    ) => {
+      if (action.type === 'continue' && action.runId) {
+        openRdCollaborationRun(action.runId);
+        return;
+      }
+      const scopeVersion = version.scopeVersion ?? 1;
+      setDashboardState((current) =>
+        current ? { ...current, loading: true } : current,
+      );
+      try {
+        const run =
+          action.type === 'restart' && action.runId
+            ? await restartRdCollaborationRun(version.id, {
+                request_id: crypto.randomUUID(),
+                scope_version: scopeVersion,
+                terminal_run_id: action.runId,
+              })
+            : await startRdCollaborationRun(version.id, {
+                request_id: crypto.randomUUID(),
+                scope_version: scopeVersion,
+              });
+        message.success(
+          action.type === 'restart' ? '研发协同已重新启动' : '研发协同已启动',
+        );
+        openRdCollaborationRun(run.id);
+      } catch (actionError) {
+        message.error(formatMutationError(actionError));
+      } finally {
+        setDashboardState((current) =>
+          current ? { ...current, loading: false } : current,
+        );
+      }
+    },
+    [openRdCollaborationRun],
+  );
 
   const loadBranchConfigs = useCallback(
     async (version: ProductVersionRecord) => {
@@ -979,6 +1030,9 @@ export default function IterationVersionsPage() {
         onMaintainBranches={(version) => {
           setDashboardState(undefined);
           openBranchConfigModal(version);
+        }}
+        onRdCollaborationAction={(action, version) => {
+          void handleRdCollaborationAction(action, version);
         }}
         onViewRequirements={(version) => {
           setDashboardState(undefined);

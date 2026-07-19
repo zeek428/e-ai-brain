@@ -959,6 +959,7 @@ def test_product_version_dashboard_aggregates_delivery_health_and_blockers():
     assert limited_dashboard["branch_quality_governance"] == []
     assert limited_dashboard["summary"]["branch_quality_action_required"] == 0
     assert limited_dashboard["summary"]["branch_quality_pending_scan"] == 0
+    assert limited_dashboard["rd_collaboration"] is None
     assert limited_dashboard["access_issues"] == [
         {
             "code": "code_inspection.read",
@@ -1257,3 +1258,105 @@ def test_product_version_dashboard_blocks_release_without_successful_deployment(
     }
     assert data_with_release["blockers"] == []
     assert data_with_release["next_actions"] == []
+
+
+def test_product_version_dashboard_aggregates_active_rd_collaboration_and_entry_action():
+    app.state.store.reset()
+    headers = auth_headers()
+    product = create_product(headers, "version-dashboard-rd-collaboration")
+    version = create_version(headers, product["id"], "2026-rd-collaboration")
+    app.state.store.product_versions[version["id"]]["scope_version"] = 4
+    app.state.store.rd_collaboration_runs["run-dashboard-rd"] = {
+        "delivery_target": "ready_for_release",
+        "id": "run-dashboard-rd",
+        "product_id": product["id"],
+        "product_version_id": version["id"],
+        "run_generation": 1,
+        "scope_version": 4,
+        "status": "waiting_human",
+        "strategy_snapshot_id": "snapshot-dashboard-rd",
+    }
+    app.state.store.rd_run_seats["seat-dashboard-developer"] = {
+        "capacity": 2,
+        "collaboration_run_id": "run-dashboard-rd",
+        "id": "seat-dashboard-developer",
+        "role_code": "developer",
+        "status": "active",
+        "subject_type": "ai_employee",
+    }
+    app.state.store.rd_run_seats["seat-dashboard-tester"] = {
+        "collaboration_run_id": "run-dashboard-rd",
+        "id": "seat-dashboard-tester",
+        "role_code": "tester",
+        "status": "active",
+        "subject_type": "user",
+    }
+    app.state.store.rd_work_items["work-dashboard-done"] = {
+        "collaboration_run_id": "run-dashboard-rd",
+        "id": "work-dashboard-done",
+        "status": "approved",
+    }
+    app.state.store.rd_work_items["work-dashboard-blocked"] = {
+        "collaboration_run_id": "run-dashboard-rd",
+        "id": "work-dashboard-blocked",
+        "release_conditions": [
+            {
+                "kind": "parallel_resource_conflict",
+                "other_path": "src/api.py",
+                "path": "src/api.py",
+                "predecessor_work_item_id": "work-dashboard-done",
+                "repository_id": "repository-dashboard",
+                "successor_work_item_id": "work-dashboard-blocked",
+            }
+        ],
+        "status": "blocked",
+    }
+    app.state.store.rd_work_items["work-dashboard-human"] = {
+        "collaboration_run_id": "run-dashboard-rd",
+        "id": "work-dashboard-human",
+        "release_conditions": [
+            {
+                "kind": "parallel_resource_conflict",
+                "other_path": "src/api.py",
+                "path": "src/api.py",
+                "predecessor_work_item_id": "work-dashboard-done",
+                "repository_id": "repository-dashboard",
+                "successor_work_item_id": "work-dashboard-blocked",
+            }
+        ],
+        "status": "awaiting_human",
+    }
+    app.state.store.decision_requests["decision-dashboard-rd"] = {
+        "id": "decision-dashboard-rd",
+        "status": "pending",
+        "subject_id": "run-dashboard-rd",
+        "subject_type": "rd_collaboration_run",
+    }
+
+    response = client.get(f"/api/product-versions/{version['id']}/dashboard", headers=headers)
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["version"]["scope_version"] == 4
+    assert data["rd_collaboration"] == {
+        "action": {
+            "label": "继续研发协同",
+            "run_id": "run-dashboard-rd",
+            "type": "continue",
+        },
+        "active_run": {
+            "blocked_work_item_count": 1,
+            "capacity": {"available": 2, "frozen": 2, "used": 0},
+            "delivery_target": "ready_for_release",
+            "id": "run-dashboard-rd",
+            "pending_decision_count": 1,
+            "parallel_conflict_count": 1,
+            "role_codes": ["developer", "tester"],
+            "run_generation": 1,
+            "scope_version": 4,
+            "seat_count": 2,
+            "status": "waiting_human",
+            "total_work_item_count": 3,
+            "waiting_human_work_item_count": 1,
+        },
+    }

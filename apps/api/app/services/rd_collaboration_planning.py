@@ -16,6 +16,7 @@ from typing import Any
 
 from app.api.deps import api_error
 from app.services.rd_ai_employees import qualify_ai_actor
+from app.services.rd_parallel_conflicts import analyze_parallel_resource_conflicts
 from app.services.rd_policy_resolution import PolicyResolutionError, merge_policy_payloads
 from app.services.rd_role_definitions import qualify_human_actor
 
@@ -38,6 +39,7 @@ def validate_work_item_plan(
     *,
     available_role_codes: set[str] | None = None,
     seats: list[dict[str, Any]] | None = None,
+    allowed_requirement_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     """Validate a proposed DAG without writing any collaboration state.
 
@@ -65,6 +67,19 @@ def validate_work_item_plan(
         item_ids.add(item_id)
         item = deepcopy(raw_item)
         item["id"] = item_id
+        requirement_id = str(item.get("requirement_id") or "").strip()
+        if requirement_id:
+            if (
+                allowed_requirement_ids is not None
+                and requirement_id not in allowed_requirement_ids
+            ):
+                _invalid(
+                    "Plan work item references a requirement outside the frozen run scope",
+                    reason="requirement_outside_frozen_scope",
+                    item_id=item_id,
+                    requirement_id=requirement_id,
+                )
+            item["requirement_id"] = requirement_id
         owner_role = str(item.get("owner_role_code") or "").strip()
         reviewer_role = str(item.get("reviewer_role_code") or "").strip()
         if not owner_role:
@@ -517,7 +532,7 @@ def _run_seat_records(
                     "policy_version": resolved_snapshot.get("policy_version"),
                     "role_binding": binding.get("id") or role_code,
                 },
-                "capacity": 1,
+                "capacity": int(binding.get("capacity") or 1),
                 "status": "active",
             }
         )
@@ -557,10 +572,22 @@ def persist_work_item_plan(
         ]
     )
     active_seats = [seat for seat in seats if seat.get("status", "active") == "active"]
+    list_scope = getattr(repository, "list_rd_collaboration_run_requirements", None)
+    scope_rows = (
+        list_scope(collaboration_run_id)
+        if callable(list_scope)
+        else [
+            entry
+            for entry in _records(store, "rd_collaboration_run_requirements").values()
+            if entry.get("collaboration_run_id") == collaboration_run_id
+        ]
+    )
+    analyzed_proposal = analyze_parallel_resource_conflicts(proposal)
     plan = validate_work_item_plan(
-        proposal,
+        analyzed_proposal,
         available_role_codes={str(seat.get("role_code")) for seat in active_seats},
         seats=active_seats,
+        allowed_requirement_ids={str(entry.get("requirement_id")) for entry in scope_rows},
     )
     seat_by_role: dict[str, dict[str, Any]] = {}
     for seat in active_seats:
@@ -579,12 +606,25 @@ def persist_work_item_plan(
     dependent_item_ids = {
         str(dependency["successor_work_item_id"]) for dependency in plan["dependencies"]
     }
+    parallel_conflicts_by_item: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for conflict in plan.get("parallel_resource_conflicts") or []:
+        if not isinstance(conflict, dict):
+            continue
+        for item_id in {
+            str(conflict.get("predecessor_work_item_id") or ""),
+            str(conflict.get("successor_work_item_id") or ""),
+        }:
+            if item_id:
+                parallel_conflicts_by_item[item_id].append(deepcopy(conflict))
     for item in plan["work_items"]:
         owner = seat_by_role[str(item["owner_role_code"])]
         reviewer = seat_by_role[str(item["reviewer_role_code"])]
         persisted_id = f"{collaboration_run_id}:plan:{plan_version}:item:{item['id']}"
         ids_by_proposal_id[item["id"]] = persisted_id
         input_contract = deepcopy(item.get("input_contract") or {})
+        resource_claims = deepcopy(item.get("resource_claims") or [])
+        if resource_claims:
+            input_contract["resource_claims"] = resource_claims
         # P1 experience is a feature-gated, cited read-only attachment.  It
         # never changes the frozen strategy, seat, gates, budget or target.
         from app.services.rd_role_experiences import retrieve_approved_role_experiences
@@ -624,6 +664,13 @@ def persist_work_item_plan(
                 "input_contract": input_contract,
                 "output_contract": deepcopy(item.get("output_contract") or {}),
                 "acceptance_criteria": deepcopy(item.get("acceptance_criteria") or []),
+                # ``release_conditions`` is historically a JSON array.  Keep
+                # the collision evidence in that stable shape instead of
+                # introducing a second object schema for newly planned items.
+                "release_conditions": [
+                    {"kind": "parallel_resource_conflict", **conflict}
+                    for conflict in parallel_conflicts_by_item.get(item["id"], [])
+                ],
                 # A plan becomes runnable as part of the same write that
                 # activates the run.  Only roots may be claimed; successors
                 # are explicitly blocked until their predecessor transition

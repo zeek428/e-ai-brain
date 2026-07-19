@@ -1587,6 +1587,20 @@ class RdCollaborationTransaction:
     def save_decision_request_record(self, record: dict[str, Any]) -> dict[str, Any]:
         return self._repository._insert_decision_request(self.cursor, record)
 
+    def suspend_work_item_for_decision(
+        self,
+        *,
+        work_item_id: str,
+        decision_request: dict[str, Any],
+        expected_version: int,
+    ) -> dict[str, dict[str, Any]]:
+        return self._repository._suspend_work_item_for_decision_cursor(
+            self.cursor,
+            work_item_id=work_item_id,
+            decision_request=decision_request,
+            expected_version=expected_version,
+        )
+
     def cancel_work_item_bundle(
         self,
         *,

@@ -15,9 +15,11 @@ from app.services.operational_deployments import (
     process_execution_outbox_events,
     reconcile_platform_external_operations,
 )
+from app.services.rd_collaboration_auto_dispatch import dispatch_ready_ai_work_items
 from app.services.rd_collaboration_graph_event_projection import (
     process_rd_collaboration_graph_events,
 )
+from app.services.rd_collaboration_plan_generation import plan_pending_collaboration_runs
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +29,7 @@ def run_execution_worker_iteration(
     *,
     worker_id: str,
     rd_collaboration_graph_runtime: Any | None = None,
+    collaboration_planner: Any | None = None,
 ) -> dict[str, int]:
     outbox_count = process_execution_outbox_events(
         current_store,
@@ -40,6 +43,11 @@ def run_execution_worker_iteration(
         current_store,
         runtime=rd_collaboration_graph_runtime,
     )
+    rd_collaboration_planning = plan_pending_collaboration_runs(
+        current_store,
+        planner=collaboration_planner,
+    )
+    rd_collaboration_auto_dispatch = dispatch_ready_ai_work_items(current_store)
     jenkins_sync_count = sync_due_jenkins_deployments(
         current_store,
         worker_id=worker_id,
@@ -57,7 +65,11 @@ def run_execution_worker_iteration(
         "external_event_count": external_event_count,
         "jenkins_sync_count": jenkins_sync_count,
         "outbox_count": outbox_count,
+        "rd_collaboration_auto_dispatch_count": len(
+            rd_collaboration_auto_dispatch["dispatched_work_item_ids"]
+        ),
         "rd_collaboration_graph_event_count": rd_collaboration_graph_event_count,
+        "rd_collaboration_plan_count": len(rd_collaboration_planning["planned_run_ids"]),
         "reconciliation_count": reconciliation_count,
     }
     record_execution_worker_heartbeat(current_store, counts=counts, worker_id=worker_id)

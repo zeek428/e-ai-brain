@@ -43,6 +43,25 @@ def test_execution_worker_iteration_processes_outbox_and_jenkins_sync(monkeypatc
     )
     monkeypatch.setattr(
         execution_worker,
+        "plan_pending_collaboration_runs",
+        lambda current_store, *, planner=None: calls.append(
+            ("collaboration_plan", "execution-worker-test")
+        )
+        or {"planned_run_ids": ["run-1"], "skipped_run_ids": []},
+    )
+    monkeypatch.setattr(
+        execution_worker,
+        "dispatch_ready_ai_work_items",
+        lambda current_store: calls.append(("collaboration_dispatch", "execution-worker-test"))
+        or {
+            "dispatched_work_item_ids": ["work-1"],
+            "human_review_required_work_item_ids": [],
+            "skipped_work_item_ids": [],
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        execution_worker,
         "sync_due_jenkins_deployments",
         lambda current_store, *, worker_id: calls.append(("jenkins", worker_id)) or 3,
     )
@@ -56,13 +75,17 @@ def test_execution_worker_iteration_processes_outbox_and_jenkins_sync(monkeypatc
         "external_event_count": 4,
         "jenkins_sync_count": 3,
         "outbox_count": 2,
+        "rd_collaboration_auto_dispatch_count": 1,
         "rd_collaboration_graph_event_count": 5,
+        "rd_collaboration_plan_count": 1,
         "reconciliation_count": 0,
     }
     assert calls == [
         ("outbox", "execution-worker-test"),
         ("external", "execution-worker-test"),
         ("collaboration_graph", "execution-worker-test"),
+        ("collaboration_plan", "execution-worker-test"),
+        ("collaboration_dispatch", "execution-worker-test"),
         ("jenkins", "execution-worker-test"),
     ]
 

@@ -61,6 +61,27 @@ def product_version_dashboard_source_rows(repository: Any, version_id: str) -> d
         for run in deployment_request.get("runs", [])
         if isinstance(run, dict)
     ]
+    rd_collaboration_runs = repository.list_rd_collaboration_runs(
+        product_version_id=version_id,
+    )
+    rd_run_seats = [
+        seat
+        for run in rd_collaboration_runs
+        for seat in repository.list_rd_run_seats(str(run["id"]))
+    ]
+    rd_work_items = [
+        work_item
+        for run in rd_collaboration_runs
+        for work_item in repository.list_rd_work_items(str(run["id"]))
+    ]
+    decision_requests = [
+        decision
+        for run in rd_collaboration_runs
+        for decision in repository.list_decision_requests(
+            subject_type="rd_collaboration_run",
+            subject_id=str(run["id"]),
+        )
+    ]
     source_rows.update(
         {
             "bugs": _list_version_bugs(
@@ -102,11 +123,15 @@ def product_version_dashboard_source_rows(repository: Any, version_id: str) -> d
             "product_version_branch_configs": branch_configs,
             "product_versions": [version],
             "products": [product] if product is not None else [],
+            "rd_collaboration_runs": rd_collaboration_runs,
+            "rd_run_seats": rd_run_seats,
+            "rd_work_items": rd_work_items,
             "related_systems": (
                 repository.list_related_systems(product_id=product_id) if product_id else []
             ),
             "requirements": requirements,
             "tasks": tasks,
+            "decision_requests": decision_requests,
         }
     )
     return source_rows
@@ -121,6 +146,7 @@ def _empty_task_workflow_source_rows() -> dict[str, Any]:
         "code_review_reports": [],
         "deployment_requests": [],
         "deployment_runs": [],
+        "decision_requests": [],
         "gitlab_daily_code_metrics": [],
         "gitlab_mr_snapshots": [],
         "graph_checkpoints": [],
@@ -139,6 +165,9 @@ def _empty_task_workflow_source_rows() -> dict[str, Any]:
         "product_version_branch_configs": [],
         "product_versions": [],
         "products": [],
+        "rd_collaboration_runs": [],
+        "rd_run_seats": [],
+        "rd_work_items": [],
         "related_systems": [],
         "requirements": [],
         "tasks": [],

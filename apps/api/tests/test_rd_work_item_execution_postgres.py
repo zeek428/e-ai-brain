@@ -7,12 +7,18 @@ from hashlib import sha256
 from threading import Event, Thread
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.core.persistence import PostgresRuntimeStore, PostgresSnapshotRepository
 from app.main import app
 from app.services.ai_executor_runners import _sync_runner_completion_to_ai_task
 from app.services.quality_gates import resolve_pre_merge_quality_gate_policy
+from app.services.rd_collaboration_auto_dispatch import dispatch_ready_ai_work_items
+from app.services.rd_collaboration_decisions import apply_decision
+from app.services.rd_high_risk_dispatch_gate import (
+    require_human_approval_for_high_risk_dispatch,
+)
 from app.services.rd_work_item_execution import (
     approve_work_item_after_task_review,
     project_work_item_quality_gate_result,
@@ -41,6 +47,7 @@ def _seed_dispatchable_work_item(
     prefix: str,
     git_config: dict[str, object] | None = None,
     quality_gate_policy_id: str | None = None,
+    seat_capacity: int = 1,
     with_verifier: bool = False,
 ) -> dict[str, str]:
     ids = _insert_product_version(repository, prefix=prefix, status="active")
@@ -174,6 +181,7 @@ def _seed_dispatchable_work_item(
             "subject_type": "ai_employee",
             "ai_employee_id": employee_id,
             "executor_profile_id": profile_id,
+            "capacity": seat_capacity,
             "status": "active",
         }
     )
@@ -205,6 +213,8 @@ def _seed_dispatchable_work_item(
     return {
         "run_id": run_id,
         "work_item_id": work_item_id,
+        "owner_seat_id": owner_seat_id,
+        "requirement_id": requirement_id,
         "product_id": ids["product"],
     }
 
@@ -256,6 +266,69 @@ def test_postgres_claim_allows_released_integration_work_while_run_is_integratin
     assert claimed is not None
     assert claimed["status"] == "claimed"
     assert claimed["work_item"]["status"] == "claimed"
+
+
+def test_postgres_high_risk_dispatch_gate_persists_the_decision_and_pauses_the_item(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _seed_dispatchable_work_item(repository, prefix="high-risk-dispatch-gate")
+    with repository._connect(autocommit=False) as connection:
+        connection.execute(
+            "UPDATE rd_work_items SET risk_level = 'high' WHERE id = %s",
+            (ids["work_item_id"],),
+        )
+
+    result = require_human_approval_for_high_risk_dispatch(
+        PostgresRuntimeStore(repository),
+        collaboration_run_id=ids["run_id"],
+        work_item_id=ids["work_item_id"],
+    )
+
+    decision = result["decision_request"]
+    assert decision["decision_type"] == "high_risk_ai_dispatch"
+    assert decision["decision_actor_selector"] == {
+        "seat_ids": ["high-risk-dispatch-gate-reviewer"]
+    }
+    paused = repository.get_rd_work_item(ids["work_item_id"])
+    assert paused is not None
+    assert paused["status"] == "waiting_human"
+    assert paused["resume_state"] == "ready"
+    assert paused["suspended_decision_request_id"] == decision["id"]
+    events = repository.list_rd_collaboration_events(ids["run_id"])
+    assert events[-1]["event_type"] == "work_item.high_risk_dispatch_approval_required"
+
+
+def test_postgres_auto_dispatch_releases_a_high_risk_item_only_after_its_decision(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _seed_dispatchable_work_item(repository, prefix="high-risk-auto-dispatch")
+    with repository._connect(autocommit=False) as connection:
+        connection.execute(
+            "UPDATE rd_work_items SET risk_level = 'high' WHERE id = %s",
+            (ids["work_item_id"],),
+        )
+    store = PostgresRuntimeStore(repository)
+    gate = require_human_approval_for_high_risk_dispatch(
+        store,
+        collaboration_run_id=ids["run_id"],
+        work_item_id=ids["work_item_id"],
+    )
+    decision = gate["decision_request"]
+
+    apply_decision(
+        store,
+        decision_request_id=decision["id"],
+        selected_option="approve_dispatch",
+        input_value={},
+        comment=None,
+        actor={"id": "user_reviewer", "roles": []},
+        version=1,
+        idempotency_key="high-risk-auto-dispatch-approved",
+    )
+    result = dispatch_ready_ai_work_items(store)
+
+    assert result["dispatched_work_item_ids"] == [ids["work_item_id"]]
+    assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "running"
 
 
 def test_postgres_dispatch_freezes_custom_quality_gate_before_later_policy_mutation(
@@ -1296,3 +1369,47 @@ def test_postgres_cancelled_work_item_fences_late_coding_completion_once(
     assert fences[0]["payload_json"]["reason"] == "attempt_not_currently_running"
     assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "cancelled"
     assert repository.load_ai_tasks()["ai_tasks"][dispatched["task"]["id"]]["status"] == "cancelled"
+
+
+def test_postgres_dispatch_keeps_second_item_ready_when_the_frozen_seat_is_full(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-seat-capacity",
+        seat_capacity=1,
+    )
+    second_work_item_id = "work-item-seat-capacity-second"
+    repository.save_rd_work_item_record(
+        {
+            "id": second_work_item_id,
+            "collaboration_run_id": ids["run_id"],
+            "requirement_id": ids["requirement_id"],
+            "plan_version": 1,
+            "work_item_type": "implementation",
+            "title": "second capacity-bound work item",
+            "objective": "verify atomic seat capacity enforcement",
+            "owner_seat_id": ids["owner_seat_id"],
+            "reviewer_seat_id": "work-item-seat-capacity-reviewer",
+            "status": "ready",
+            "idempotency_key": second_work_item_id,
+        }
+    )
+    store = PostgresRuntimeStore(repository)
+
+    dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id=ids["run_id"],
+        work_item_id=ids["work_item_id"],
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        dispatch_ai_task_for_work_item(
+            store,
+            collaboration_run_id=ids["run_id"],
+            work_item_id=second_work_item_id,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "RD_SEAT_CAPACITY_EXHAUSTED"
+    assert repository.get_rd_work_item(second_work_item_id)["status"] == "ready"
+    assert repository.list_rd_work_item_attempts(second_work_item_id) == []

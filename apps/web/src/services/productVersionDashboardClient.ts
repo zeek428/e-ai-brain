@@ -18,6 +18,7 @@ type ProductVersionListItem = {
   product_id: string;
   product_name?: string;
   release_date?: string | null;
+  scope_version?: number | null;
   start_date?: string | null;
   status?: string;
   updated_at?: string | null;
@@ -334,6 +335,32 @@ type ProductVersionDashboardStatusImpactResponse = {
   updated_requirements?: ProductVersionDashboardRequirementImpact[];
 };
 
+type ProductVersionDashboardRdCollaborationRun = {
+  blocked_work_item_count?: number;
+  capacity?: { available?: number; frozen?: number; used?: number };
+  delivery_target?: 'ready_for_release' | 'deployed';
+  id: string;
+  pending_decision_count?: number;
+  parallel_conflict_count?: number;
+  role_codes?: string[];
+  run_generation?: number;
+  scope_version?: number;
+  seat_count?: number;
+  status?: string;
+  total_work_item_count?: number;
+  waiting_human_work_item_count?: number;
+};
+
+type ProductVersionDashboardRdCollaboration = {
+  action: {
+    label?: string;
+    run_id?: string;
+    type?: 'continue' | 'restart' | 'start';
+  };
+  active_run?: ProductVersionDashboardRdCollaborationRun | null;
+  latest_run?: ProductVersionDashboardRdCollaborationRun | null;
+};
+
 type ProductVersionDashboardResponse = {
   access_issues?: ProductVersionDashboardAccessIssue[];
   blockers?: ProductVersionDashboardBlockerItem[];
@@ -351,6 +378,7 @@ type ProductVersionDashboardResponse = {
   next_actions?: ProductVersionDashboardNextActionItem[];
   release_readiness_checklist?: ProductVersionDashboardReleaseReadinessChecklist | null;
   releases?: ProductVersionDashboardReleaseItem[];
+  rd_collaboration?: ProductVersionDashboardRdCollaboration | null;
   requirement_status_counts?: ProductVersionDashboardStatusCount[];
   requirements?: RequirementListItem[];
   status_impact?: ProductVersionDashboardStatusImpactResponse | null;
@@ -498,6 +526,43 @@ export type ProductVersionDashboard = {
     title: string;
     totalItems: number;
     value: string;
+  };
+  rdCollaboration?: {
+    action: {
+      label: string;
+      runId?: string;
+      type: 'continue' | 'restart' | 'start';
+    };
+    activeRun?: {
+      blockedWorkItemCount: number;
+      capacity: { available: number; frozen: number; used: number };
+      deliveryTarget: 'ready_for_release' | 'deployed';
+      id: string;
+      pendingDecisionCount: number;
+      parallelConflictCount: number;
+      roleCodes: string[];
+      runGeneration: number;
+      scopeVersion: number;
+      seatCount: number;
+      status: string;
+      totalWorkItemCount: number;
+      waitingHumanWorkItemCount: number;
+    };
+    latestRun?: {
+      blockedWorkItemCount: number;
+      capacity: { available: number; frozen: number; used: number };
+      deliveryTarget: 'ready_for_release' | 'deployed';
+      id: string;
+      pendingDecisionCount: number;
+      parallelConflictCount: number;
+      roleCodes: string[];
+      runGeneration: number;
+      scopeVersion: number;
+      seatCount: number;
+      status: string;
+      totalWorkItemCount: number;
+      waitingHumanWorkItemCount: number;
+    };
   };
   nextActions: Array<{
     actionLabel: string;
@@ -712,6 +777,8 @@ function mapProductVersionRecord(version: ProductVersionListItem): ProductVersio
     productId: version.product_id,
     productName: version.product_name,
     releaseDate: version.release_date ?? undefined,
+    scopeVersion:
+      typeof version.scope_version === 'number' ? version.scope_version : undefined,
     startDate: version.start_date ?? undefined,
     status: normalizeProductVersionStatus(version.status),
     updatedAt: formatListDate(version.updated_at ?? version.created_at ?? undefined),
@@ -866,6 +933,30 @@ function mapReleaseReadinessChecklist(
   };
 }
 
+function mapRdCollaborationRun(
+  run: ProductVersionDashboardRdCollaborationRun,
+): NonNullable<NonNullable<ProductVersionDashboard['rdCollaboration']>['activeRun']> {
+  return {
+    blockedWorkItemCount: normalizeDashboardCount(run.blocked_work_item_count),
+    capacity: {
+      available: normalizeDashboardCount(run.capacity?.available),
+      frozen: normalizeDashboardCount(run.capacity?.frozen),
+      used: normalizeDashboardCount(run.capacity?.used),
+    },
+    deliveryTarget: run.delivery_target === 'deployed' ? 'deployed' : 'ready_for_release',
+    id: run.id,
+    pendingDecisionCount: normalizeDashboardCount(run.pending_decision_count),
+    parallelConflictCount: normalizeDashboardCount(run.parallel_conflict_count),
+    roleCodes: run.role_codes ?? [],
+    runGeneration: normalizeDashboardCount(run.run_generation || 1),
+    scopeVersion: normalizeDashboardCount(run.scope_version || 1),
+    seatCount: normalizeDashboardCount(run.seat_count),
+    status: run.status ?? 'draft',
+    totalWorkItemCount: normalizeDashboardCount(run.total_work_item_count),
+    waitingHumanWorkItemCount: normalizeDashboardCount(run.waiting_human_work_item_count),
+  };
+}
+
 function mapProductVersionDashboard(dashboard: ProductVersionDashboardResponse): ProductVersionDashboard {
   const summary = dashboard.summary ?? {};
   const statusImpact = dashboard.status_impact
@@ -984,6 +1075,21 @@ function mapProductVersionDashboard(dashboard: ProductVersionDashboardResponse):
     releaseReadinessChecklist: mapReleaseReadinessChecklist(
       dashboard.release_readiness_checklist,
     ),
+    rdCollaboration: dashboard.rd_collaboration
+      ? {
+          action: {
+            label: dashboard.rd_collaboration.action.label ?? '查看研发协同',
+            runId: dashboard.rd_collaboration.action.run_id ?? undefined,
+            type: dashboard.rd_collaboration.action.type ?? 'start',
+          },
+          activeRun: dashboard.rd_collaboration.active_run
+            ? mapRdCollaborationRun(dashboard.rd_collaboration.active_run)
+            : undefined,
+          latestRun: dashboard.rd_collaboration.latest_run
+            ? mapRdCollaborationRun(dashboard.rd_collaboration.latest_run)
+            : undefined,
+        }
+      : undefined,
     deployments: (dashboard.deployments ?? []).map((deployment) => ({
       artifactVersion: emptyToUndefined(formatUnknownValue(deployment.artifact_version)),
       createdAt: formatListDate(formatUnknownValue(deployment.created_at ?? deployment.updated_at)),

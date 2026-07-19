@@ -60,6 +60,60 @@ def _work_item_execution_records(
     return read_memory_dict(current_store, collection_name)
 
 
+def _frozen_seat_capacity(
+    current_store: Any,
+    *,
+    collaboration_run_id: str,
+    owner_seat_id: str,
+) -> tuple[int, int]:
+    """Return immutable seat capacity and current execution occupancy.
+
+    This is a fast preflight only. PostgreSQL repeats the same count while
+    holding the frozen seat lock inside the dispatch transaction, which closes
+    the race between concurrent worker sweeps.
+    """
+    repository = getattr(current_store, "repository", None)
+    owner = _collaboration_record(current_store, "rd_run_seats", owner_seat_id)
+    capacity = int((owner or {}).get("capacity") or 1)
+    list_items = getattr(repository, "list_rd_work_items", None)
+    items = (
+        list_items(collaboration_run_id)
+        if callable(list_items)
+        else _work_item_execution_records(current_store, "rd_work_items").values()
+    )
+    occupied = sum(
+        1
+        for item in items
+        if item.get("owner_seat_id") == owner_seat_id and item.get("status") == "running"
+    )
+    return capacity, occupied
+
+
+def _require_frozen_seat_capacity(
+    current_store: Any,
+    *,
+    collaboration_run_id: str,
+    owner_seat_id: str,
+) -> None:
+    capacity, occupied = _frozen_seat_capacity(
+        current_store,
+        collaboration_run_id=collaboration_run_id,
+        owner_seat_id=owner_seat_id,
+    )
+    if occupied >= capacity:
+        raise api_error(
+            409,
+            "RD_SEAT_CAPACITY_EXHAUSTED",
+            "Frozen collaboration seat is at capacity",
+            {
+                "capacity": capacity,
+                "occupied": occupied,
+                "retryable": True,
+                "next_action": "wait_for_running_work_item",
+            },
+        )
+
+
 def _active_work_item_dispatch_replay(
     current_store: Any,
     *,
@@ -231,15 +285,6 @@ def dispatch_ai_task_for_work_item(
     policy, model gateway, or deterministic execution mode.
     """
     repository = getattr(current_store, "repository", None)
-    created = create_ai_task_for_work_item(
-        current_store,
-        collaboration_run_id=collaboration_run_id,
-        work_item_id=work_item_id,
-        # PostgreSQL task and Runner rows must only become visible with the
-        # claimed work item, attempt, event and audit bundle below.
-        persist=repository is None,
-    )
-    task = dict(created["task"])
     run = _collaboration_record(current_store, "rd_collaboration_runs", collaboration_run_id)
     work_item = _collaboration_record(current_store, "rd_work_items", work_item_id)
     if (
@@ -286,6 +331,20 @@ def dispatch_ai_task_for_work_item(
             "RD_ROLE_ASSIGNMENT_REQUIRED",
             "Work item no longer has its frozen AI employee/executor assignment",
         )
+    _require_frozen_seat_capacity(
+        current_store,
+        collaboration_run_id=collaboration_run_id,
+        owner_seat_id=str(owner["id"]),
+    )
+    created = create_ai_task_for_work_item(
+        current_store,
+        collaboration_run_id=collaboration_run_id,
+        work_item_id=work_item_id,
+        # PostgreSQL task and Runner rows must only become visible with the
+        # claimed work item, attempt, event and audit bundle below.
+        persist=repository is None,
+    )
+    task = dict(created["task"])
 
     list_attempts = getattr(repository, "list_rd_work_item_attempts", None)
     persisted_attempts = list_attempts(work_item_id) if callable(list_attempts) else None
@@ -483,6 +542,16 @@ def dispatch_ai_task_for_work_item(
                 ],
             )
         except RdCollaborationRepositoryError as exc:
+            if exc.code == "RD_SEAT_CAPACITY_EXHAUSTED":
+                _work_item_execution_records(current_store, "ai_executor_tasks").pop(
+                    runner_task["id"], None
+                )
+                raise api_error(
+                    409,
+                    "RD_SEAT_CAPACITY_EXHAUSTED",
+                    "Frozen collaboration seat is at capacity",
+                    {"retryable": True, "next_action": "wait_for_running_work_item"},
+                ) from exc
             if exc.code != "RD_WORK_ITEM_STATE_INVALID":
                 raise
             replay = _active_work_item_dispatch_replay(

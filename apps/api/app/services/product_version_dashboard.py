@@ -24,6 +24,9 @@ from app.services.product_version_delivery_overview import (
     successful_release as _successful_release,
 )
 from app.services.product_version_evidence_coverage import version_evidence_coverage
+from app.services.product_version_rd_collaboration_overview import (
+    version_rd_collaboration_overview,
+)
 from app.services.product_version_release_readiness import (
     version_release_readiness_checklist,
 )
@@ -1211,6 +1214,11 @@ def product_version_dashboard_response(
         summary=summary,
         version_id=version_id,
     )
+    rd_collaboration = version_rd_collaboration_overview(
+        read_store,
+        user=user,
+        version_id=version_id,
+    )
     return {
         "access_issues": access_issues,
         "blockers": blockers,
@@ -1230,6 +1238,7 @@ def product_version_dashboard_response(
         "releases": releases[:20],
         "requirement_status_counts": _status_counts(requirements),
         "requirements": requirements[:50],
+        "rd_collaboration": rd_collaboration,
         "status_impact": status_impact,
         "summary": summary,
         "task_status_counts": _status_counts(tasks),

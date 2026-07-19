@@ -22,6 +22,7 @@ import {
   VersionDashboardStatusImpactNotice,
   VersionDashboardStatusImpactPreview,
 } from './VersionDashboardSummary';
+import { VersionDashboardCollaborationPanel } from './VersionDashboardCollaborationPanel';
 import {
   VersionDashboardBlockersTable,
   VersionDashboardQualityDeliveryTables,
@@ -53,6 +54,10 @@ type VersionDashboardModalProps = {
   onAdvanceVersion: (version: ProductVersionRecord) => void;
   onClose: () => void;
   onMaintainBranches: (version: ProductVersionRecord) => void;
+  onRdCollaborationAction: (
+    action: NonNullable<ProductVersionDashboard['rdCollaboration']>['action'],
+    version: ProductVersionRecord,
+  ) => void;
   onViewRequirements: (version: ProductVersionRecord) => void;
   open: boolean;
   requirementStatusLabels: Record<RequirementRecord['status'], LabelItem>;
@@ -68,6 +73,7 @@ export function VersionDashboardModal({
   onAdvanceVersion,
   onClose,
   onMaintainBranches,
+  onRdCollaborationAction,
   onViewRequirements,
   open,
   requirementStatusLabels,
@@ -137,6 +143,10 @@ export function VersionDashboardModal({
               onMaintainBranches={onMaintainBranches}
               onViewRequirements={onViewRequirements}
               versionStatusLabels={versionStatusLabels}
+            />
+            <VersionDashboardCollaborationPanel
+              onAction={(action) => onRdCollaborationAction(action, dashboard.version)}
+              overview={dashboard.rdCollaboration}
             />
             <VersionDashboardEvidenceCoverage dashboard={dashboard} />
             <VersionDashboardGovernanceConclusion

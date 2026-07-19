@@ -26,6 +26,7 @@ _CONFIG_FIELDS = (
 _ROLE_BINDING_STRATEGY_FIELDS = {
     "actor_mode",
     "budget_config",
+    "capacity",
     "candidate_ai_employee_ids",
     "candidate_human_user_ids",
     "context_config",
@@ -211,10 +212,21 @@ def validate_unified_policy_payload(payload: dict[str, Any]) -> dict[str, Any]:
                     "each role may have exactly one active binding",
                 )
             active_roles.add(role_code)
+        capacity = binding.get("capacity", 1)
+        if (
+            isinstance(capacity, bool)
+            or not isinstance(capacity, int)
+            or capacity < 1
+        ):
+            raise PolicyValidationError(
+                "RD_EXECUTION_POLICY_INVALID",
+                "role_bindings.capacity must be a positive integer",
+            )
         bindings.append(
             {
                 **binding,
                 "actor_mode": actor_mode,
+                "capacity": capacity,
                 "role_code": role_code,
                 "status": status,
                 "fallback_executor_profile_ids": [],
