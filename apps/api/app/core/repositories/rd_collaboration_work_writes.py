@@ -2401,10 +2401,54 @@ class RdCollaborationWorkWriteMixin:
         approval_request = _row_dict(cursor, cursor.fetchone())
         request_snapshot = (approval_request or {}).get("approval_request") or {}
         blocked_operations = list((approval_request or {}).get("blocked_operations") or [])
+        evidence = decision.get("evidence_json") or []
+        frozen_evidence = evidence[0] if len(evidence) == 1 else {}
+        try:
+            attempt_no = int(frozen_evidence.get("attempt_no") or 0)
+            renewal_no = int(frozen_evidence.get("renewal_no") or 0)
+            request_renewal_no = int(request_snapshot.get("renewal_no") or 0)
+        except (TypeError, ValueError):
+            attempt_no = 0
+            renewal_no = -1
+            request_renewal_no = -2
+        identity_suffix = f":renewal:{renewal_no}" if renewal_no > 0 else ""
+        expected_approval_request_id = (
+            f"rd-runner-safety:{decision.get('subject_id')}:attempt:{attempt_no}{identity_suffix}"
+        )
+        expected_decision_id = (
+            f"runner-safety-approval:{decision.get('subject_id')}:attempt:{attempt_no}"
+            f"{identity_suffix}"
+        )
+        expected_options = [
+            {
+                "code": "authorize_blocked_operations",
+                "input_schema": {},
+                "outcome": "approve",
+                "subject_transition": "resume",
+            },
+            {
+                "code": "cancel_work_item",
+                "input_schema": {},
+                "outcome": "reject",
+                "requires_comment": True,
+                "subject_transition": "cancelled",
+            },
+        ]
         if (
             approval_request is None
             or approval_request.get("status") != "pending"
+            or approval_request_id != expected_approval_request_id
+            or decision.get("id") != expected_decision_id
+            or decision.get("options_json") != expected_options
+            or decision.get("options_hash") != _canonical_hash(expected_options)
+            or frozen_evidence.get("kind") != "runner_safety_approval"
+            or frozen_evidence.get("approval_request_id") != approval_request_id
+            or frozen_evidence.get("blocked_operations") != blocked_operations
+            or frozen_evidence.get("policy_version") != self._RUNNER_SAFETY_POLICY_VERSION
+            or request_snapshot.get("source") != "rd_collaboration_work_item"
             or request_snapshot.get("approval_request_id") != approval_request_id
+            or request_snapshot.get("attempt_no") != attempt_no
+            or request_renewal_no != renewal_no
             or request_snapshot.get("work_item_id") != decision.get("subject_id")
             or request_snapshot.get("blocked_operations") != blocked_operations
             or request_snapshot.get("policy_version") != self._RUNNER_SAFETY_POLICY_VERSION

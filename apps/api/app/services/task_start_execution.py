@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
@@ -9,6 +11,9 @@ from fastapi import HTTPException
 from app.api.deps import api_error, require_roles
 from app.core.code_review_executor import CodeReviewExecutorError
 from app.core.repositories.rd_collaboration import RdCollaborationRepositoryError
+from app.services.ai_executor_runner_approvals import (
+    parse_rd_runner_safety_approval_identity,
+)
 from app.services.ai_executor_runner_safety import (
     RUNNER_SAFETY_POLICY_VERSION,
     safe_runner_blocked_operations,
@@ -19,7 +24,11 @@ from app.services.model_gateway import (
     call_model_gateway_for_task,
 )
 from app.services.operational_records import read_memory_dict
-from app.services.rd_dispatch_fault_decision import current_runner_safety_approval_request
+from app.services.rd_dispatch_fault_decision import (
+    current_runner_safety_approval_request,
+    runner_safety_decision_id,
+    runner_safety_decision_options,
+)
 from app.services.rd_requirement_entry_adapters import require_v2_task_work_item_entrypoint
 from app.services.rd_task_executor_policies import (
     prepare_rd_task_executor_task,
@@ -73,6 +82,7 @@ def _approved_runner_safety_snapshot(
     *,
     approval_request_id: str,
     attempt_no: int,
+    renewal_no: int,
     work_item_id: str,
 ) -> dict[str, Any] | None:
     repository = getattr(current_store, "repository", None)
@@ -87,15 +97,73 @@ def _approved_runner_safety_snapshot(
     )
     if not isinstance(record, dict) or record.get("status") != "approved":
         return None
+    identity = parse_rd_runner_safety_approval_identity(approval_request_id)
+    if identity != {
+        "attempt_no": attempt_no,
+        "renewal_no": renewal_no,
+        "work_item_id": work_item_id,
+    }:
+        return None
     request_snapshot = record.get("approval_request") or {}
     blocked_operations = list(record.get("blocked_operations") or [])
     approval = record.get("approval")
+    decision_id = runner_safety_decision_id(
+        work_item_id=work_item_id,
+        attempt_no=attempt_no,
+        renewal_no=renewal_no,
+    )
+    get_decision = getattr(repository, "get_decision_request", None)
+    decision = (
+        get_decision(decision_id)
+        if callable(get_decision)
+        else _work_item_execution_records(current_store, "decision_requests").get(decision_id)
+    )
+    expected_options = runner_safety_decision_options()
+    expected_options_hash = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(
+                expected_options,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+    )
+    expected_evidence = {
+        "approval_request_id": approval_request_id,
+        "attempt_no": attempt_no,
+        "blocked_operations": blocked_operations,
+        "kind": "runner_safety_approval",
+        "policy_version": RUNNER_SAFETY_POLICY_VERSION,
+    }
+    if renewal_no > 0:
+        expected_evidence["renewal_no"] = renewal_no
+    try:
+        request_renewal_no = int(request_snapshot.get("renewal_no") or 0)
+    except (TypeError, ValueError):
+        request_renewal_no = -1
     if (
         not isinstance(approval, dict)
+        or not isinstance(decision, dict)
+        or request_snapshot.get("source") != "rd_collaboration_work_item"
         or request_snapshot.get("approval_request_id") != approval_request_id
         or request_snapshot.get("attempt_no") != attempt_no
+        or request_renewal_no != renewal_no
         or request_snapshot.get("work_item_id") != work_item_id
         or request_snapshot.get("blocked_operations") != blocked_operations
+        or request_snapshot.get("policy_version") != RUNNER_SAFETY_POLICY_VERSION
+        or decision.get("id") != decision_id
+        or decision.get("decision_type") != "runner_safety_approval"
+        or decision.get("subject_type") != "rd_work_item"
+        or decision.get("subject_id") != work_item_id
+        or decision.get("status") != "approved"
+        or decision.get("selected_option_code") != "authorize_blocked_operations"
+        or decision.get("options_json") != expected_options
+        or decision.get("options_hash") != expected_options_hash
+        or decision.get("evidence_json") != [expected_evidence]
+        or (decision.get("recommendation_json") or {}).get("approval_request_id")
+        != approval_request_id
         or approval.get("approval_request_id") != approval_request_id
         or approval.get("approved") is not True
         or approval.get("approved_operations") != blocked_operations
@@ -472,7 +540,7 @@ def dispatch_ai_task_for_work_item(
         ),
         default=0,
     )
-    approval_request_id, _approval_request, _renewal_no = current_runner_safety_approval_request(
+    approval_request_id, _approval_request, renewal_no = current_runner_safety_approval_request(
         current_store,
         work_item_id=work_item_id,
         attempt_no=attempt_no,
@@ -481,6 +549,7 @@ def dispatch_ai_task_for_work_item(
         current_store,
         approval_request_id=approval_request_id,
         attempt_no=attempt_no,
+        renewal_no=renewal_no,
         work_item_id=work_item_id,
     )
     now = datetime.now(UTC).isoformat()

@@ -3667,6 +3667,19 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
             audit_event=audit_event,
         )
 
+    def save_generic_ai_executor_approval_bundle(
+        self,
+        *,
+        action: dict[str, Any] | None,
+        approval_request: dict[str, Any] | None,
+        audit_events: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        return self._plugin_read_repository.save_generic_ai_executor_approval_bundle(
+            action=action,
+            approval_request=approval_request,
+            audit_events=audit_events,
+        )
+
     def delete_plugin_action_record(
         self,
         action_id: str,
@@ -3719,6 +3732,30 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
     ) -> None:
         self._plugin_read_repository.save_ai_executor_task_record(
             task,
+            audit_event=audit_event,
+        )
+
+    def list_ai_executor_approval_requests(
+        self,
+        *,
+        action_id: str | None = None,
+        runner_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._plugin_read_repository.list_ai_executor_approval_requests(
+            action_id=action_id,
+            runner_id=runner_id,
+            status=status,
+        )
+
+    def save_ai_executor_approval_request_record(
+        self,
+        approval_request: dict[str, Any],
+        *,
+        audit_event: dict[str, Any] | None = None,
+    ) -> None:
+        self._plugin_read_repository.save_ai_executor_approval_request_record(
+            approval_request,
             audit_event=audit_event,
         )
 

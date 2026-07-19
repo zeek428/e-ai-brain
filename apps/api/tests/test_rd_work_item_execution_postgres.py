@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from threading import Event, Thread
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -13,6 +14,9 @@ from psycopg.types.json import Jsonb
 
 from app.core.persistence import PostgresRuntimeStore, PostgresSnapshotRepository
 from app.main import app
+from app.services.ai_executor_runner_approvals import (
+    approve_plugin_action_ai_executor_response,
+)
 from app.services.ai_executor_runners import _sync_runner_completion_to_ai_task
 from app.services.quality_gates import resolve_pre_merge_quality_gate_policy
 from app.services.rd_collaboration_auto_dispatch import dispatch_ready_ai_work_items
@@ -815,6 +819,175 @@ def test_postgres_runner_safety_approval_is_atomic_replay_safe_and_dispatchable(
     assert len(tasks) == 1
     assert tasks[0]["request_config"]["ai_executor_approval"] == approval
     assert tasks[0]["request_config"]["ai_executor_safety"]["status"] == "approved"
+
+
+@pytest.mark.parametrize("source", [None, "rd_collaboration_work_item"])
+def test_postgres_dispatch_rejects_preseeded_reserved_approval_without_frozen_decision(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    source: str | None,
+) -> None:
+    suffix = "missing-source" if source is None else "missing-decision"
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix=f"runner-safety-preseed-{suffix}",
+        autonomy_mode="autonomous_loop",
+    )
+    approval_request_id = f"rd-runner-safety:{ids['work_item_id']}:attempt:1"
+    request_snapshot = {
+        "approval_request_id": approval_request_id,
+        "attempt_no": 1,
+        "blocked_operations": ["git_push_or_merge"],
+        "policy_version": "runner_safety_v1",
+        "work_item_id": ids["work_item_id"],
+    }
+    if source is not None:
+        request_snapshot["source"] = source
+    approved_at = datetime.now(UTC).isoformat()
+    crafted_record = {
+        "id": approval_request_id,
+        "approval": {
+            "approval_id": f"{approval_request_id}:approval",
+            "approval_request_id": approval_request_id,
+            "approved": True,
+            "approved_at": approved_at,
+            "approved_by": "user_admin",
+            "approved_operations": ["git_push_or_merge"],
+            "expires_at": "2099-01-01T00:00:00+00:00",
+            "mode": "platform_human_approval",
+            "policy_version": "runner_safety_v1",
+        },
+        "approval_request": request_snapshot,
+        "approved_at": approved_at,
+        "approved_by": "user_admin",
+        "blocked_operations": ["git_push_or_merge"],
+        "executor_type": "codex",
+        "expires_at": "2099-01-01T00:00:00+00:00",
+        "requested_at": approved_at,
+        "requested_by": "user_admin",
+        "risk_level": "high",
+        "runner_id": f"runner-safety-preseed-{suffix}-runner",
+        "status": "approved",
+        "workspace_root": "",
+    }
+    with repository._connect() as connection:
+        with connection.cursor() as cursor:
+            repository._plugin_read_repository.upsert_ai_executor_approval_requests(
+                cursor,
+                {approval_request_id: crafted_record},
+            )
+    monkeypatch.setattr(
+        "app.services.rd_task_executor_policies.render_executor_instruction",
+        lambda *_args, **_kwargs: "Run git push",
+    )
+
+    result = dispatch_ready_ai_work_items(PostgresRuntimeStore(repository))
+
+    assert result["dispatched_work_item_ids"] == []
+    assert repository.list_rd_work_item_attempts(ids["work_item_id"]) == []
+    assert repository.list_ai_executor_tasks(ai_task_id=None) == []
+
+
+def test_postgres_plugin_approval_rechecks_collaboration_source_at_final_mutation(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin_id = "plugin-generic-approval-race"
+    action_id = "action-generic-approval-race"
+    approval_request_id = "generic-approval-race-request"
+    repository.save_plugin_record(
+        {
+            "id": plugin_id,
+            "code": "generic_approval_race",
+            "name": "Generic approval race",
+            "protocol": "mcp_http",
+            "status": "active",
+            "created_by": "user_admin",
+        }
+    )
+    repository.save_plugin_action_record(
+        {
+            "id": action_id,
+            "plugin_id": plugin_id,
+            "code": "generic_approval_race_action",
+            "name": "Generic approval race action",
+            "action_type": "mcp_tool",
+            "request_config": {},
+            "result_mapping": {},
+            "status": "active",
+            "created_by": "user_admin",
+        }
+    )
+    store = PostgresRuntimeStore(repository)
+    from app.services import ai_executor_runner_approvals as approval_service
+
+    original_build = approval_service.build_ai_executor_approval_snapshot
+
+    def insert_collaboration_request_during_approval(**kwargs):  # type: ignore[no-untyped-def]
+        now = datetime.now(UTC).isoformat()
+        interleaved_record = {
+            "id": approval_request_id,
+            "approval": {},
+            "approval_request": {
+                "approval_request_id": approval_request_id,
+                "attempt_no": 1,
+                "blocked_operations": ["git_push_or_merge"],
+                "policy_version": "runner_safety_v1",
+                "source": "rd_collaboration_work_item",
+                "work_item_id": "work-race",
+            },
+            "blocked_operations": ["git_push_or_merge"],
+            "executor_type": "codex",
+            "requested_at": now,
+            "requested_by": "user_owner",
+            "risk_level": "high",
+            "runner_id": None,
+            "status": "pending",
+            "workspace_root": "",
+        }
+        with repository._connect() as connection:
+            with connection.cursor() as cursor:
+                repository._plugin_read_repository.upsert_ai_executor_approval_requests(
+                    cursor,
+                    {approval_request_id: interleaved_record},
+                )
+        return original_build(**kwargs)
+
+    monkeypatch.setattr(
+        approval_service,
+        "build_ai_executor_approval_snapshot",
+        insert_collaboration_request_during_approval,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        approve_plugin_action_ai_executor_response(
+            action_id=action_id,
+            current_store=store,
+            payload=SimpleNamespace(
+                approval_id=None,
+                approval_request={
+                    "approval_request_id": approval_request_id,
+                    "blocked_operations": ["git_push_or_merge"],
+                    "executor_type": "codex",
+                    "workspace_root": "",
+                },
+                approved_operations=["git_push_or_merge"],
+                expires_at="2099-01-01T00:00:00+00:00",
+                reason="generic approval",
+            ),
+            user={"id": "user_admin", "permissions": ["system.admin"], "roles": ["admin"]},
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == {
+        "code": "RD_COLLABORATION_APPROVAL_DECISION_REQUIRED",
+        "message": "Collaboration approval must be resolved through its frozen decision",
+    }
+    persisted_action = next(
+        item for item in repository.list_plugin_actions() if item["id"] == action_id
+    )
+    assert "ai_executor_approval" not in persisted_action["request_config"]
+    assert repository.get_ai_executor_approval_request(approval_request_id)["status"] == "pending"
 
 
 def test_postgres_expired_runner_safety_approval_renews_without_dispatch_artifacts(

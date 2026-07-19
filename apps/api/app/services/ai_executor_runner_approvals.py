@@ -1,19 +1,25 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
 from typing import Any
 
 from app.api.deps import api_error, require_permissions
 from app.core.listing import add_list_observability, sort_list_items
+from app.core.repositories.plugins import GenericAiExecutorApprovalMutationRejected
 from app.services.ai_executor_runner_safety import RUNNER_SAFETY_POLICY_VERSION
-from app.services.operational_records import record_audit_event, save_single_repository_record
+from app.services.operational_records import (
+    build_audit_event,
+    record_audit_event,
+    save_memory_audit_event,
+    save_single_repository_record,
+)
 from app.services.plugin_projection import public_action
 from app.services.plugin_store_helpers import (
     _put_memory_record,
     _read_memory_record,
     ensure_non_blank,
-    persist_record,
     require_admin,
     sync_plugin_action_store,
 )
@@ -30,6 +36,21 @@ AI_EXECUTOR_APPROVAL_REQUEST_SORT_FIELDS = {
     "status",
     "updated_at",
 }
+RD_RUNNER_SAFETY_APPROVAL_ID_PATTERN = re.compile(
+    r"^rd-runner-safety:(?P<work_item_id>[^\s:]+):attempt:(?P<attempt_no>[1-9]\d*)"
+    r"(?::renewal:(?P<renewal_no>[1-9]\d*))?$"
+)
+
+
+def parse_rd_runner_safety_approval_identity(value: Any) -> dict[str, Any] | None:
+    match = RD_RUNNER_SAFETY_APPROVAL_ID_PATTERN.fullmatch(str(value or "").strip())
+    if match is None:
+        return None
+    return {
+        "attempt_no": int(match.group("attempt_no")),
+        "renewal_no": int(match.group("renewal_no") or 0),
+        "work_item_id": match.group("work_item_id"),
+    }
 
 
 def _ensure_admin(user: dict[str, Any]) -> None:
@@ -118,6 +139,7 @@ def save_pending_ai_executor_approval_request(
     approval_request_id = str(approval_request.get("approval_request_id") or "").strip()
     if not approval_request_id:
         raise api_error(400, "VALIDATION_ERROR", "approval_request_id is required")
+    _reject_rd_collaboration_generic_approval(approval_request)
     existing = _read_memory_dict(
         current_store,
         "ai_executor_approval_requests",
@@ -172,9 +194,7 @@ def approval_operations_from_request(
     approved_operations: list[str] | None,
 ) -> list[str]:
     request_operations = (
-        approval_request.get("blocked_operations")
-        if isinstance(approval_request, dict)
-        else None
+        approval_request.get("blocked_operations") if isinstance(approval_request, dict) else None
     )
     raw_operations = approved_operations or request_operations or []
     operations = sorted({str(item).strip() for item in raw_operations if str(item).strip()})
@@ -223,6 +243,7 @@ def mark_ai_executor_approval_request_approved(
     approval_request_id = approval.get("approval_request_id")
     if not approval_request_id:
         return None
+    _reject_rd_collaboration_generic_approval(approval_request)
     sync_ai_executor_approval_request_store(current_store)
     existing = _read_memory_dict(
         current_store,
@@ -275,6 +296,124 @@ def mark_ai_executor_approval_request_approved(
     )
     _persist_record(current_store, record, audit_event=audit_event)
     return record
+
+
+def _build_approved_request_record(
+    *,
+    approval: dict[str, Any],
+    approval_request: dict[str, Any] | None,
+    existing: dict[str, Any] | None,
+    user: dict[str, Any],
+) -> dict[str, Any] | None:
+    approval_request_id = str(approval.get("approval_request_id") or "").strip()
+    if not approval_request_id:
+        return None
+    if existing is None and isinstance(approval_request, dict):
+        existing = {
+            "action_id": approval_request.get("action_id"),
+            "ai_task_id": approval_request.get("ai_task_id"),
+            "approval_request": approval_request,
+            "blocked_operations": approval_request.get("blocked_operations") or [],
+            "connection_id": approval_request.get("connection_id"),
+            "created_at": approval["approved_at"],
+            "executor_type": approval_request.get("executor_type"),
+            "id": approval_request_id,
+            "requested_at": approval["approved_at"],
+            "requested_by": user["id"],
+            "risk_level": "high",
+            "runner_id": approval_request.get("runner_id"),
+            "scheduled_job_id": approval_request.get("scheduled_job_id"),
+            "scheduled_job_run_id": approval_request.get("scheduled_job_run_id"),
+            "workspace_root": approval_request.get("workspace_root") or "",
+        }
+    if existing is None:
+        return None
+    return {
+        **existing,
+        "approval": approval,
+        "approved_at": approval["approved_at"],
+        "approved_by": user["id"],
+        "expires_at": approval["expires_at"],
+        "reason": approval.get("reason"),
+        "status": "approved",
+        "updated_at": approval["approved_at"],
+    }
+
+
+def _approval_request_audit_event(
+    current_store: Any,
+    *,
+    approval: dict[str, Any],
+    record: dict[str, Any],
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    return build_audit_event(
+        current_store,
+        event_type="ai_executor_approval_request.approved",
+        actor_id=user["id"],
+        subject_type="ai_executor_approval_request",
+        subject_id=str(record["id"]),
+        payload={
+            "approval_id": approval["approval_id"],
+            "approved_operations": approval["approved_operations"],
+            "expires_at": approval["expires_at"],
+            "runner_id": record.get("runner_id"),
+            "scheduled_job_id": record.get("scheduled_job_id"),
+            "scheduled_job_run_id": record.get("scheduled_job_run_id"),
+        },
+    )
+
+
+def _persist_generic_approval_bundle(
+    current_store: Any,
+    *,
+    action: dict[str, Any] | None,
+    approval_request_record: dict[str, Any] | None,
+    audit_events: list[dict[str, Any]],
+) -> None:
+    repository = getattr(current_store, "repository", None)
+    persist_bundle = getattr(repository, "save_generic_ai_executor_approval_bundle", None)
+    if callable(persist_bundle):
+        try:
+            persist_bundle(
+                action=action,
+                approval_request=approval_request_record,
+                audit_events=audit_events,
+            )
+        except GenericAiExecutorApprovalMutationRejected as exc:
+            raise api_error(
+                409,
+                "RD_COLLABORATION_APPROVAL_DECISION_REQUIRED",
+                "Collaboration approval must be resolved through its frozen decision",
+            ) from exc
+    else:
+        if approval_request_record is not None:
+            _reject_rd_collaboration_generic_approval(approval_request_record)
+            current = _read_memory_record(
+                current_store,
+                "ai_executor_approval_requests",
+                str(approval_request_record["id"]),
+            )
+            _reject_rd_collaboration_generic_approval(current)
+        if action is not None:
+            _put_memory_record(current_store, "plugin_actions", action)
+        if approval_request_record is not None:
+            _put_memory_record(
+                current_store,
+                "ai_executor_approval_requests",
+                approval_request_record,
+            )
+        for audit_event in audit_events:
+            save_memory_audit_event(current_store, audit_event)
+        return
+    if action is not None:
+        _put_memory_record(current_store, "plugin_actions", action)
+    if approval_request_record is not None:
+        _put_memory_record(
+            current_store,
+            "ai_executor_approval_requests",
+            approval_request_record,
+        )
 
 
 def list_ai_executor_approval_requests_response(
@@ -380,7 +519,14 @@ def _reject_rd_collaboration_generic_approval(value: Any) -> None:
     request_snapshot = record.get("approval_request")
     if not isinstance(request_snapshot, dict):
         request_snapshot = record
-    if request_snapshot.get("source") == "rd_collaboration_work_item":
+    identities = {
+        str(record.get("id") or "").strip(),
+        str(record.get("approval_request_id") or "").strip(),
+        str(request_snapshot.get("approval_request_id") or "").strip(),
+    }
+    if request_snapshot.get("source") == "rd_collaboration_work_item" or any(
+        parse_rd_runner_safety_approval_identity(identity) is not None for identity in identities
+    ):
         raise api_error(
             409,
             "RD_COLLABORATION_APPROVAL_DECISION_REQUIRED",
@@ -404,15 +550,15 @@ def approve_plugin_action_ai_executor_response(
     approval_request = _approval_request_payload(getattr(payload, "approval_request", None))
     _reject_rd_collaboration_generic_approval(approval_request)
     approval_request_id = str((approval_request or {}).get("approval_request_id") or "").strip()
+    existing_request_record = None
     if approval_request_id:
         sync_ai_executor_approval_request_store(current_store)
-        _reject_rd_collaboration_generic_approval(
-            _read_memory_record(
-                current_store,
-                "ai_executor_approval_requests",
-                approval_request_id,
-            )
+        existing_request_record = _read_memory_record(
+            current_store,
+            "ai_executor_approval_requests",
+            approval_request_id,
         )
+        _reject_rd_collaboration_generic_approval(existing_request_record)
     approval_id = (
         ensure_non_blank(getattr(payload, "approval_id", None), "approval_id")
         if getattr(payload, "approval_id", None)
@@ -436,8 +582,7 @@ def approve_plugin_action_ai_executor_response(
         "requires_human_review": True,
         "updated_at": approval["approved_at"],
     }
-    _put_memory_record(current_store, "plugin_actions", action)
-    audit_event = record_audit_event(
+    action_audit_event = build_audit_event(
         current_store,
         event_type="plugin_action.ai_executor_approved",
         actor_id=user["id"],
@@ -452,17 +597,29 @@ def approve_plugin_action_ai_executor_response(
             "reason": approval.get("reason"),
         },
     )
-    persist_record(
-        current_store,
-        "save_plugin_action_record",
-        action,
-        audit_event=audit_event,
-    )
-    mark_ai_executor_approval_request_approved(
-        current_store,
+    approved_request_record = _build_approved_request_record(
         approval=approval,
         approval_request=approval_request,
+        existing=existing_request_record,
         user=user,
+    )
+    request_audit_event = (
+        _approval_request_audit_event(
+            current_store,
+            approval=approval,
+            record=approved_request_record,
+            user=user,
+        )
+        if approved_request_record is not None
+        else None
+    )
+    _persist_generic_approval_bundle(
+        current_store,
+        action=action,
+        approval_request_record=approved_request_record,
+        audit_events=[
+            event for event in (action_audit_event, request_audit_event) if event is not None
+        ],
     )
     return {"action": public_action(action), "approval": approval}
 
@@ -505,14 +662,24 @@ def approve_ai_executor_approval_request_response(
         expires_at=getattr(payload, "expires_at", None),
         reason=getattr(payload, "reason", None),
     )
-    updated_request = mark_ai_executor_approval_request_approved(
-        current_store,
+    updated_request = _build_approved_request_record(
         approval=approval,
         approval_request=request_snapshot,
+        existing=approval_request_record,
+        user=user,
+    )
+    if updated_request is None:
+        raise api_error(404, "NOT_FOUND", "AI executor approval request not found")
+    request_audit_event = _approval_request_audit_event(
+        current_store,
+        approval=approval,
+        record=updated_request,
         user=user,
     )
 
     action_payload = None
+    action = None
+    action_audit_event = None
     action_id = approval_request_record.get("action_id")
     if action_id:
         sync_plugin_action_store(current_store)
@@ -528,8 +695,7 @@ def approve_ai_executor_approval_request_response(
                 "requires_human_review": True,
                 "updated_at": approval["approved_at"],
             }
-            _put_memory_record(current_store, "plugin_actions", action)
-            audit_event = record_audit_event(
+            action_audit_event = build_audit_event(
                 current_store,
                 event_type="plugin_action.ai_executor_approved",
                 actor_id=user["id"],
@@ -545,13 +711,16 @@ def approve_ai_executor_approval_request_response(
                     "source": "ai_executor_approval_request",
                 },
             )
-            persist_record(
-                current_store,
-                "save_plugin_action_record",
-                action,
-                audit_event=audit_event,
-            )
             action_payload = public_action(action)
+
+    _persist_generic_approval_bundle(
+        current_store,
+        action=action,
+        approval_request_record=updated_request,
+        audit_events=[
+            event for event in (request_audit_event, action_audit_event) if event is not None
+        ],
+    )
 
     return {
         "action": action_payload,

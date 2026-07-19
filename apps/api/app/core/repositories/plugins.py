@@ -6,6 +6,16 @@ from contextlib import AbstractContextManager
 from typing import Any
 
 
+class GenericAiExecutorApprovalMutationRejected(RuntimeError):
+    """The generic approval transaction encountered collaboration-owned state."""
+
+
+_RD_RUNNER_SAFETY_APPROVAL_ID_SQL_PATTERN = (
+    r"^rd-runner-safety:[^[:space:]:]+:attempt:[1-9][0-9]*"
+    r"(:renewal:[1-9][0-9]*)?$"
+)
+
+
 def _json(value: Any, default: Any) -> str:
     if value is None:
         value = default
@@ -884,6 +894,107 @@ class PluginReadRepository:
                     {approval_request["id"]: approval_request},
                 )
                 self._upsert_audit(cursor, audit_event)
+
+    def save_generic_ai_executor_approval_bundle(
+        self,
+        *,
+        action: dict[str, Any] | None,
+        approval_request: dict[str, Any] | None,
+        audit_events: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        """Atomically persist generic approval state unless RD owns the request."""
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                persisted_request = None
+                if approval_request is not None:
+                    cursor.execute(
+                        """
+                        INSERT INTO ai_executor_approval_requests (
+                          id, action_id, connection_id, runner_id, scheduled_job_id,
+                          scheduled_job_run_id, ai_task_id, executor_type, workspace_root,
+                          risk_level, blocked_operations, approval_request, approval,
+                          status, requested_by, requested_at, approved_by, approved_at,
+                          expires_at, reason, created_at, updated_at
+                        )
+                        SELECT
+                          %s, %s, %s, %s, %s,
+                          %s, %s, %s, %s,
+                          %s, %s::jsonb, %s::jsonb, %s::jsonb,
+                          %s, %s, %s::timestamptz, %s, %s::timestamptz,
+                          %s::timestamptz, %s, COALESCE(%s::timestamptz, now()),
+                          COALESCE(%s::timestamptz, now())
+                        WHERE NOT (%s ~ %s)
+                          AND COALESCE(%s::jsonb ->> 'source', '')
+                              <> 'rd_collaboration_work_item'
+                        ON CONFLICT (id) DO UPDATE SET
+                          action_id = EXCLUDED.action_id,
+                          connection_id = EXCLUDED.connection_id,
+                          runner_id = EXCLUDED.runner_id,
+                          scheduled_job_id = EXCLUDED.scheduled_job_id,
+                          scheduled_job_run_id = EXCLUDED.scheduled_job_run_id,
+                          ai_task_id = EXCLUDED.ai_task_id,
+                          executor_type = EXCLUDED.executor_type,
+                          workspace_root = EXCLUDED.workspace_root,
+                          risk_level = EXCLUDED.risk_level,
+                          blocked_operations = EXCLUDED.blocked_operations,
+                          approval_request = EXCLUDED.approval_request,
+                          approval = EXCLUDED.approval,
+                          status = EXCLUDED.status,
+                          requested_by = EXCLUDED.requested_by,
+                          requested_at = EXCLUDED.requested_at,
+                          approved_by = EXCLUDED.approved_by,
+                          approved_at = EXCLUDED.approved_at,
+                          expires_at = EXCLUDED.expires_at,
+                          reason = EXCLUDED.reason,
+                          updated_at = EXCLUDED.updated_at
+                        WHERE NOT (
+                          ai_executor_approval_requests.id ~ %s
+                        )
+                          AND COALESCE(
+                            ai_executor_approval_requests.approval_request ->> 'source',
+                            ''
+                          ) <> 'rd_collaboration_work_item'
+                        RETURNING *
+                        """,
+                        (
+                            approval_request["id"],
+                            approval_request.get("action_id"),
+                            approval_request.get("connection_id"),
+                            approval_request.get("runner_id"),
+                            approval_request.get("scheduled_job_id"),
+                            approval_request.get("scheduled_job_run_id"),
+                            approval_request.get("ai_task_id"),
+                            approval_request["executor_type"],
+                            approval_request["workspace_root"],
+                            approval_request.get("risk_level", "high"),
+                            _json(approval_request.get("blocked_operations"), []),
+                            _json(approval_request.get("approval_request"), {}),
+                            _json(approval_request.get("approval"), {}),
+                            approval_request.get("status", "pending"),
+                            approval_request.get("requested_by"),
+                            approval_request.get("requested_at"),
+                            approval_request.get("approved_by"),
+                            approval_request.get("approved_at"),
+                            approval_request.get("expires_at"),
+                            approval_request.get("reason"),
+                            approval_request.get("created_at"),
+                            approval_request.get("updated_at")
+                            or approval_request.get("created_at"),
+                            approval_request["id"],
+                            _RD_RUNNER_SAFETY_APPROVAL_ID_SQL_PATTERN,
+                            _json(approval_request.get("approval_request"), {}),
+                            _RD_RUNNER_SAFETY_APPROVAL_ID_SQL_PATTERN,
+                        ),
+                    )
+                    persisted_row = cursor.fetchone()
+                    if persisted_row is None:
+                        raise GenericAiExecutorApprovalMutationRejected
+                    persisted_request = self._ai_executor_approval_request_from_row(persisted_row)
+                if action is not None:
+                    self.upsert_plugin_actions(cursor, {action["id"]: action})
+                for audit_event in audit_events:
+                    self._upsert_audit(cursor, audit_event)
+                return persisted_request
 
     def save_plugin_invocation_log_record(
         self,

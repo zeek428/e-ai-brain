@@ -130,6 +130,34 @@ def runner_safety_approval_request_id(
     return f"{base}:renewal:{renewal_no}" if renewal_no > 0 else base
 
 
+def runner_safety_decision_id(
+    *,
+    work_item_id: str,
+    attempt_no: int,
+    renewal_no: int = 0,
+) -> str:
+    base = f"runner-safety-approval:{work_item_id}:attempt:{attempt_no}"
+    return f"{base}:renewal:{renewal_no}" if renewal_no > 0 else base
+
+
+def runner_safety_decision_options() -> list[dict[str, Any]]:
+    return [
+        {
+            "code": "authorize_blocked_operations",
+            "input_schema": {},
+            "outcome": "approve",
+            "subject_transition": "resume",
+        },
+        {
+            "code": "cancel_work_item",
+            "input_schema": {},
+            "outcome": "reject",
+            "requires_comment": True,
+            "subject_transition": "cancelled",
+        },
+    ]
+
+
 def _load_runner_safety_approval_request(store: Any, record_id: str) -> dict[str, Any] | None:
     repository = getattr(store, "repository", None)
     get_request = getattr(repository, "get_ai_executor_approval_request", None)
@@ -272,7 +300,11 @@ def _runner_safety_approval_records(
                 "Runner safety approval request cannot be renewed",
             )
     identity_suffix = f":renewal:{renewal_no}" if renewal_no > 0 else ""
-    decision_id = f"runner-safety-approval:{work_item_id}:attempt:{attempt_no}{identity_suffix}"
+    decision_id = runner_safety_decision_id(
+        work_item_id=work_item_id,
+        attempt_no=attempt_no,
+        renewal_no=renewal_no,
+    )
     executor_type, runner_id = _runner_identity(store, work_item)
     now = _now().isoformat()
     approval_request_snapshot = {
@@ -316,21 +348,7 @@ def _runner_safety_approval_records(
         else _records(store, "rd_run_seats").get(reviewer_seat_id)
     )
     selector = _human_decision_selector(reviewer)
-    options = [
-        {
-            "code": "authorize_blocked_operations",
-            "input_schema": {},
-            "outcome": "approve",
-            "subject_transition": "resume",
-        },
-        {
-            "code": "cancel_work_item",
-            "input_schema": {},
-            "outcome": "reject",
-            "requires_comment": True,
-            "subject_transition": "cancelled",
-        },
-    ]
+    options = runner_safety_decision_options()
     safe_evidence = {
         "approval_request_id": approval_request_id,
         "attempt_no": attempt_no,
@@ -338,6 +356,8 @@ def _runner_safety_approval_records(
         "kind": "runner_safety_approval",
         "policy_version": RUNNER_SAFETY_POLICY_VERSION,
     }
+    if renewal_no > 0:
+        safe_evidence["renewal_no"] = renewal_no
     decision = {
         "id": decision_id,
         "brain_app_id": run.get("brain_app_id", "rd_brain"),

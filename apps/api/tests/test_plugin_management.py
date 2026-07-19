@@ -516,8 +516,7 @@ def test_dingtalk_connection_tool_discovery_detects_tool_drift_and_redacts_url_k
                 "query_key": "key",
             },
             "endpoint_url": (
-                "https://mcp-gw.dingtalk.com/server/"
-                "doc-instance-123?key=dingtalk-url-key-secret"
+                "https://mcp-gw.dingtalk.com/server/doc-instance-123?key=dingtalk-url-key-secret"
             ),
             "name": "钉钉文档个人授权",
             "plugin_id": dingtalk_doc["plugin_id"],
@@ -968,9 +967,7 @@ def test_dingtalk_aitable_create_records_trial_uses_configured_target(monkeypatc
     captured_requests: list[dict[str, object]] = []
 
     marketplace = client.get("/api/system/plugin-marketplace", headers=headers).json()["data"]
-    dingtalk_aitable = {item["code"]: item for item in marketplace["items"]}[
-        "dingtalk_aitable"
-    ]
+    dingtalk_aitable = {item["code"]: item for item in marketplace["items"]}["dingtalk_aitable"]
     connection = client.post(
         "/api/system/plugin-connections",
         json={
@@ -1287,7 +1284,9 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
     assert "AI 执行器下达指令" in by_code["ai_executor"]["action_templates"]
     assert "执行完成后同步回写" in by_code["ai_executor"]["recommended_scenarios"]
     assert by_code["ai_executor"]["connection_defaults"]["protocol"] == "runner_polling"
-    assert by_code["ai_executor"]["connection_defaults"]["endpoint_url"] == "model-gateway://default"
+    assert (
+        by_code["ai_executor"]["connection_defaults"]["endpoint_url"] == "model-gateway://default"
+    )
     assert by_code["ai_executor"]["connection_defaults"]["auth_type"] == "none"
     assert by_code["ai_executor"]["connection_defaults"]["auth_config"] == {}
     ai_executor_query = by_code["ai_executor"]["connection_defaults"]["request_config"]["query"]
@@ -1451,10 +1450,7 @@ def test_plugin_marketplace_lists_official_catalog_with_runtime_status():
         field["key"]: field for field in internal_item["connection_schema"]["sections"][1]["fields"]
     }
     assert internal_filter_fields["product_id"]["label"] == "产品"
-    assert (
-        internal_filter_fields["product_id"]["path"]
-        == "request_config.query.product_id"
-    )
+    assert internal_filter_fields["product_id"]["path"] == "request_config.query.product_id"
     assert internal_item["connection_schema"]["sections"][2]["title"] == "按源过滤"
     internal_source_filter_fields = {
         field["key"]: field for field in internal_item["connection_schema"]["sections"][2]["fields"]
@@ -1648,9 +1644,7 @@ def test_standard_internal_data_source_resources_are_available_for_scheduled_job
     assert actions_response.status_code == 200, actions_response.text
     actions = actions_response.json()["data"]["items"]
     action = next(
-        item
-        for item in actions
-        if item["id"] == "plugin_action_system_internal_data_source_query"
+        item for item in actions if item["id"] == "plugin_action_system_internal_data_source_query"
     )
     assert action["connection_id"] == connection["id"]
     assert action["code"] == "query_internal_business_data"
@@ -2532,9 +2526,7 @@ def test_ai_executor_runner_polling_lifecycle_supports_openclaw_tasks():
         headers=admin_headers,
     )
     assert failed_invocation.status_code == 200
-    failed_task_id = failed_invocation.json()["data"]["response_summary"]["json"][
-        "runner_task_id"
-    ]
+    failed_task_id = failed_invocation.json()["data"]["response_summary"]["json"]["runner_task_id"]
     failed_claim = client.post(
         "/api/system/ai-executor-tasks/claim",
         json={"executor_type": "openclaw", "runner_id": runner["id"]},
@@ -2833,8 +2825,9 @@ def test_ai_executor_runner_blocks_high_risk_instruction_before_queue():
         headers=admin_headers,
     ).json()["data"]["items"]
     assert len(audit_events) == 1
-    assert audit_events[0]["payload"]["approval_request"]["approval_request_id"] == (
-        detail["approval_request"]["approval_request_id"]
+    assert (
+        audit_events[0]["payload"]["approval_request"]["approval_request_id"]
+        == (detail["approval_request"]["approval_request_id"])
     )
     assert audit_events[0]["payload"]["blocked_operations"] == ["git_push_or_merge"]
     assert audit_events[0]["payload"]["action_id"] == action["id"]
@@ -2990,6 +2983,87 @@ def test_plugin_action_approval_cannot_bypass_rd_collaboration_gate() -> None:
     }
     assert app.state.store.ai_executor_approval_requests[approval_request_id] == before_request
     assert app.state.store.plugin_actions[action["id"]] == before_action
+    assert app.state.store.audit_events == []
+
+
+def test_generic_approval_rejects_reserved_rd_identity_without_source() -> None:
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    approval_request_id = "rd-runner-safety:work-source-less:attempt:2:renewal:1"
+    record = {
+        "id": approval_request_id,
+        "approval": {},
+        "approval_request": {
+            "approval_request_id": approval_request_id,
+            "attempt_no": 2,
+            "blocked_operations": ["git_push_or_merge"],
+            "policy_version": "runner_safety_v1",
+            "renewal_no": 1,
+            "work_item_id": "work-source-less",
+        },
+        "blocked_operations": ["git_push_or_merge"],
+        "executor_type": "codex",
+        "requested_by": "user_owner",
+        "runner_id": "runner-sensitive",
+        "status": "pending",
+        "workspace_root": "",
+    }
+    app.state.store.ai_executor_approval_requests[approval_request_id] = record
+    before = deepcopy(record)
+
+    response = client.post(
+        f"/api/system/ai-executor-approval-requests/{approval_request_id}/approve",
+        json={"expires_at": "2099-01-01T00:00:00+00:00"},
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] | {"trace_id": "trace"} == {
+        "code": "RD_COLLABORATION_APPROVAL_DECISION_REQUIRED",
+        "message": "Collaboration approval must be resolved through its frozen decision",
+        "trace_id": "trace",
+    }
+    assert app.state.store.ai_executor_approval_requests[approval_request_id] == before
+    assert app.state.store.audit_events == []
+
+
+def test_plugin_action_approval_cannot_preseed_reserved_rd_identity_without_source() -> None:
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    approval_request_id = "rd-runner-safety:work-preseed:attempt:1"
+    action = {
+        "id": "action-reserved-preseed",
+        "plugin_id": "plugin_standard_ai_executor",
+        "request_config": {},
+        "status": "active",
+    }
+    app.state.store.plugin_actions[action["id"]] = action
+    before_action = deepcopy(action)
+
+    response = client.post(
+        f"/api/system/plugin-actions/{action['id']}/ai-executor-approval",
+        json={
+            "approval_request": {
+                "approval_request_id": approval_request_id,
+                "attempt_no": 1,
+                "blocked_operations": ["git_push_or_merge"],
+                "policy_version": "runner_safety_v1",
+                "work_item_id": "work-preseed",
+            },
+            "approved_operations": ["git_push_or_merge"],
+            "expires_at": "2099-01-01T00:00:00+00:00",
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] | {"trace_id": "trace"} == {
+        "code": "RD_COLLABORATION_APPROVAL_DECISION_REQUIRED",
+        "message": "Collaboration approval must be resolved through its frozen decision",
+        "trace_id": "trace",
+    }
+    assert app.state.store.plugin_actions[action["id"]] == before_action
+    assert approval_request_id not in app.state.store.ai_executor_approval_requests
     assert app.state.store.audit_events == []
 
 
@@ -3294,8 +3368,7 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
     assert "sudo systemctl status ai-brain-runner" in start_stop_text
     assert f"AI_BRAIN_RUNNER_ID={runner_id}" in env_text
     assert (
-        "AI_BRAIN_ENDPOINT=https://aibrain.example.com/api/system/ai-executor-runners"
-        in env_text
+        "AI_BRAIN_ENDPOINT=https://aibrain.example.com/api/system/ai-executor-runners" in env_text
     )
     assert "AI_BRAIN_RUNNER_TOKEN=<runner_token>" in env_text
     assert "AI_BRAIN_RUNNER_PACKAGE_VERSION=v1" in env_text
@@ -3435,8 +3508,7 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
     assert "./scripts/start-runner.ps1" in start_stop_text
 
     invalid_response = client.get(
-        f"/api/system/ai-executor-runners/{runner_id}/install-package"
-        "?target_os=solaris",
+        f"/api/system/ai-executor-runners/{runner_id}/install-package?target_os=solaris",
         headers=admin_headers,
     )
     assert invalid_response.status_code == 400
@@ -3560,9 +3632,7 @@ def test_ai_executor_runner_agent_executes_configured_command_with_stdin(
         for request in log_requests
         for log in request["payload"]["logs"]
     )
-    complete_requests = [
-        item for item in requests if str(item["url"]).endswith("/complete")
-    ]
+    complete_requests = [item for item in requests if str(item["url"]).endswith("/complete")]
     assert len(complete_requests) == 1
     complete_payload = complete_requests[0]["payload"]
     assert complete_payload["runner_id"] == runner["id"]
@@ -3765,10 +3835,7 @@ def test_ai_executor_runner_token_rotation_logs_cancel_and_timeout_controls():
     )
     assert cancelled.status_code == 200
     assert cancelled.json()["data"]["task"]["status"] == "cancel_requested"
-    assert (
-        cancelled.json()["data"]["task"]["error_code"]
-        == "AI_EXECUTOR_TASK_CANCEL_REQUESTED"
-    )
+    assert cancelled.json()["data"]["task"]["error_code"] == "AI_EXECUTOR_TASK_CANCEL_REQUESTED"
 
     runner_status = client.get(
         f"/api/system/ai-executor-tasks/{task_id}/runner-status?runner_id={runner['id']}",
@@ -3776,10 +3843,7 @@ def test_ai_executor_runner_token_rotation_logs_cancel_and_timeout_controls():
     )
     assert runner_status.status_code == 200
     assert runner_status.json()["data"]["task"]["status"] == "cancel_requested"
-    assert (
-        runner_status.json()["data"]["task"]["error_code"]
-        == "AI_EXECUTOR_TASK_CANCEL_REQUESTED"
-    )
+    assert runner_status.json()["data"]["task"]["error_code"] == "AI_EXECUTOR_TASK_CANCEL_REQUESTED"
 
     confirmed_cancel = client.post(
         f"/api/system/ai-executor-tasks/{task_id}/complete",
@@ -4638,9 +4702,7 @@ def test_standard_plugin_connections_store_platform_parameters():
         headers=admin_headers,
     )
     assert gitlab_token_only_connection.status_code == 200
-    gitlab_token_only_query = gitlab_token_only_connection.json()["data"]["request_config"][
-        "query"
-    ]
+    gitlab_token_only_query = gitlab_token_only_connection.json()["data"]["request_config"]["query"]
     assert "api_version" not in gitlab_token_only_query
     assert "group_id" not in gitlab_token_only_query
     assert "project_id" not in gitlab_token_only_query
@@ -5115,8 +5177,7 @@ def test_plugin_connection_can_be_tested_with_structured_result_and_audit():
     assert result["request_summary"]["request_config"]["query"]["appCode"] == "demo"
     assert result["request_summary"]["headers"]["X-Request-Source"] == "connection-test"
     assert (
-        result["request_summary"]["header_sources"]["X-Request-Source"]
-        == "request_config.headers"
+        result["request_summary"]["header_sources"]["X-Request-Source"] == "request_config.headers"
     )
     assert (
         result["request_summary"]["curl_command"]
@@ -5435,8 +5496,7 @@ def test_plugin_connection_test_auth_config_overrides_masked_authorization_heade
     assert result["status"] == "succeeded"
     assert result["request_summary"]["headers"]["Authorization"] == "APPCODE real-authorization"
     assert (
-        result["request_summary"]["header_sources"]["Authorization"]
-        == "auth_config.api_key_header"
+        result["request_summary"]["header_sources"]["Authorization"] == "auth_config.api_key_header"
     )
     assert result["request_summary"]["masked_placeholder_headers"] == []
     assert "{{" not in str(captured["url"])
@@ -5633,21 +5693,27 @@ def test_json_path_mapping_supports_brackets_indexes_and_wildcards():
         )
         == 3
     )
-    assert result_write_preview(
-        response_summary,
-        {
-            "recipients_path": "$.payload.deliveries[*].recipients",
-            "write_target": "email_notifications",
-        },
-    )["candidate_count"] == 3
-    assert result_write_preview(
-        {"json": {"insights": [{"id": "insight-1"}, {"id": "insight-2"}]}},
-        {
-            "insights_path": "$.insights",
-            "records_imported_path": "$.row_count",
-            "write_target": "user_feedback_insights",
-        },
-    )["records_imported"] == 2
+    assert (
+        result_write_preview(
+            response_summary,
+            {
+                "recipients_path": "$.payload.deliveries[*].recipients",
+                "write_target": "email_notifications",
+            },
+        )["candidate_count"]
+        == 3
+    )
+    assert (
+        result_write_preview(
+            {"json": {"insights": [{"id": "insight-1"}, {"id": "insight-2"}]}},
+            {
+                "insights_path": "$.insights",
+                "records_imported_path": "$.row_count",
+                "write_target": "user_feedback_insights",
+            },
+        )["records_imported"]
+        == 2
+    )
     assert result_write_preview(
         {"json": {"bugs": [{"id": "bug-1"}, {"id": "bug-2"}]}},
         {
@@ -5695,7 +5761,7 @@ def test_json_path_mapping_supports_brackets_indexes_and_wildcards():
         {"json": {"result": {"recordIds": ["rec-1", "rec-2"]}, "success": True}},
         {
             "base_id": "base-001",
-            "records_template": "[{\"cells\":{\"field_title\":\"测试\"}}]",
+            "records_template": '[{"cells":{"field_title":"测试"}}]',
             "table_id": "tbl-001",
             "write_target": "dingtalk_aitable_records",
         },
@@ -5780,8 +5846,7 @@ def test_plugin_action_trial_returns_request_preview_and_mapping_hits():
     assert dry_run_seed["reuse_wizard"]["total_steps"] == 4
     assert "连接、动作、映射" in dry_run_seed["reuse_wizard"]["next_action_description"]
     assert [
-        (item["key"], item["status"])
-        for item in dry_run_seed["reuse_wizard"]["handoff_summary"]
+        (item["key"], item["status"]) for item in dry_run_seed["reuse_wizard"]["handoff_summary"]
     ] == [
         ("response_sample", "ready"),
         ("input_mapping", "ready"),
@@ -5816,9 +5881,10 @@ def test_plugin_action_trial_returns_request_preview_and_mapping_hits():
         "4/4 步已就绪"
     )
     assert sample_result["scheduled_job_dry_run_seed"]["reuse_wizard"]["progress_percent"] == 100
-    assert sample_result["scheduled_job_dry_run_seed"]["reuse_wizard"]["steps"][0][
-        "status"
-    ] == "succeeded"
+    assert (
+        sample_result["scheduled_job_dry_run_seed"]["reuse_wizard"]["steps"][0]["status"]
+        == "succeeded"
+    )
     audit_events = client.get(
         f"/api/audit/events?event_type=plugin_action.trial_succeeded&subject_id={action['id']}",
         headers=admin_headers,
@@ -6388,8 +6454,7 @@ def test_maxcompute_weekly_feedback_job_creates_user_feedback_insights(monkeypat
         "/api/knowledge/documents",
         json={
             "content": (
-                "支付页提交后无响应时，应优先排查订单幂等锁、"
-                "支付回调超时和前端按钮防重复提交状态。"
+                "支付页提交后无响应时，应优先排查订单幂等锁、支付回调超时和前端按钮防重复提交状态。"
             ),
             "doc_type": "runbook",
             "permission_roles": ["admin"],

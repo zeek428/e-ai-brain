@@ -9,7 +9,14 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.api.deps import api_error
+from app.services.ai_executor_runner_approvals import (
+    parse_rd_runner_safety_approval_identity,
+)
 from app.services.ai_executor_runner_safety import RUNNER_SAFETY_POLICY_VERSION
+from app.services.rd_dispatch_fault_decision import (
+    runner_safety_decision_id,
+    runner_safety_decision_options,
+)
 
 
 def _records(store: Any, name: str) -> dict[str, dict[str, Any]]:
@@ -311,6 +318,52 @@ def _resolve_memory_runner_safety_approval(
             409,
             "RD_DECISION_REQUIRED",
             "Runner safety approval request is no longer pending",
+        )
+    identity = parse_rd_runner_safety_approval_identity(approval_request_id)
+    request_snapshot = approval_request.get("approval_request") or {}
+    blocked_operations = list(approval_request.get("blocked_operations") or [])
+    expected_options = runner_safety_decision_options()
+    evidence = decision.get("evidence_json") or []
+    frozen_evidence = evidence[0] if len(evidence) == 1 else {}
+    if identity is None:
+        raise api_error(
+            409,
+            "RD_DECISION_REQUIRED",
+            "Runner safety approval request is not bound to frozen decision evidence",
+        )
+    try:
+        request_renewal_no = int(request_snapshot.get("renewal_no") or 0)
+    except (TypeError, ValueError):
+        request_renewal_no = -1
+    expected_decision_id = runner_safety_decision_id(**identity)
+    expected_evidence = {
+        "approval_request_id": approval_request_id,
+        "attempt_no": identity["attempt_no"],
+        "blocked_operations": blocked_operations,
+        "kind": "runner_safety_approval",
+        "policy_version": RUNNER_SAFETY_POLICY_VERSION,
+    }
+    if identity["renewal_no"] > 0:
+        expected_evidence["renewal_no"] = identity["renewal_no"]
+    if (
+        decision.get("id") != expected_decision_id
+        or decision.get("subject_type") != "rd_work_item"
+        or decision.get("subject_id") != identity["work_item_id"]
+        or decision.get("options_json") != expected_options
+        or decision.get("options_hash") != _canonical_hash(expected_options)
+        or frozen_evidence != expected_evidence
+        or request_snapshot.get("source") != "rd_collaboration_work_item"
+        or request_snapshot.get("approval_request_id") != approval_request_id
+        or request_snapshot.get("work_item_id") != identity["work_item_id"]
+        or request_snapshot.get("attempt_no") != identity["attempt_no"]
+        or request_renewal_no != identity["renewal_no"]
+        or request_snapshot.get("blocked_operations") != blocked_operations
+        or request_snapshot.get("policy_version") != RUNNER_SAFETY_POLICY_VERSION
+    ):
+        raise api_error(
+            409,
+            "RD_DECISION_REQUIRED",
+            "Runner safety approval request is not bound to frozen decision evidence",
         )
     now = _now()
     if outcome == "approve":
