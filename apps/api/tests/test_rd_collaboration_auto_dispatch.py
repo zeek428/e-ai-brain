@@ -135,37 +135,41 @@ def test_auto_dispatches_ready_non_high_risk_ai_work_items() -> None:
     assert high_work_item["resume_state"] == "ready"
     assert high_work_item["suspended_decision_request_id"] == "auto-high-risk-dispatch:work-high:1"
     decision = store.decision_requests["auto-high-risk-dispatch:work-high:1"]
-    assert decision | {
-        "answer_actor_selector": {},
-        "brain_app_id": "rd_brain",
-        "created_by": "user-owner",
-        "decision_actor_selector": {"seat_ids": ["seat-reviewer"]},
-        "decision_type": "high_risk_ai_dispatch",
-        "escalation_target_selector": {"seat_ids": ["seat-reviewer"]},
-        "options_json": [
-            {
-                "code": "approve_dispatch",
-                "input_schema": {},
-                "outcome": "approve",
-                "subject_transition": "ready",
-            },
-            {
-                "code": "cancel_work_item",
-                "input_schema": {},
-                "outcome": "reject",
-                "requires_comment": True,
-                "subject_transition": "cancelled",
-            },
-        ],
-        "plan_version": 0,
-        "product_id": "product-1",
-        "recommendation_json": {"action": "human_approval_required"},
-        "status": "pending",
-        "subject_id": "work-high",
-        "subject_type": "rd_work_item",
-        "timeout_policy": "escalate_keep_paused",
-        "version": 1,
-    } == decision
+    assert (
+        decision
+        | {
+            "answer_actor_selector": {},
+            "brain_app_id": "rd_brain",
+            "created_by": "user-owner",
+            "decision_actor_selector": {"seat_ids": ["seat-reviewer"]},
+            "decision_type": "high_risk_ai_dispatch",
+            "escalation_target_selector": {"seat_ids": ["seat-reviewer"]},
+            "options_json": [
+                {
+                    "code": "approve_dispatch",
+                    "input_schema": {},
+                    "outcome": "approve",
+                    "subject_transition": "ready",
+                },
+                {
+                    "code": "cancel_work_item",
+                    "input_schema": {},
+                    "outcome": "reject",
+                    "requires_comment": True,
+                    "subject_transition": "cancelled",
+                },
+            ],
+            "plan_version": 0,
+            "product_id": "product-1",
+            "recommendation_json": {"action": "human_approval_required"},
+            "status": "pending",
+            "subject_id": "work-high",
+            "subject_type": "rd_work_item",
+            "timeout_policy": "escalate_keep_paused",
+            "version": 1,
+        }
+        == decision
+    )
     assert decision["expires_at"]
     assert len(store.ai_executor_tasks) == 2
 
@@ -314,6 +318,134 @@ def test_auto_dispatch_escalates_a_frozen_runner_safety_fault_without_leaking_pa
 
     dispatch_ready_ai_work_items(store)
     assert len(store.decision_requests) == 1
+
+
+def test_auto_dispatch_runner_safety_approval_resumes_exact_phase_and_dispatches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store_with_ready_ai_work_items()
+    store.rd_work_items = {"work-low": store.rd_work_items["work-low"]}
+    store.rd_work_items["work-low"]["status"] = "rework_required"
+    secret = "customer-token=secret-value /tmp/private-workspace"
+    monkeypatch.setattr(
+        "app.services.rd_task_executor_policies.render_executor_instruction",
+        lambda *_args, **_kwargs: f"Run git push, then rm -rf build. {secret}",
+    )
+
+    blocked = dispatch_ready_ai_work_items(store)
+
+    assert blocked["escalated_work_item_ids"] == ["work-low"]
+    paused = store.rd_work_items["work-low"]
+    assert paused["status"] == "waiting_human"
+    assert paused["resume_state"] == "rework_required"
+    approval_request_id = "rd-runner-safety:work-low:attempt:1"
+    assert list(store.ai_executor_approval_requests) == [approval_request_id]
+    approval_request = store.ai_executor_approval_requests[approval_request_id]
+    assert approval_request["status"] == "pending"
+    assert approval_request["blocked_operations"] == [
+        "git_push_or_merge",
+        "destructive_delete",
+    ]
+    assert approval_request["workspace_root"] == ""
+    decision = store.decision_requests[paused["suspended_decision_request_id"]]
+    assert len(store.decision_requests) == 1
+    assert len(store.rd_collaboration_events) == 1
+    assert len(store.audit_events) == 1
+    assert decision["decision_type"] == "runner_safety_approval"
+    assert [option["code"] for option in decision["options_json"]] == [
+        "authorize_blocked_operations",
+        "cancel_work_item",
+    ]
+    assert store.ai_tasks == {}
+    assert store.ai_executor_tasks == {}
+    assert store.rd_work_item_attempts == {}
+    persisted_gate = json.dumps(
+        {
+            "approval_request": approval_request,
+            "decision": decision,
+            "events": store.rd_collaboration_events,
+            "audits": store.audit_events,
+            "worker_outcome": blocked,
+        },
+        ensure_ascii=False,
+    )
+    assert secret not in persisted_gate
+    assert "/tmp/private-workspace" not in persisted_gate
+
+    replay = dispatch_ready_ai_work_items(store)
+    assert replay["escalated_work_item_ids"] == []
+    assert list(store.ai_executor_approval_requests) == [approval_request_id]
+    assert len(store.decision_requests) == 1
+
+    frozen_strategy = json.dumps(store.rd_task_executor_policy_snapshots, sort_keys=True)
+    decided = apply_decision(
+        store,
+        decision_request_id=decision["id"],
+        selected_option="authorize_blocked_operations",
+        input_value={},
+        comment=None,
+        actor={"id": "user-tester", "roles": []},
+        version=1,
+        idempotency_key="approve-runner-safety-work-low-attempt-1",
+    )
+
+    assert decided["work_item"]["status"] == "rework_required"
+    approved_request = store.ai_executor_approval_requests[approval_request_id]
+    approval = approved_request["approval"]
+    assert approved_request["status"] == "approved"
+    assert approval == {
+        "approval_id": f"{approval_request_id}:approval",
+        "approval_request_id": approval_request_id,
+        "approved": True,
+        "approved_at": approval["approved_at"],
+        "approved_by": "user-tester",
+        "approved_operations": ["git_push_or_merge", "destructive_delete"],
+        "expires_at": approval["expires_at"],
+        "mode": "platform_human_approval",
+        "policy_version": "runner_safety_v1",
+    }
+    assert json.dumps(store.rd_task_executor_policy_snapshots, sort_keys=True) == frozen_strategy
+
+    dispatched = dispatch_ready_ai_work_items(store)
+
+    assert dispatched["dispatched_work_item_ids"] == ["work-low"]
+    assert store.rd_work_items["work-low"]["status"] == "running"
+    assert len(store.rd_work_item_attempts) == 1
+    runner_task = next(iter(store.ai_executor_tasks.values()))
+    assert runner_task["request_config"]["ai_executor_approval"] == approval
+    assert runner_task["request_config"]["ai_executor_safety"]["status"] == "approved"
+
+
+def test_auto_dispatch_runner_safety_rejection_cancels_without_execution_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store_with_ready_ai_work_items()
+    store.rd_work_items = {"work-low": store.rd_work_items["work-low"]}
+    monkeypatch.setattr(
+        "app.services.rd_task_executor_policies.render_executor_instruction",
+        lambda *_args, **_kwargs: "Run git push",
+    )
+    dispatch_ready_ai_work_items(store)
+    decision = next(iter(store.decision_requests.values()))
+
+    decided = apply_decision(
+        store,
+        decision_request_id=decision["id"],
+        selected_option="cancel_work_item",
+        input_value={},
+        comment="Unsafe operation is not authorized",
+        actor={"id": "user-tester", "roles": []},
+        version=1,
+        idempotency_key="reject-runner-safety-work-low-attempt-1",
+    )
+
+    approval_request = store.ai_executor_approval_requests["rd-runner-safety:work-low:attempt:1"]
+    assert approval_request["status"] == "rejected"
+    assert approval_request["approval"] == {}
+    assert decided["work_item"]["status"] == "cancelled"
+    assert store.ai_tasks == {}
+    assert store.ai_executor_tasks == {}
+    assert store.rd_work_item_attempts == {}
 
 
 @pytest.mark.parametrize(

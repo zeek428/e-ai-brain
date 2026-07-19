@@ -233,18 +233,19 @@ def _assert_no_autonomous_dispatch_records(
     ai_task_id: str,
     loop_run_ids: list[str] | None = None,
 ) -> None:
-    assert repository.list_execution_context_manifests(
-        subject_id=ai_task_id,
-        subject_type="ai_task",
-    ) == []
+    assert (
+        repository.list_execution_context_manifests(
+            subject_id=ai_task_id,
+            subject_type="ai_task",
+        )
+        == []
+    )
     assert repository.list_agent_loop_runs(ai_task_id=ai_task_id) == []
     for loop_run_id in loop_run_ids or []:
         assert repository.list_agent_loop_iterations(loop_run_id) == []
     assert [
         ledger
-        for ledger in repository.list_trusted_delivery_records(
-            record_type="agent_budget_ledger"
-        )
+        for ledger in repository.list_trusted_delivery_records(record_type="agent_budget_ledger")
         if ledger.get("ai_task_id") == ai_task_id
     ] == []
 
@@ -316,9 +317,7 @@ def test_postgres_high_risk_dispatch_gate_persists_the_decision_and_pauses_the_i
 
     decision = result["decision_request"]
     assert decision["decision_type"] == "high_risk_ai_dispatch"
-    assert decision["decision_actor_selector"] == {
-        "seat_ids": ["high-risk-dispatch-gate-reviewer"]
-    }
+    assert decision["decision_actor_selector"] == {"seat_ids": ["high-risk-dispatch-gate-reviewer"]}
     paused = repository.get_rd_work_item(ids["work_item_id"])
     assert paused is not None
     assert paused["status"] == "waiting_human"
@@ -595,7 +594,7 @@ def test_postgres_safety_rejected_dispatch_retry_leaves_no_preparation_records(
     monkeypatch.setattr(repository, "next_id", capture_task_id)
     monkeypatch.setattr(
         "app.services.rd_task_executor_policies.render_executor_instruction",
-        lambda *_args, **_kwargs: "Run git push",
+        lambda *_args, **_kwargs: "Run git push with token=customer-secret",
     )
 
     for _ in range(2):
@@ -607,6 +606,10 @@ def test_postgres_safety_rejected_dispatch_retry_leaves_no_preparation_records(
             )
         assert exc_info.value.status_code == 409
         assert exc_info.value.detail["code"] == "AI_EXECUTOR_APPROVAL_REQUIRED"
+        safe_detail = json.dumps(exc_info.value.detail)
+        assert "Run git push" not in safe_detail
+        assert "customer-secret" not in safe_detail
+        assert "/srv/rd-work" not in safe_detail
 
     assert len(allocated_task_ids) == 2
     assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "ready"
@@ -615,14 +618,239 @@ def test_postgres_safety_rejected_dispatch_retry_leaves_no_preparation_records(
     for task_id in allocated_task_ids:
         _assert_no_autonomous_dispatch_records(repository, ai_task_id=task_id)
     with repository._connect() as connection:
-        assert connection.execute("SELECT count(*) FROM ai_executor_approval_requests").fetchone()[
-            0
-        ] == 0
+        assert (
+            connection.execute("SELECT count(*) FROM ai_executor_approval_requests").fetchone()[0]
+            == 0
+        )
     assert store.ai_executor_approval_requests == {}
     assert not any(
         event.get("event_type") == "ai_executor_task.approval_requested"
         for event in store.audit_events
     )
+
+
+def test_postgres_runner_safety_approval_is_atomic_replay_safe_and_dispatchable(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="runner-safety-approval",
+        autonomy_mode="autonomous_loop",
+    )
+    store = PostgresRuntimeStore(repository)
+    secret = "customer-token=secret-value /srv/private-workspace"
+    allocated_task_ids: list[str] = []
+    original_next_id = repository.next_id
+
+    def capture_task_id(prefix: str) -> str:
+        record_id = original_next_id(prefix)
+        if prefix == "task":
+            allocated_task_ids.append(record_id)
+        return record_id
+
+    monkeypatch.setattr(repository, "next_id", capture_task_id)
+    monkeypatch.setattr(
+        "app.services.rd_task_executor_policies.render_executor_instruction",
+        lambda *_args, **_kwargs: f"Run git push, then rm -rf build. {secret}",
+    )
+
+    blocked = dispatch_ready_ai_work_items(store)
+
+    assert blocked["escalated_work_item_ids"] == [ids["work_item_id"]]
+    assert len(allocated_task_ids) == 1
+    paused = repository.get_rd_work_item(ids["work_item_id"])
+    assert paused is not None
+    assert paused["status"] == "waiting_human"
+    assert paused["resume_state"] == "ready"
+    approval_request_id = f"rd-runner-safety:{ids['work_item_id']}:attempt:1"
+    with repository._connect() as connection:
+        approval_requests = connection.execute(
+            """
+            SELECT id, status, workspace_root, blocked_operations,
+                   approval_request, approval
+            FROM ai_executor_approval_requests
+            """
+        ).fetchall()
+        counts = connection.execute(
+            """
+            SELECT
+              (SELECT count(*) FROM ai_tasks),
+              (SELECT count(*) FROM ai_executor_tasks),
+              (SELECT count(*) FROM rd_work_item_attempts),
+              (SELECT count(*) FROM execution_context_manifests),
+              (SELECT count(*) FROM agent_loop_runs),
+              (SELECT count(*) FROM agent_loop_iterations),
+              (SELECT count(*) FROM trusted_delivery_records
+               WHERE record_type = 'agent_budget_ledger')
+            """
+        ).fetchone()
+    assert len(approval_requests) == 1
+    approval_row = approval_requests[0]
+    assert approval_row[0] == approval_request_id
+    assert approval_row[1] == "pending"
+    assert approval_row[2] == ""
+    assert approval_row[3] == ["git_push_or_merge", "destructive_delete"]
+    assert approval_row[4] == {
+        "approval_request_id": approval_request_id,
+        "attempt_no": 1,
+        "blocked_operations": ["git_push_or_merge", "destructive_delete"],
+        "policy_version": "runner_safety_v1",
+        "source": "rd_collaboration_work_item",
+        "work_item_id": ids["work_item_id"],
+    }
+    assert approval_row[5] == {}
+    assert counts == (0, 0, 0, 0, 0, 0, 0)
+
+    decisions = repository.list_decision_requests(
+        subject_type="rd_work_item",
+        subject_id=ids["work_item_id"],
+    )
+    assert len(decisions) == 1
+    decision = decisions[0]
+    assert decision["decision_type"] == "runner_safety_approval"
+    assert [option["code"] for option in decision["options_json"]] == [
+        "authorize_blocked_operations",
+        "cancel_work_item",
+    ]
+    events = [
+        event
+        for event in repository.list_rd_collaboration_events(ids["run_id"])
+        if event["event_type"] == "work_item.runner_safety_approval_required"
+    ]
+    audits = repository.list_audit_events(
+        event_type="rd_work_item.runner_safety_approval_required",
+        subject_type="rd_work_item",
+        subject_id=ids["work_item_id"],
+    )
+    assert len(events) == 1
+    assert len(audits) == 1
+    persisted_gate = json.dumps(
+        {
+            "approval_request": approval_row[4],
+            "decision": decision,
+            "events": events,
+            "audits": audits,
+            "worker_outcome": blocked,
+        },
+        default=str,
+    )
+    assert secret not in persisted_gate
+    assert "/srv/private-workspace" not in persisted_gate
+
+    replay_store = PostgresRuntimeStore(repository)
+    dispatch_ready_ai_work_items(replay_store)
+    with repository._connect() as connection:
+        assert (
+            connection.execute("SELECT count(*) FROM ai_executor_approval_requests").fetchone()[0]
+            == 1
+        )
+    assert (
+        len(
+            repository.list_decision_requests(
+                subject_type="rd_work_item",
+                subject_id=ids["work_item_id"],
+            )
+        )
+        == 1
+    )
+    assert (
+        len(
+            [
+                event
+                for event in repository.list_rd_collaboration_events(ids["run_id"])
+                if event["event_type"] == "work_item.runner_safety_approval_required"
+            ]
+        )
+        == 1
+    )
+
+    frozen_snapshot = repository.get_rd_policy_snapshot(
+        repository.get_rd_collaboration_run(ids["run_id"])["strategy_snapshot_id"]
+    )
+    decided = apply_decision(
+        replay_store,
+        decision_request_id=decision["id"],
+        selected_option="authorize_blocked_operations",
+        input_value={},
+        comment=None,
+        actor={"id": "user_reviewer", "roles": []},
+        version=1,
+        idempotency_key="approve-runner-safety-attempt-1",
+    )
+
+    assert decided["work_item"]["status"] == "ready"
+    with repository._connect() as connection:
+        approved_row = connection.execute(
+            """
+            SELECT status, blocked_operations, approval
+            FROM ai_executor_approval_requests WHERE id = %s
+            """,
+            (approval_request_id,),
+        ).fetchone()
+    assert approved_row is not None
+    assert approved_row[0] == "approved"
+    approval = approved_row[2]
+    assert approval == {
+        "approval_id": f"{approval_request_id}:approval",
+        "approval_request_id": approval_request_id,
+        "approved": True,
+        "approved_at": approval["approved_at"],
+        "approved_by": "user_reviewer",
+        "approved_operations": approved_row[1],
+        "expires_at": approval["expires_at"],
+        "mode": "platform_human_approval",
+        "policy_version": "runner_safety_v1",
+    }
+    assert repository.get_rd_policy_snapshot(frozen_snapshot["id"]) == frozen_snapshot
+
+    dispatched = dispatch_ready_ai_work_items(replay_store)
+
+    assert dispatched["dispatched_work_item_ids"] == [ids["work_item_id"]]
+    attempts = repository.list_rd_work_item_attempts(ids["work_item_id"])
+    assert len(attempts) == 1
+    assert attempts[0]["attempt_no"] == 1
+    tasks = repository.list_ai_executor_tasks(ai_task_id=None)
+    assert len(tasks) == 1
+    assert tasks[0]["request_config"]["ai_executor_approval"] == approval
+    assert tasks[0]["request_config"]["ai_executor_safety"]["status"] == "approved"
+
+
+def test_postgres_runner_safety_rejection_atomically_cancels_without_dispatch(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = _seed_dispatchable_work_item(repository, prefix="runner-safety-rejection")
+    store = PostgresRuntimeStore(repository)
+    monkeypatch.setattr(
+        "app.services.rd_task_executor_policies.render_executor_instruction",
+        lambda *_args, **_kwargs: "Run git push",
+    )
+    dispatch_ready_ai_work_items(store)
+    decision = repository.list_decision_requests(
+        subject_type="rd_work_item",
+        subject_id=ids["work_item_id"],
+    )[0]
+
+    decided = apply_decision(
+        store,
+        decision_request_id=decision["id"],
+        selected_option="cancel_work_item",
+        input_value={},
+        comment="Unsafe operation is not authorized",
+        actor={"id": "user_reviewer", "roles": []},
+        version=1,
+        idempotency_key="reject-runner-safety-attempt-1",
+    )
+
+    approval_request_id = f"rd-runner-safety:{ids['work_item_id']}:attempt:1"
+    approval_request = repository.get_ai_executor_approval_request(approval_request_id)
+    assert approval_request is not None
+    assert approval_request["status"] == "rejected"
+    assert approval_request["approval"] == {}
+    assert decided["work_item"]["status"] == "cancelled"
+    assert repository.list_rd_work_item_attempts(ids["work_item_id"]) == []
+    assert repository.list_ai_executor_tasks(ai_task_id=None) == []
 
 
 def test_concurrent_postgres_dispatch_reuses_one_active_task_attempt_and_runner(
@@ -697,15 +925,18 @@ def test_concurrent_postgres_dispatch_reuses_one_active_task_attempt_and_runner(
     loop_runs = repository.list_agent_loop_runs(ai_task_id=winning_task_id)
     assert len(manifests) == len(loop_runs) == 1
     assert len(repository.list_agent_loop_iterations(loop_runs[0]["id"])) == 1
-    assert len(
-        [
-            ledger
-            for ledger in repository.list_trusted_delivery_records(
-                record_type="agent_budget_ledger"
-            )
-            if ledger.get("ai_task_id") == winning_task_id
-        ]
-    ) == 1
+    assert (
+        len(
+            [
+                ledger
+                for ledger in repository.list_trusted_delivery_records(
+                    record_type="agent_budget_ledger"
+                )
+                if ledger.get("ai_task_id") == winning_task_id
+            ]
+        )
+        == 1
+    )
 
 
 def test_postgres_work_item_transition_rolls_back_task_attempt_event_and_audit(

@@ -4,15 +4,22 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
+from fastapi import HTTPException
+
 from app.api.deps import api_error, require_roles
 from app.core.code_review_executor import CodeReviewExecutorError
 from app.core.repositories.rd_collaboration import RdCollaborationRepositoryError
+from app.services.ai_executor_runner_safety import (
+    RUNNER_SAFETY_POLICY_VERSION,
+    safe_runner_blocked_operations,
+)
 from app.services.model_gateway import (
     ModelGatewayCallError,
     ModelGatewayConfigError,
     call_model_gateway_for_task,
 )
 from app.services.operational_records import read_memory_dict
+from app.services.rd_dispatch_fault_decision import runner_safety_approval_request_id
 from app.services.rd_requirement_entry_adapters import require_v2_task_work_item_entrypoint
 from app.services.rd_task_executor_policies import (
     prepare_rd_task_executor_task,
@@ -59,6 +66,70 @@ def _work_item_execution_records(
     collection_name: str,
 ) -> dict[str, dict[str, Any]]:
     return read_memory_dict(current_store, collection_name)
+
+
+def _approved_runner_safety_snapshot(
+    current_store: Any,
+    *,
+    approval_request_id: str,
+    attempt_no: int,
+    work_item_id: str,
+) -> dict[str, Any] | None:
+    repository = getattr(current_store, "repository", None)
+    load_request = getattr(repository, "get_ai_executor_approval_request", None)
+    record = (
+        load_request(approval_request_id)
+        if callable(load_request)
+        else _work_item_execution_records(
+            current_store,
+            "ai_executor_approval_requests",
+        ).get(approval_request_id)
+    )
+    if not isinstance(record, dict) or record.get("status") != "approved":
+        return None
+    request_snapshot = record.get("approval_request") or {}
+    blocked_operations = list(record.get("blocked_operations") or [])
+    approval = record.get("approval")
+    if (
+        not isinstance(approval, dict)
+        or request_snapshot.get("approval_request_id") != approval_request_id
+        or request_snapshot.get("attempt_no") != attempt_no
+        or request_snapshot.get("work_item_id") != work_item_id
+        or request_snapshot.get("blocked_operations") != blocked_operations
+        or approval.get("approval_request_id") != approval_request_id
+        or approval.get("approved") is not True
+        or approval.get("approved_operations") != blocked_operations
+        or approval.get("policy_version") != RUNNER_SAFETY_POLICY_VERSION
+    ):
+        return None
+    return deepcopy(approval)
+
+
+def _discard_uncommitted_work_item_task(
+    current_store: Any,
+    *,
+    created: dict[str, Any],
+) -> None:
+    """Remove request-local preparation artifacts after a preflight rejection."""
+    task = created.get("task") or {}
+    task_id = str(task.get("id") or "")
+    if not task_id:
+        return
+    _work_item_execution_records(current_store, "ai_tasks").pop(task_id, None)
+    requirement = created.get("requirement") or {}
+    requirement_id = str(requirement.get("id") or "")
+    stored_requirement = _work_item_execution_records(current_store, "requirements").get(
+        requirement_id
+    )
+    if stored_requirement is not None:
+        stored_requirement["task_ids"] = [
+            item for item in stored_requirement.get("task_ids") or [] if item != task_id
+        ]
+    creation_audit = created.get("creation_audit_event") or {}
+    creation_audit_id = creation_audit.get("id")
+    audit_events = getattr(current_store, "audit_events", None)
+    if isinstance(audit_events, list) and creation_audit_id:
+        audit_events[:] = [event for event in audit_events if event.get("id") != creation_audit_id]
 
 
 def _frozen_seat_capacity(
@@ -401,6 +472,16 @@ def dispatch_ai_task_for_work_item(
         ),
         default=0,
     )
+    approval_request_id = runner_safety_approval_request_id(
+        work_item_id=work_item_id,
+        attempt_no=attempt_no,
+    )
+    approved_runner_safety = _approved_runner_safety_snapshot(
+        current_store,
+        approval_request_id=approval_request_id,
+        attempt_no=attempt_no,
+        work_item_id=work_item_id,
+    )
     now = datetime.now(UTC).isoformat()
     attempt = {
         "id": current_store.new_id("rd_work_item_attempt"),
@@ -440,21 +521,42 @@ def dispatch_ai_task_for_work_item(
         "scope_summary": [{"scope_type": "global", "scope_id": "*", "access_level": "admin"}],
     }
     prepared_execution: dict[str, Any] | None = None
-    if repository is not None:
-        prepared_execution = prepare_rd_task_executor_task(
-            current_store=current_store,
-            policy=policy,
-            task=task,
-            user=system_actor,
-        )
-        runner_task = dict(prepared_execution["runner_task"])
-    else:
-        runner_task = queue_rd_task_executor_task(
-            current_store=current_store,
-            policy=policy,
-            task=task,
-            user=system_actor,
-        )
+    try:
+        if repository is not None:
+            prepared_execution = prepare_rd_task_executor_task(
+                current_store=current_store,
+                policy=policy,
+                task=task,
+                user=system_actor,
+                ai_executor_approval=approved_runner_safety,
+            )
+            runner_task = dict(prepared_execution["runner_task"])
+        else:
+            runner_task = queue_rd_task_executor_task(
+                current_store=current_store,
+                policy=policy,
+                task=task,
+                user=system_actor,
+                ai_executor_approval=approved_runner_safety,
+            )
+    except HTTPException as exc:
+        _discard_uncommitted_work_item_task(current_store, created=created)
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        if str(detail.get("code") or "") != "AI_EXECUTOR_APPROVAL_REQUIRED":
+            raise
+        raise api_error(
+            409,
+            "AI_EXECUTOR_APPROVAL_REQUIRED",
+            "Runner safety approval is required before collaboration dispatch",
+            {
+                "approval_request_id": approval_request_id,
+                "attempt_no": attempt_no,
+                "blocked_operations": safe_runner_blocked_operations(
+                    detail.get("blocked_operations")
+                ),
+                "policy_version": RUNNER_SAFETY_POLICY_VERSION,
+            },
+        ) from exc
     frozen_execution_snapshot = deepcopy(policy["rd_execution_policy_snapshot"])
     runner_task["input_payload"] = {
         **dict(runner_task.get("input_payload") or {}),

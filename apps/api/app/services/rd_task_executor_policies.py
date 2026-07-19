@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any
@@ -1400,6 +1401,7 @@ def prepare_rd_task_executor_task(
     policy: dict[str, Any],
     task: dict[str, Any],
     user: dict[str, Any],
+    ai_executor_approval: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build Runner and execution-governance records without durable writes."""
     workspace_root = _ensure_non_blank(policy.get("workspace_root"), "workspace_root")
@@ -1447,9 +1449,7 @@ def prepare_rd_task_executor_task(
             " agent_iteration.failure_analysis；不得绕过安全边界或伪造测试证据。"
         )
     agent_loop_run = dict(agent_loop_bundle["run"]) if agent_loop_bundle else None
-    agent_loop_iteration = (
-        dict(agent_loop_bundle["iterations"][0]) if agent_loop_bundle else None
-    )
+    agent_loop_iteration = dict(agent_loop_bundle["iterations"][0]) if agent_loop_bundle else None
     input_payload = {
         "branch": branch,
         "bug": (task.get("input_json") or {}).get("bug") or {},
@@ -1492,6 +1492,8 @@ def prepare_rd_task_executor_task(
         },
         "source": "rd_task_executor_policy",
     }
+    if ai_executor_approval:
+        request_config["ai_executor_approval"] = deepcopy(ai_executor_approval)
     runner_task_result = create_ai_executor_task(
         current_store,
         action_id=None,
@@ -1552,6 +1554,7 @@ def queue_rd_task_executor_task(
     policy: dict[str, Any],
     task: dict[str, Any],
     user: dict[str, Any],
+    ai_executor_approval: dict[str, Any] | None = None,
     persist: bool = True,
 ) -> dict[str, Any]:
     prepared = prepare_rd_task_executor_task(
@@ -1559,6 +1562,7 @@ def queue_rd_task_executor_task(
         policy=policy,
         task=task,
         user=user,
+        ai_executor_approval=ai_executor_approval,
     )
     runner_task = dict(prepared["runner_task"])
     if not persist:

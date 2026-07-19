@@ -27,6 +27,7 @@ from app.core.repositories.rd_collaboration_shared import (
 
 
 class RdCollaborationWorkWriteMixin:
+    _RUNNER_SAFETY_POLICY_VERSION = "runner_safety_v1"
     _INTEGRATION_WORK_ITEM_TYPES = {
         "automated_testing",
         "integration",
@@ -421,7 +422,7 @@ class RdCollaborationWorkWriteMixin:
         if version is None:
             raise RdCollaborationRepositoryError(
                 "RD_DELIVERY_EVIDENCE_INCOMPLETE", "product version is unavailable"
-        )
+            )
         succeeded = result_status == "success"
         if (
             succeeded
@@ -917,8 +918,7 @@ class RdCollaborationWorkWriteMixin:
                     agent_budget_ledger.get("product_id"),
                     Jsonb(agent_budget_ledger),
                     agent_budget_ledger.get("created_at"),
-                    agent_budget_ledger.get("updated_at")
-                    or agent_budget_ledger.get("created_at"),
+                    agent_budget_ledger.get("updated_at") or agent_budget_ledger.get("created_at"),
                 ),
             )
         if agent_loop_run is not None:
@@ -1154,6 +1154,87 @@ class RdCollaborationWorkWriteMixin:
 
     def save_decision_request_record(self, record: dict[str, Any]) -> dict[str, Any]:
         return self._in_transaction(lambda cursor: self._insert_decision_request(cursor, record))
+
+    def _save_runner_safety_approval_request_cursor(
+        self,
+        cursor: Any,
+        record: dict[str, Any],
+    ) -> dict[str, Any]:
+        cursor.execute(
+            """
+            INSERT INTO ai_executor_approval_requests (
+              id, action_id, connection_id, runner_id, scheduled_job_id,
+              scheduled_job_run_id, ai_task_id, executor_type, workspace_root,
+              risk_level, blocked_operations, approval_request, approval,
+              status, requested_by, requested_at, approved_by, approved_at,
+              expires_at, reason, created_at, updated_at
+            )
+            VALUES (
+              %s, %s, %s, %s, %s,
+              %s, %s, %s, %s,
+              %s, %s, %s, %s,
+              %s, %s, %s, %s, %s,
+              %s, %s, %s, %s
+            )
+            ON CONFLICT (id) DO NOTHING
+            RETURNING *
+            """,
+            (
+                record["id"],
+                record.get("action_id"),
+                record.get("connection_id"),
+                record.get("runner_id"),
+                record.get("scheduled_job_id"),
+                record.get("scheduled_job_run_id"),
+                record.get("ai_task_id"),
+                record["executor_type"],
+                record.get("workspace_root", ""),
+                record.get("risk_level", "high"),
+                Jsonb(record.get("blocked_operations") or []),
+                Jsonb(record.get("approval_request") or {}),
+                Jsonb(record.get("approval") or {}),
+                record.get("status", "pending"),
+                record.get("requested_by"),
+                record.get("requested_at"),
+                record.get("approved_by"),
+                record.get("approved_at"),
+                record.get("expires_at"),
+                record.get("reason"),
+                record.get("created_at"),
+                record.get("updated_at") or record.get("created_at"),
+            ),
+        )
+        persisted = _row_dict(cursor, cursor.fetchone())
+        if persisted is None:
+            cursor.execute(
+                "SELECT * FROM ai_executor_approval_requests WHERE id = %s FOR UPDATE",
+                (record["id"],),
+            )
+            persisted = _row_dict(cursor, cursor.fetchone())
+        if persisted is None:
+            raise RuntimeError("runner safety approval request insert returned no row")
+        if persisted.get("status") != "pending":
+            raise RdCollaborationRepositoryError(
+                "RD_DECISION_REQUIRED",
+                "runner safety approval request is no longer pending",
+            )
+        self._assert_immutable_replay(
+            existing=persisted,
+            incoming=record,
+            fields=(
+                "id",
+                "runner_id",
+                "executor_type",
+                "workspace_root",
+                "risk_level",
+                "blocked_operations",
+                "approval_request",
+                "requested_by",
+            ),
+            message="runner safety approval identity has different frozen evidence",
+            approval_request_id=record["id"],
+        )
+        return persisted
 
     def suspend_work_item_for_decision(
         self,
@@ -1624,9 +1705,7 @@ class RdCollaborationWorkWriteMixin:
             (collaboration_run_id,),
         )
         work_items = [
-            item
-            for row in cursor.fetchall()
-            if (item := _row_dict(cursor, row)) is not None
+            item for row in cursor.fetchall() if (item := _row_dict(cursor, row)) is not None
         ]
         integration_items = [
             item
@@ -2298,6 +2377,97 @@ class RdCollaborationWorkWriteMixin:
             )
         )
 
+    def _resolve_runner_safety_approval_cursor(
+        self,
+        cursor: Any,
+        *,
+        decision: dict[str, Any],
+        outcome: str,
+        decided_by: str,
+    ) -> dict[str, Any] | None:
+        if decision.get("decision_type") != "runner_safety_approval":
+            return None
+        recommendation = decision.get("recommendation_json") or {}
+        approval_request_id = str(recommendation.get("approval_request_id") or "").strip()
+        if not approval_request_id:
+            raise RdCollaborationRepositoryError(
+                "RD_DECISION_REQUIRED",
+                "runner safety decision has no approval request identity",
+            )
+        cursor.execute(
+            "SELECT * FROM ai_executor_approval_requests WHERE id = %s FOR UPDATE",
+            (approval_request_id,),
+        )
+        approval_request = _row_dict(cursor, cursor.fetchone())
+        request_snapshot = (approval_request or {}).get("approval_request") or {}
+        blocked_operations = list((approval_request or {}).get("blocked_operations") or [])
+        if (
+            approval_request is None
+            or approval_request.get("status") != "pending"
+            or request_snapshot.get("approval_request_id") != approval_request_id
+            or request_snapshot.get("work_item_id") != decision.get("subject_id")
+            or request_snapshot.get("blocked_operations") != blocked_operations
+            or request_snapshot.get("policy_version") != self._RUNNER_SAFETY_POLICY_VERSION
+            or not blocked_operations
+        ):
+            raise RdCollaborationRepositoryError(
+                "RD_DECISION_REQUIRED",
+                "runner safety approval request is not pending with frozen evidence",
+            )
+        if outcome == "approve":
+            cursor.execute("SELECT now(), now() + interval '1 hour'")
+            approved_at, expires_at = cursor.fetchone()
+            approval = {
+                "approval_id": f"{approval_request_id}:approval",
+                "approval_request_id": approval_request_id,
+                "approved": True,
+                "approved_at": approved_at.isoformat(),
+                "approved_by": decided_by,
+                "approved_operations": blocked_operations,
+                "expires_at": expires_at.isoformat(),
+                "mode": "platform_human_approval",
+                "policy_version": self._RUNNER_SAFETY_POLICY_VERSION,
+            }
+            cursor.execute(
+                """
+                UPDATE ai_executor_approval_requests
+                SET approval = %s, status = 'approved', approved_by = %s,
+                    approved_at = %s, expires_at = %s, updated_at = %s
+                WHERE id = %s AND status = 'pending'
+                RETURNING *
+                """,
+                (
+                    Jsonb(approval),
+                    decided_by,
+                    approved_at,
+                    expires_at,
+                    approved_at,
+                    approval_request_id,
+                ),
+            )
+        elif outcome == "reject":
+            cursor.execute(
+                """
+                UPDATE ai_executor_approval_requests
+                SET status = 'rejected', updated_at = now()
+                WHERE id = %s AND status = 'pending'
+                RETURNING *
+                """,
+                (approval_request_id,),
+            )
+        else:
+            raise RdCollaborationRepositoryError(
+                "RD_DECISION_INPUT_INVALID",
+                "runner safety decision outcome is invalid",
+            )
+        resolved = _row_dict(cursor, cursor.fetchone())
+        if resolved is None:
+            raise RdCollaborationRepositoryError(
+                "RD_DECISION_REQUIRED",
+                "runner safety approval request changed concurrently",
+            )
+        return resolved
+
     def _apply_decision_bundle_cursor(
         self,
         cursor: Any,
@@ -2397,6 +2567,12 @@ class RdCollaborationWorkWriteMixin:
                         "RD_DECISION_INPUT_INVALID",
                         "frozen decision outcome is invalid",
                     )
+                approval_request = self._resolve_runner_safety_approval_cursor(
+                    cursor,
+                    decision=decision,
+                    outcome=str(outcome),
+                    decided_by=decided_by,
+                )
                 cursor.execute(
                     """
                     UPDATE decision_requests
@@ -2511,6 +2687,7 @@ class RdCollaborationWorkWriteMixin:
                     "run": run,
                     "work_item": work_item,
                     "attempt": suspended_attempt,
+                    "approval_request": approval_request,
                     "next_state": next_status,
                 }
 

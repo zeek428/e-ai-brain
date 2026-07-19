@@ -1595,6 +1595,15 @@ class RdCollaborationTransaction:
     def save_decision_request_record(self, record: dict[str, Any]) -> dict[str, Any]:
         return self._repository._insert_decision_request(self.cursor, record)
 
+    def save_runner_safety_approval_request(
+        self,
+        record: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._repository._save_runner_safety_approval_request_cursor(
+            self.cursor,
+            record,
+        )
+
     def suspend_work_item_for_decision(
         self,
         *,

@@ -267,6 +267,9 @@ class RdCollaborationReadRepository(RdCollaborationWriteRepository):
     def get_rd_executor_profile(self, record_id: str) -> dict[str, Any] | None:
         return self._get("rd_executor_profiles", record_id)
 
+    def get_ai_executor_approval_request(self, record_id: str) -> dict[str, Any] | None:
+        return self._get("ai_executor_approval_requests", record_id)
+
     def list_rd_executor_profiles(
         self,
         *,

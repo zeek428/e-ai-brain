@@ -33,6 +33,21 @@ HIGH_RISK_OPERATION_PATTERNS: tuple[tuple[str, str, str], ...] = (
     ),
 )
 
+RUNNER_SAFETY_OPERATION_CODES = frozenset(
+    operation for operation, _pattern, _reason in HIGH_RISK_OPERATION_PATTERNS
+)
+
+
+def safe_runner_blocked_operations(value: Any) -> list[str]:
+    """Return only stable operation codes suitable for durable approval evidence."""
+    if not isinstance(value, list):
+        return []
+    return list(
+        dict.fromkeys(
+            str(operation) for operation in value if str(operation) in RUNNER_SAFETY_OPERATION_CODES
+        )
+    )
+
 
 def _high_risk_findings(instruction: str) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
@@ -68,9 +83,7 @@ def _approval_validation(
     blocked_operations: list[str],
 ) -> dict[str, Any]:
     approved_operations = [
-        str(item)
-        for item in approval.get("approved_operations") or []
-        if str(item).strip()
+        str(item) for item in approval.get("approved_operations") or [] if str(item).strip()
     ]
     approved_operation_set = set(approved_operations)
     missing_fields = [

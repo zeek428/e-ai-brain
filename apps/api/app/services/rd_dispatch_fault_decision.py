@@ -16,6 +16,10 @@ from app.core.repositories.rd_collaboration import (
     RdCollaborationRepositoryError,
     RdCollaborationVersionConflictError,
 )
+from app.services.ai_executor_runner_safety import (
+    RUNNER_SAFETY_POLICY_VERSION,
+    safe_runner_blocked_operations,
+)
 
 DispatchFaultOutcome = Literal["deferred", "escalated", "retryable"]
 
@@ -39,6 +43,8 @@ class DispatchFault:
     outcome: DispatchFaultOutcome
     error_code: str
     safe_message: str
+    attempt_no: int | None = None
+    blocked_operations: tuple[str, ...] = ()
 
 
 def _canonical_hash(value: Any) -> str:
@@ -72,6 +78,23 @@ def classify_dispatch_fault(
             error_code=code,
             safe_message="Frozen collaboration seat is at capacity",
         )
+    if code == "AI_EXECUTOR_APPROVAL_REQUIRED":
+        detail = (
+            exc.detail if isinstance(exc, HTTPException) and isinstance(exc.detail, dict) else {}
+        )
+        try:
+            attempt_no = int(detail.get("attempt_no") or 0)
+        except (TypeError, ValueError):
+            attempt_no = 0
+        return DispatchFault(
+            outcome="escalated",
+            error_code=code,
+            safe_message="Runner safety approval is required for blocked operations",
+            attempt_no=attempt_no if attempt_no > 0 else None,
+            blocked_operations=tuple(
+                safe_runner_blocked_operations(detail.get("blocked_operations"))
+            ),
+        )
     safe_message = _PERMANENT_FAULT_MESSAGES.get(code)
     if safe_message is not None:
         return DispatchFault(outcome="escalated", error_code=code, safe_message=safe_message)
@@ -94,6 +117,185 @@ def _human_decision_selector(reviewer: dict[str, Any] | None) -> dict[str, list[
     ):
         return {"seat_ids": [str(reviewer["id"])]}
     return {"role_codes": ["rd_owner"]}
+
+
+def runner_safety_approval_request_id(*, work_item_id: str, attempt_no: int) -> str:
+    """Return the stable approval identity for the next durable attempt."""
+    return f"rd-runner-safety:{work_item_id}:attempt:{attempt_no}"
+
+
+def _next_attempt_no(store: Any, work_item_id: str) -> int:
+    repository = getattr(store, "repository", None)
+    list_attempts = getattr(repository, "list_rd_work_item_attempts", None)
+    attempts = (
+        list_attempts(work_item_id)
+        if callable(list_attempts)
+        else [
+            item
+            for item in _records(store, "rd_work_item_attempts").values()
+            if item.get("work_item_id") == work_item_id
+        ]
+    )
+    return 1 + max((int(item.get("attempt_no") or 0) for item in attempts), default=0)
+
+
+def _runner_identity(store: Any, work_item: dict[str, Any]) -> tuple[str, str]:
+    repository = getattr(store, "repository", None)
+    seat_id = str(work_item.get("owner_seat_id") or "")
+    get_seat = getattr(repository, "get_rd_run_seat", None)
+    seat = get_seat(seat_id) if callable(get_seat) else _records(store, "rd_run_seats").get(seat_id)
+    profile_id = str((seat or {}).get("executor_profile_id") or "")
+    get_profile = getattr(repository, "get_rd_executor_profile", None)
+    profile = (
+        get_profile(profile_id)
+        if callable(get_profile)
+        else _records(store, "rd_executor_profiles").get(profile_id)
+    )
+    executor_type = str((profile or {}).get("executor_type") or "").strip()
+    runner_id = str((profile or {}).get("runner_id") or "").strip()
+    if not executor_type or not runner_id:
+        raise api_error(
+            409,
+            "RD_EXECUTOR_UNAVAILABLE",
+            "Frozen executor configuration is unavailable",
+        )
+    return executor_type, runner_id
+
+
+def _runner_safety_approval_records(
+    store: Any,
+    *,
+    run: dict[str, Any],
+    work_item: dict[str, Any],
+    fault: DispatchFault,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    attempt_no = _next_attempt_no(store, str(work_item["id"]))
+    if fault.attempt_no is not None and fault.attempt_no != attempt_no:
+        raise api_error(
+            409,
+            "RD_WORK_ITEM_STATE_INVALID",
+            "Work item attempt identity changed before approval suspension",
+        )
+    blocked_operations = list(fault.blocked_operations)
+    if not blocked_operations:
+        raise api_error(
+            409,
+            "RD_WORK_ITEM_STATE_INVALID",
+            "Runner safety approval has no stable blocked-operation evidence",
+        )
+    work_item_id = str(work_item["id"])
+    approval_request_id = runner_safety_approval_request_id(
+        work_item_id=work_item_id,
+        attempt_no=attempt_no,
+    )
+    decision_id = f"runner-safety-approval:{work_item_id}:attempt:{attempt_no}"
+    executor_type, runner_id = _runner_identity(store, work_item)
+    now = _now().isoformat()
+    approval_request_snapshot = {
+        "approval_request_id": approval_request_id,
+        "attempt_no": attempt_no,
+        "blocked_operations": blocked_operations,
+        "policy_version": RUNNER_SAFETY_POLICY_VERSION,
+        "source": "rd_collaboration_work_item",
+        "work_item_id": work_item_id,
+    }
+    approval_request = {
+        "id": approval_request_id,
+        "action_id": None,
+        "ai_task_id": None,
+        "approval": {},
+        "approval_request": approval_request_snapshot,
+        "blocked_operations": blocked_operations,
+        "connection_id": None,
+        "created_at": now,
+        "executor_type": executor_type,
+        "requested_at": now,
+        "requested_by": str(run["created_by"]),
+        "risk_level": "high",
+        "runner_id": runner_id,
+        "scheduled_job_id": None,
+        "scheduled_job_run_id": None,
+        "status": "pending",
+        "updated_at": now,
+        # The generic table predates RD collaboration. Keep the required field
+        # empty so approval evidence never persists a workspace path.
+        "workspace_root": "",
+    }
+    repository = getattr(store, "repository", None)
+    get_reviewer = getattr(repository, "get_rd_run_seat", None)
+    reviewer_seat_id = str(work_item.get("reviewer_seat_id") or "")
+    reviewer = (
+        get_reviewer(reviewer_seat_id)
+        if callable(get_reviewer)
+        else _records(store, "rd_run_seats").get(reviewer_seat_id)
+    )
+    selector = _human_decision_selector(reviewer)
+    options = [
+        {
+            "code": "authorize_blocked_operations",
+            "input_schema": {},
+            "outcome": "approve",
+            "subject_transition": "resume",
+        },
+        {
+            "code": "cancel_work_item",
+            "input_schema": {},
+            "outcome": "reject",
+            "requires_comment": True,
+            "subject_transition": "cancelled",
+        },
+    ]
+    safe_evidence = {
+        "approval_request_id": approval_request_id,
+        "attempt_no": attempt_no,
+        "blocked_operations": blocked_operations,
+        "kind": "runner_safety_approval",
+        "policy_version": RUNNER_SAFETY_POLICY_VERSION,
+    }
+    decision = {
+        "id": decision_id,
+        "brain_app_id": run.get("brain_app_id", "rd_brain"),
+        "product_id": run["product_id"],
+        "subject_type": "rd_work_item",
+        "subject_id": work_item_id,
+        "decision_type": "runner_safety_approval",
+        "plan_version": int(run.get("plan_version") or 0),
+        "options_json": options,
+        "options_hash": _canonical_hash(options),
+        "evidence_json": [safe_evidence],
+        "recommendation_json": {
+            "action": "authorize_blocked_operations_or_cancel",
+            "approval_request_id": approval_request_id,
+        },
+        "decision_actor_selector": selector,
+        "answer_actor_selector": {},
+        "answer_schema": {},
+        "status": "pending",
+        "expires_at": (_now() + timedelta(hours=24)).isoformat(),
+        "timeout_policy": "escalate_keep_paused",
+        "escalation_target_selector": selector,
+        "escalation_level": 0,
+        "version": 1,
+        "created_by": run["created_by"],
+    }
+    event = {
+        "id": f"runner-safety-approval-required:{work_item_id}:attempt:{attempt_no}",
+        "collaboration_run_id": str(run["id"]),
+        "event_type": "work_item.runner_safety_approval_required",
+        "event_key": f"runner-safety-approval-required:{work_item_id}:attempt:{attempt_no}",
+        "subject_type": "rd_work_item",
+        "subject_id": work_item_id,
+        "payload_json": safe_evidence,
+    }
+    audit = {
+        "id": f"runner-safety-approval-required-audit:{work_item_id}:attempt:{attempt_no}",
+        "event_type": "rd_work_item.runner_safety_approval_required",
+        "actor_id": str(run["created_by"]),
+        "subject_type": "rd_work_item",
+        "subject_id": work_item_id,
+        "payload": safe_evidence,
+    }
+    return approval_request, decision, event, audit
 
 
 def escalate_dispatch_fault_for_human(
@@ -128,6 +330,100 @@ def escalate_dispatch_fault_for_human(
         raise api_error(409, "RD_WORK_ITEM_STATE_INVALID", "Work item is no longer available")
     if work_item.get("status") not in {"ready", "rework_required"}:
         raise api_error(409, "RD_WORK_ITEM_STATE_INVALID", "Work item is no longer dispatchable")
+
+    if fault.error_code == "AI_EXECUTOR_APPROVAL_REQUIRED":
+        approval_request, decision, event, audit_event = _runner_safety_approval_records(
+            store,
+            run=run,
+            work_item=work_item,
+            fault=fault,
+        )
+        version = int(work_item.get("version") or 1)
+        execute = getattr(repository, "execute_idempotent_rd_command", None)
+        if callable(execute):
+
+            def approval_operation(transaction: Any) -> dict[str, Any]:
+                transaction.save_runner_safety_approval_request(approval_request)
+                paused = transaction.suspend_work_item_for_decision(
+                    work_item_id=work_item_id,
+                    decision_request=decision,
+                    expected_version=version,
+                )
+                transaction.save_rd_collaboration_event_record(event)
+                transaction.save_audit_event(audit_event)
+                return {
+                    "result_type": "decision_request",
+                    "result_id": paused["decision_request"]["id"],
+                    "http_status": 202,
+                    "response_json": {
+                        **paused,
+                        "approval_request": approval_request,
+                    },
+                }
+
+            try:
+                result = execute(
+                    command_type="runner_safety_approval_required",
+                    aggregate_type="rd_work_item",
+                    aggregate_id=work_item_id,
+                    idempotency_key=f"attempt:{fault.attempt_no or 0}",
+                    request_hash=_canonical_hash(
+                        {
+                            "approval_request_id": approval_request["id"],
+                            "blocked_operations": approval_request["blocked_operations"],
+                            "plan_version": decision["plan_version"],
+                            "resume_state": work_item["status"],
+                        }
+                    ),
+                    command_record_id=(
+                        f"runner-safety-approval-command:{work_item_id}:"
+                        f"attempt:{fault.attempt_no or 0}"
+                    ),
+                    operation=approval_operation,
+                )
+            except RdCollaborationVersionConflictError as exc:
+                raise api_error(409, exc.code, str(exc), exc.details) from exc
+            except RdCollaborationRepositoryError as exc:
+                raise api_error(409, exc.code, str(exc), exc.details) from exc
+            return {
+                **dict(result["response_json"]),
+                "idempotent_replay": bool(result["idempotent_replay"]),
+            }
+
+        existing = _records(store, "ai_executor_approval_requests").get(approval_request["id"])
+        if existing is not None and existing.get("status") != "pending":
+            raise api_error(
+                409,
+                "RD_DECISION_REQUIRED",
+                "Runner safety approval request is no longer pending",
+            )
+        if existing is None:
+            _records(store, "ai_executor_approval_requests")[approval_request["id"]] = (
+                approval_request
+            )
+        _records(store, "decision_requests")[decision["id"]] = decision
+        work_item.update(
+            {
+                "status": "waiting_human",
+                "resume_state": work_item["status"],
+                "suspended_attempt_id": None,
+                "suspended_decision_request_id": decision["id"],
+                "suspended_at": _now().isoformat(),
+                "lease_owner": None,
+                "lease_expires_at": None,
+                "version": version + 1,
+            }
+        )
+        _records(store, "rd_collaboration_events")[event["id"]] = event
+        audit = getattr(store, "audit", None)
+        if callable(audit):
+            audit(**{key: value for key, value in audit_event.items() if key != "id"})
+        return {
+            "approval_request": deepcopy(approval_request),
+            "decision_request": deepcopy(decision),
+            "work_item": deepcopy(work_item),
+            "idempotent_replay": existing is not None,
+        }
 
     version = int(work_item.get("version") or 1)
     decision_id = f"auto-dispatch-fault:{work_item_id}:{version}"

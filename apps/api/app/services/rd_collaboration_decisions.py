@@ -5,10 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.api.deps import api_error
+from app.services.ai_executor_runner_safety import RUNNER_SAFETY_POLICY_VERSION
 
 
 def _records(store: Any, name: str) -> dict[str, dict[str, Any]]:
@@ -249,6 +250,101 @@ def _save_command(
     }
 
 
+def _runner_safety_approval_request_id(decision: dict[str, Any]) -> str | None:
+    if decision.get("decision_type") != "runner_safety_approval":
+        return None
+    recommendation = decision.get("recommendation_json") or {}
+    value = str(recommendation.get("approval_request_id") or "").strip()
+    return value or None
+
+
+def _build_runner_safety_approval_snapshot(
+    *,
+    approval_request: dict[str, Any],
+    approved_by: str,
+    approved_at: datetime,
+) -> dict[str, Any]:
+    request_snapshot = approval_request.get("approval_request") or {}
+    policy_version = str(request_snapshot.get("policy_version") or "")
+    if policy_version != RUNNER_SAFETY_POLICY_VERSION:
+        raise api_error(
+            409,
+            "RD_DECISION_REQUIRED",
+            "Runner safety approval policy version is invalid",
+        )
+    blocked_operations = [
+        str(item) for item in approval_request.get("blocked_operations") or [] if str(item)
+    ]
+    if not blocked_operations:
+        raise api_error(
+            409,
+            "RD_DECISION_REQUIRED",
+            "Runner safety approval has no frozen blocked operations",
+        )
+    approval_request_id = str(approval_request["id"])
+    return {
+        "approval_id": f"{approval_request_id}:approval",
+        "approval_request_id": approval_request_id,
+        "approved": True,
+        "approved_at": approved_at.isoformat(),
+        "approved_by": approved_by,
+        "approved_operations": blocked_operations,
+        "expires_at": (approved_at + timedelta(hours=1)).isoformat(),
+        "mode": "platform_human_approval",
+        "policy_version": policy_version,
+    }
+
+
+def _resolve_memory_runner_safety_approval(
+    store: Any,
+    *,
+    decision: dict[str, Any],
+    outcome: str,
+    actor_id: str,
+) -> dict[str, Any] | None:
+    approval_request_id = _runner_safety_approval_request_id(decision)
+    if approval_request_id is None:
+        return None
+    approval_request = _records(store, "ai_executor_approval_requests").get(approval_request_id)
+    if approval_request is None or approval_request.get("status") != "pending":
+        raise api_error(
+            409,
+            "RD_DECISION_REQUIRED",
+            "Runner safety approval request is no longer pending",
+        )
+    now = _now()
+    if outcome == "approve":
+        snapshot = _build_runner_safety_approval_snapshot(
+            approval_request=approval_request,
+            approved_by=actor_id,
+            approved_at=now,
+        )
+        approval_request.update(
+            {
+                "approval": snapshot,
+                "approved_at": snapshot["approved_at"],
+                "approved_by": actor_id,
+                "expires_at": snapshot["expires_at"],
+                "status": "approved",
+                "updated_at": snapshot["approved_at"],
+            }
+        )
+    elif outcome == "reject":
+        approval_request.update(
+            {
+                "status": "rejected",
+                "updated_at": now.isoformat(),
+            }
+        )
+    else:
+        raise api_error(
+            422,
+            "RD_DECISION_INPUT_INVALID",
+            "Runner safety decision has an invalid outcome",
+        )
+    return approval_request
+
+
 def apply_decision(
     store: Any,
     *,
@@ -314,6 +410,12 @@ def apply_decision(
     outcome = str(option.get("outcome") or "")
     if outcome not in {"approve", "reject", "request_more_info"}:
         raise api_error(422, "RD_DECISION_INPUT_INVALID", "Frozen option has an invalid outcome")
+    approval_request = _resolve_memory_runner_safety_approval(
+        store,
+        decision=decision,
+        outcome=outcome,
+        actor_id=str(actor.get("id") or ""),
+    )
     next_state = (
         "waiting_more_info"
         if outcome == "request_more_info"
@@ -358,6 +460,7 @@ def apply_decision(
         "affected_subject": {"type": subject_type, "id": subject["id"]},
         "run": deepcopy(subject) if subject_type == "rd_collaboration_run" else None,
         "work_item": deepcopy(subject) if subject_type == "rd_work_item" else None,
+        "approval_request": deepcopy(approval_request) if approval_request else None,
         "next_state": next_state,
         "idempotent_replay": False,
     }
@@ -409,6 +512,7 @@ def _apply_decision_repository(
             "run": result.get("run"),
             "work_item": result.get("work_item"),
             "attempt": result.get("attempt"),
+            "approval_request": result.get("approval_request"),
             "next_state": result.get("next_state"),
         }
         return {
