@@ -88,6 +88,7 @@ def dispatch_ready_ai_work_items(
     observed_at = now or datetime.now(UTC)
     if observed_at.tzinfo is None:
         observed_at = observed_at.replace(tzinfo=UTC)
+    scheduler_now = observed_at if now is not None else None
 
     def record_retry(work_item: dict[str, Any], fault: Any) -> None:
         work_item_id = str(work_item["id"])
@@ -116,7 +117,7 @@ def dispatch_ready_ai_work_items(
         for work_item in ready_work_items(
             store,
             collaboration_run_id=run_id,
-            now=observed_at,
+            now=scheduler_now,
         ):
             if processed >= limit:
                 break

@@ -39,8 +39,16 @@ def _repository(store: Any) -> Any | None:
     return getattr(store, "repository", None)
 
 
-def _work_items(store: Any, collaboration_run_id: str) -> list[dict[str, Any]]:
+def _work_items(
+    store: Any,
+    collaboration_run_id: str,
+    *,
+    due_candidates_only: bool = False,
+) -> list[dict[str, Any]]:
     repository = _repository(store)
+    list_due_items = getattr(repository, "list_due_rd_work_items", None)
+    if due_candidates_only and callable(list_due_items):
+        return [dict(item) for item in list_due_items(collaboration_run_id)]
     list_items = getattr(repository, "list_rd_work_items", None)
     if callable(list_items):
         return [dict(item) for item in list_items(collaboration_run_id)]
@@ -75,8 +83,15 @@ def ready_work_items(
     are performed by a command service with optimistic locking, so a stale
     listing can never grant a lease by itself.
     """
-    observed_at = now or _now()
-    items = {str(item["id"]): item for item in _work_items(store, collaboration_run_id)}
+    observed_at = _normalize_utc_time(now or _now())
+    items = {
+        str(item["id"]): item
+        for item in _work_items(
+            store,
+            collaboration_run_id,
+            due_candidates_only=now is None,
+        )
+    }
     dependencies = _dependencies(store, collaboration_run_id)
     ready: list[dict[str, Any]] = []
     for item_id, item in items.items():
@@ -182,6 +197,10 @@ def advance_delivery_phase_after_work_item_completion(
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def _normalize_utc_time(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _new_id(store: Any, prefix: str) -> str:

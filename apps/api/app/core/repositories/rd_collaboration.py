@@ -567,6 +567,32 @@ class RdCollaborationReadRepository(RdCollaborationWriteRepository):
             order_by=("plan_version", "priority", "id"),
         )
 
+    def list_due_rd_work_items(self, collaboration_run_id: str) -> list[dict[str, Any]]:
+        """Load only due automatic-dispatch candidates from PostgreSQL.
+
+        Keep the due predicate in SQL so the partial dispatch-due index from
+        migration 123 can serve worker polling. Dependency eligibility remains
+        a scheduler concern because it spans multiple work-item rows.
+        """
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT *
+                    FROM rd_work_items
+                    WHERE collaboration_run_id = %s
+                      AND status IN ('ready', 'rework_required')
+                      AND (next_dispatch_at IS NULL OR next_dispatch_at <= CURRENT_TIMESTAMP)
+                    ORDER BY plan_version, priority, id
+                    """,
+                    (collaboration_run_id,),
+                )
+                return [
+                    row
+                    for item in cursor.fetchall()
+                    if (row := _row_dict(cursor, item)) is not None
+                ]
+
     def get_rd_work_item_dependency(self, record_id: str) -> dict[str, Any] | None:
         return self._get("rd_work_item_dependencies", record_id)
 

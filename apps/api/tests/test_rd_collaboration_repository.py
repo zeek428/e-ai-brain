@@ -775,6 +775,51 @@ def _seed_exact_run(
     }
 
 
+def test_repository_lists_only_due_dispatch_candidates_in_plan_priority_id_order(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="due-candidates")
+    run_id = str(seeded["run"]["id"])
+    with repository._connect(autocommit=False) as connection:
+        for item_id, plan_version, priority, status, due_offset in (
+            ("due-candidates-later-plan", 2, 1, "ready", -timedelta(seconds=1)),
+            ("due-candidates-priority-2", 1, 2, "ready", None),
+            ("due-candidates-priority-1-b", 1, 1, "rework_required", -timedelta(seconds=1)),
+            ("due-candidates-priority-1-a", 1, 1, "ready", -timedelta(seconds=1)),
+            ("due-candidates-future", 1, 0, "ready", timedelta(hours=1)),
+            ("due-candidates-draft", 1, 0, "draft", None),
+        ):
+            due_at = None if due_offset is None else datetime.now(UTC) + due_offset
+            connection.execute(
+                """
+                INSERT INTO rd_work_items (
+                  id, collaboration_run_id, plan_version, work_item_type, title,
+                  objective, status, priority, idempotency_key, next_dispatch_at
+                )
+                VALUES (%s, %s, %s, 'implementation', %s, 'objective', %s, %s, %s, %s)
+                """,
+                (
+                    item_id,
+                    run_id,
+                    plan_version,
+                    item_id,
+                    status,
+                    priority,
+                    item_id,
+                    due_at,
+                ),
+            )
+
+    candidates = repository.list_due_rd_work_items(run_id)
+
+    assert [candidate["id"] for candidate in candidates] == [
+        "due-candidates-priority-1-a",
+        "due-candidates-priority-1-b",
+        "due-candidates-priority-2",
+        "due-candidates-later-plan",
+    ]
+
+
 def _seed_startable_collaboration_version(
     repository: PostgresSnapshotRepository,
     *,

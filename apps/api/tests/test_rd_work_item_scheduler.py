@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from types import SimpleNamespace
+
 from app.core.store import MemoryStore
 from app.services.rd_collaboration_planning import persist_work_item_plan
 from app.services.rd_command_replay_secrets import scrub_expired_command_replay_secrets
@@ -41,6 +44,50 @@ def test_scheduler_does_not_release_item_before_dependencies_are_approved() -> N
     items = ready_work_items(store, collaboration_run_id="run-1")
 
     assert "integration-item" not in {item["id"] for item in items}
+
+
+def test_scheduler_normalizes_naive_now_to_utc_for_memory_store_due_checks() -> None:
+    store = MemoryStore()
+    store.rd_work_items["due-item"] = {
+        "id": "due-item",
+        "collaboration_run_id": "run-1",
+        "status": "ready",
+        "priority": 1,
+        "next_dispatch_at": datetime(2030, 1, 1, tzinfo=UTC).isoformat(),
+    }
+
+    items = ready_work_items(
+        store,
+        collaboration_run_id="run-1",
+        now=datetime(2030, 1, 2),
+    )
+
+    assert [item["id"] for item in items] == ["due-item"]
+
+
+def test_scheduler_uses_repository_due_candidates_before_dependency_checks() -> None:
+    class DueCandidateRepository:
+        def list_due_rd_work_items(self, collaboration_run_id: str):
+            assert collaboration_run_id == "run-1"
+            return [
+                {
+                    "id": "due-item",
+                    "collaboration_run_id": collaboration_run_id,
+                    "status": "ready",
+                    "priority": 1,
+                }
+            ]
+
+        def list_rd_work_item_dependencies(self, collaboration_run_id: str):
+            assert collaboration_run_id == "run-1"
+            return []
+
+    items = ready_work_items(
+        SimpleNamespace(repository=DueCandidateRepository()),
+        collaboration_run_id="run-1",
+    )
+
+    assert [item["id"] for item in items] == ["due-item"]
 
 
 def test_persisted_plan_activates_only_root_work_items_for_claiming() -> None:
