@@ -694,11 +694,11 @@
 | 优先级 | P1 |
 | 适用阶段 | v2.0 P1 |
 
-1. 使用容量为 1 的 AI 开发席位，让模型为两个 `implementation` 工作项返回同仓库相同路径、父子路径和无冲突路径的 `resource_claims[]`；分别模拟缺失声明、绝对路径、`..` 路径和循环依赖。
+1. 使用容量为 1 的 AI 开发席位，让模型为两个 `implementation` 工作项返回同仓库相同路径、父子路径和无冲突路径的 `resource_claims[]`；分别模拟缺失声明、仅有非空 `read` 声明、绝对路径、`..` 路径和循环依赖，并保留非实现类工作项的合法 `read` 声明。
 2. 激活合法计划，检查无序重叠 write/write 工作项的依赖和两个工作项保存的冲突证据；再次提交相同计划以验证顺序稳定。
 3. 让第一个 AI 工作项进入 `running`，并发派发同席位第二个就绪项；随后完成第一个工作项并再次派发第二项。查询版本总览的 `rd_collaboration.active_run.capacity` 与 `parallel_conflict_count`。
 
-**预期结果**: 每个实现工作项必须声明受冻结仓库范围约束的 `repository_id/path/mode(read|write)`；缺失或非法声明返回 `422 RD_PLAN_INVALID` 且运行和计划版本不变。平台只对同仓库重叠路径的无序 write/write 声明按稳定优先级添加一条 `finish_to_start` 依赖，已有可达顺序不得重复添加，读/写或不同仓库不得误串行；冲突记录持久化在受影响工作项，模型不能指定最终顺序。AI 席位容量是启动时冻结的正整数，派发先预检、再在同一事务锁定席位并计数运行中项；满载返回 `409 RD_SEAT_CAPACITY_EXHAUSTED`，自动派发返回 `capacity_deferred_work_item_ids`，工作项保持 `ready` 且没有 AI 任务或 attempt。空位释放后可正常派发。版本总览仅返回安全汇总的 `capacity={frozen,used,available}` 和去重后的 `parallel_conflict_count`，不暴露资源声明或策略 payload。
+**预期结果**: 每个实现工作项必须声明受冻结仓库范围约束的 `repository_id/path/mode(read|write)`，且至少一条为 `mode=write`；缺失、仅有非空 `read` 或非法声明返回 `422 RD_PLAN_INVALID` 且运行和计划版本不变，非实现类工作项的合法 `read` 声明保留。平台只对同仓库重叠路径的无序 write/write 声明按稳定优先级添加一条 `finish_to_start` 依赖，已有可达顺序不得重复添加，读/写或不同仓库不得误串行；冲突记录持久化在受影响工作项，模型不能指定最终顺序。AI 席位容量是启动时冻结的正整数，派发先预检、再在同一事务锁定席位并计数运行中项；满载返回 `409 RD_SEAT_CAPACITY_EXHAUSTED`，自动派发返回 `capacity_deferred_work_item_ids`，工作项保持 `ready` 且没有 AI 任务或 attempt。一次自动派发 sweep 的 `limit` 覆盖每个已检查候选的派发、容量延后、可重试、永久故障升级和高风险人工决策创建；任意组合的结果数不得超过 `limit`，并在创建高风险决策前消耗配额。空位释放后可正常派发。版本总览仅返回安全汇总的 `capacity={frozen,used,available}` 和去重后的 `parallel_conflict_count`，不暴露资源声明或策略 payload。
 
 **状态**: 已自动化覆盖，见 `apps/api/tests/test_rd_parallel_conflicts.py`、`apps/api/tests/test_rd_collaboration_plan_generation.py`、`apps/api/tests/test_rd_collaboration_auto_dispatch.py`、`apps/api/tests/test_rd_work_item_execution_postgres.py`、`apps/api/tests/test_iteration_version_status_flow.py` 和 `apps/web/tests/VersionDashboardCollaborationPanel.test.tsx`。
 

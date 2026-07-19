@@ -78,20 +78,22 @@ def dispatch_ready_ai_work_items(store: Any, *, limit: int = 50) -> dict[str, li
     human_review_required: list[str] = []
     retryable: list[str] = []
     skipped: list[str] = []
+    processed = 0
     for run in sorted(_runs(store), key=lambda item: str(item.get("id") or "")):
-        if len(dispatched) >= limit or run.get("status") not in _DISPATCHABLE_RUN_STATUSES:
+        if processed >= limit or run.get("status") not in _DISPATCHABLE_RUN_STATUSES:
             continue
         run_id = str(run.get("id") or "")
         if not run_id:
             continue
         for work_item in ready_work_items(store, collaboration_run_id=run_id):
-            if len(dispatched) >= limit:
+            if processed >= limit:
                 break
             if work_item.get("status") not in {"ready", "rework_required"}:
                 continue
             if not _is_ai_owned(store, work_item):
                 continue
             work_item_id = str(work_item["id"])
+            processed += 1
             risk_level = str(work_item.get("risk_level") or "medium").lower()
             if risk_level in _HUMAN_REVIEW_RISK_LEVELS:
                 if not high_risk_dispatch_is_approved(

@@ -111,6 +111,32 @@ def test_ordered_or_read_only_claims_do_not_add_a_serialization_edge() -> None:
     assert result["parallel_resource_conflicts"] == []
 
 
+def test_implementation_work_item_requires_a_write_resource_claim() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        analyze_parallel_resource_conflicts(
+            {
+                "work_items": [
+                    {
+                        "id": "implementation",
+                        "work_item_type": "implementation",
+                        "resource_claims": [
+                            {
+                                "repository_id": "repository-1",
+                                "path": "apps/api/app/users.py",
+                                "mode": "read",
+                            }
+                        ],
+                    }
+                ],
+                "dependencies": [],
+            }
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail["code"] == "RD_PLAN_INVALID"
+    assert exc_info.value.detail["reason"] == "implementation_resource_claim_missing"
+
+
 @pytest.mark.parametrize(
     "claim",
     [

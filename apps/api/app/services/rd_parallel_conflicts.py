@@ -188,7 +188,10 @@ def analyze_parallel_resource_conflicts(proposal: dict[str, Any]) -> dict[str, A
         item = deepcopy(raw_item)
         item["id"] = item_id
         claims = _normalise_claims(item, item_id=item_id)
-        if str(item.get("work_item_type") or "").strip().lower() == "implementation" and not claims:
+        if (
+            str(item.get("work_item_type") or "").strip().lower() == "implementation"
+            and not any(claim["mode"] == _WRITE_MODE for claim in claims)
+        ):
             _invalid(
                 "Implementation work items require at least one repository write claim",
                 reason="implementation_resource_claim_missing",

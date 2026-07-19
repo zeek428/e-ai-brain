@@ -252,6 +252,27 @@ def test_auto_dispatch_defers_ready_ai_work_when_the_frozen_seat_is_full() -> No
     assert store.rd_work_items["work-medium"]["status"] == "ready"
 
 
+def test_auto_dispatch_limit_counts_dispatch_decision_and_deferred_outcomes() -> None:
+    store = _store_with_ready_ai_work_items()
+    store.rd_run_seats["seat-developer"]["capacity"] = 1
+    store.rd_work_items["work-low"]["priority"] = 10
+    store.rd_work_items["work-high"]["priority"] = 20
+    store.rd_work_items["work-medium"]["priority"] = 30
+
+    result = dispatch_ready_ai_work_items(store, limit=2)
+
+    assert result["dispatched_work_item_ids"] == ["work-low"]
+    assert result["human_review_required_work_item_ids"] == ["work-high"]
+    assert result["capacity_deferred_work_item_ids"] == []
+    assert (
+        len(result["dispatched_work_item_ids"])
+        + len(result["capacity_deferred_work_item_ids"])
+        + len(result["escalated_work_item_ids"])
+        + len(result["human_review_required_work_item_ids"])
+        + len(result["retryable_work_item_ids"])
+    ) == 2
+
+
 def test_auto_dispatch_escalates_a_frozen_runner_safety_fault_without_leaking_paths() -> None:
     store = _store_with_ready_ai_work_items()
     store.rd_work_items = {"work-low": store.rd_work_items["work-low"]}
