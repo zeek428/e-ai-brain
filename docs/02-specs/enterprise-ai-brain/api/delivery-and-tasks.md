@@ -107,7 +107,7 @@ POST           /api/delivery/decision-requests/{decision_request_id}/answers
 
 权限点分别为 `delivery.rd_roles.manage`、`delivery.rd_ai_employees.manage`、`delivery.rd_executor_profiles.manage`、`delivery.requirement_assessments.read/decide`、`delivery.rd_collaboration.read/plan/work`、`delivery.decision_requests.decide/answer` 和 `delivery.rd_role_experiences.read/decide`；策略继续使用 `delivery.rd_executor_policies.manage`，部署继续使用现有部署权限。岗位、员工档案或席位不会自动授予这些权限。
 
-工作项包含 `owner_seat_id/dependencies/input_contract/output_contract/acceptance_criteria/risk_level/status/resume_state/suspended_attempt_id/ai_task_id/reviewer_seat_id/idempotency_key`。依赖满足后才能进入 `ready`，无依赖项可并行；执行 Worker 自动派发 AI 席位的低/中风险工作项。派发前先按冻结席位容量预检，事务内再锁定席位并计数运行中工作项；达到容量时返回 `409 RD_SEAT_CAPACITY_EXHAUSTED`，自动派发把该项保留 `ready` 并列入 `capacity_deferred_work_item_ids`，不创建 AI 任务或 attempt。审核或质量门禁失败保留原 attempt，同范围返工进入 `rework_required` 并在下一次领取时创建新 attempt，范围/依赖/负责人变化则创建新计划版本和替代工作项。`blocked/awaiting_human` 保存平台冻结的恢复目标和解除条件；问题解除或决策完成后只能回到校验后的 `ready/running/rework_required/cancelled`。高风险工作项会原子创建 `high_risk_ai_dispatch` 决策并暂停；只有冻结选项 `approve_dispatch` 被指定真人席位确认后，Worker 才能派发该项。超权限、冲突、预算超限、门禁失败或部署边界同样创建 `decision_requests` 并暂停受影响分支。详情响应聚合 DAG、租约、AI 任务/Runner、审核、返工、门禁、Git、预算和角色反馈。
+工作项包含 `owner_seat_id/dependencies/input_contract/output_contract/acceptance_criteria/risk_level/status/resume_state/suspended_attempt_id/ai_task_id/reviewer_seat_id/idempotency_key`。依赖满足后才能进入 `ready`，无依赖项可并行；执行 Worker 自动派发 AI 席位的低/中风险工作项。派发前先按冻结席位容量预检，最终 bundle 事务以不加锁查询取得父运行 ID，再严格按 `rd_collaboration_runs FOR UPDATE -> rd_work_items FOR UPDATE` 的统一聚合锁顺序加锁；两把锁均取得后，重验工作项仍属于该运行、状态与 reservation version/到期边界仍有效、父运行仍为 `running/integrating/verifying`，随后才锁定席位并计数运行中工作项。候选保留后父运行进入 `waiting_human`、终态或其他非活动状态，或工作项已被并发取消时，陈旧派发等待既有父运行锁后返回 `409 RD_WORK_ITEM_STATE_INVALID`，不得形成 `40P01` 锁序死锁，任务、Runner、attempt、事件和审计 bundle 全部不写。达到容量时返回 `409 RD_SEAT_CAPACITY_EXHAUSTED`，自动派发把该项保留 `ready` 并列入 `capacity_deferred_work_item_ids`，不创建 AI 任务或 attempt。审核或质量门禁失败保留原 attempt，同范围返工进入 `rework_required` 并在下一次领取时创建新 attempt，范围/依赖/负责人变化则创建新计划版本和替代工作项。`blocked/awaiting_human` 保存平台冻结的恢复目标和解除条件；问题解除或决策完成后只能回到校验后的 `ready/running/rework_required/cancelled`。高风险工作项会原子创建 `high_risk_ai_dispatch` 决策并暂停；只有冻结选项 `approve_dispatch` 被指定真人席位确认后，Worker 才能派发该项。超权限、冲突、预算超限、门禁失败或部署边界同样创建 `decision_requests` 并暂停受影响分支。详情响应聚合 DAG、租约、AI 任务/Runner、审核、返工、门禁、Git、预算和角色反馈。
 
 #### 迭代版本总览：协同入口与安全摘要
 
@@ -558,7 +558,7 @@ POST /api/delivery/rd-role-experiences/{experience_id}/decide
 | 409 | `RD_WORK_ITEM_NOT_READY` | 依赖、席位、权限、预算或工作区条件未满足，不能领取。 |
 | 409 | `RD_WORK_ITEM_LEASE_HELD` | 工作项已有未过期租约；返回 holder 摘要和过期时间。 |
 | 409 | `RD_WORK_ITEM_LEASE_EXPIRED` | claim 重放或 submit 使用的租约已过期、已回收或 token 不匹配，不创建新 attempt、不接受迟到结果。 |
-| 409 | `RD_WORK_ITEM_STATE_INVALID` | 工作项已终态或当前状态不允许取消、提交或审核。 |
+| 409 | `RD_WORK_ITEM_STATE_INVALID` | 工作项已终态、当前状态不允许取消/提交/审核，或最终派发时父协作运行已暂停或不再处于活动执行阶段。 |
 | 409 | `RD_DECISION_REQUIRED` | 当前工作项操作必须转人工决策，但决策请求未成功创建。 |
 | 409 | `RD_DECISION_EXPIRED` | 决策请求已过期、已替代或不再绑定当前暂停聚合。 |
 | 422 | `RD_DECISION_INPUT_INVALID` | decide 的 input 或 answers 的 answer/evidence 不满足冻结 Schema；返回字段级问题且不写部分状态。 |

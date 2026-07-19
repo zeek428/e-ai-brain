@@ -112,7 +112,9 @@ docker compose config
 # 启动本地开发栈
 docker compose up -d --build
 
-# 已有数据库卷升级时，API 启动入口会按顺序执行迁移 SQL
+# 已有数据库卷升级时，API 启动入口按顺序执行普通 additive SQL
+# 入口显式跳过 cleanup 121 和派发大索引 125-128：121 走受控 cutover，
+# 125-128 由 API repository compatibility 路径并发建索引
 # 不要通过删除 postgres_data 卷来规避迁移问题
 
 # 后端测试

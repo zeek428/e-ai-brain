@@ -918,6 +918,19 @@ The API and scripts never deploy. Run advisory preflight while `fence_mode=disab
 
 Run the Step 2 command plus `python3 scripts/rd_collaboration_upgrade_check.py --help` and `python3 scripts/rd_collaboration_cutover.py --help`, then commit `feat: validate rd collaboration cutover`.
 
+**Final runtime supplement (2026-07-20):** The ordinary container entrypoint
+must exclude not only explicit cleanup migration 121 but also dispatch index
+migrations 125-128. Migration 121 remains executable only through the fenced
+cleanup command. Migrations 125-128 are installed by non-test API repository
+compatibility initialization on an autocommit connection with one non-blocking
+advisory lock and concurrent index DDL; competing startups do not wait and a
+later startup revalidates index readiness. The final work-item dispatch bundle
+uses an initial non-locking parent-ID lookup and the canonical
+`rd_collaboration_runs -> rd_work_items` row-lock order, then revalidates
+ownership/status/version/due after both locks. A reservation captured before
+`waiting_human` suspension or cancellation therefore cannot create stale
+execution artifacts or a lock-order `40P01` deadlock.
+
 ### Task 15: Update Help, Regression Coverage, Browser Evidence, and Remote Branch
 
 **Files:**

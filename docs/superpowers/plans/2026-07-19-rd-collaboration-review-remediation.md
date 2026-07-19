@@ -161,6 +161,30 @@ validation tooling.
 - [x] Add an index for due retry scans and verify that no raw exception detail
   is durable or returned by Worker observability.
 
+### Task 8: Fence startup migrations and parent-run dispatch races
+
+**Files:**
+- Modify: `infra/docker/api-entrypoint.sh`
+- Modify: `apps/api/app/core/persistence.py`
+- Modify: `apps/api/app/core/repositories/rd_collaboration_work_writes.py`
+- Test: `apps/api/tests/test_api_entrypoint.py`
+- Test: `apps/api/tests/test_persistence_repository_boundaries.py`
+- Test: `apps/api/tests/test_rd_work_item_execution_postgres.py`
+
+- [x] Prove the ordinary API entrypoint executes normal additive migrations but
+  excludes explicit cleanup migration 121 and large dispatch-index migrations
+  125-128.
+- [x] Delegate 125-128 to the non-test API repository compatibility path. Use
+  an autocommit connection, one non-blocking PostgreSQL advisory lock, catalog
+  validity/readiness checks, and concurrent drop/create; a second startup must
+  skip immediately rather than wait for the lock holder.
+- [x] In the final dispatch bundle transaction, use an initial non-locking
+  parent-ID lookup, then the canonical `rd_collaboration_runs -> rd_work_items`
+  row-lock order and post-lock ownership/status/version/due revalidation before
+  any execution artifacts are committed. Prove concurrent cancel/suspension
+  produces neither SQLSTATE `40P01` nor task, Runner, attempt, event, or audit
+  artifacts from a stale reservation.
+
 ## 完成实现与验证依据
 
 - **Task 4**：源规格和验收覆盖已同步到 `spec.md` 与
@@ -187,3 +211,13 @@ validation tooling.
   `test_postgres_stale_reserved_worker_cannot_bypass_new_retry_backoff`、
   `test_repository_reserves_fair_dispatch_pages_across_restart_and_workers` 与
   `test_scheduler_batches_omitted_predecessors_for_repository_due_candidates`。
+- **Task 8**：提交 `e775507e9` 将四个派发大索引迁移改为 advisory-locked
+  concurrent compatibility 路径，提交 `48e82eda2` 让普通 API 启动明确排除
+  121/125-128 并在最终派发重验父运行；`4623ddc13` 将最终事务锁序统一为
+  `rd_collaboration_runs -> rd_work_items` 并补齐锁后归属/状态/version/due 重验。
+  验证引用：
+  `test_api_entrypoint_runs_only_ordinary_additive_migrations`、
+  `test_concurrent_index_compatibility_path_serializes_and_skips_valid_index`、
+  `test_concurrent_index_compatibility_path_does_not_wait_for_another_startup`、
+  `test_postgres_final_dispatch_and_cancel_use_run_then_work_item_lock_order` 与
+  `test_postgres_final_dispatch_waits_for_parent_suspension_without_artifacts`。

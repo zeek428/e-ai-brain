@@ -142,7 +142,7 @@ FastAPI 模块化单体
 | 研发运营数据 | GitLab、Jenkins、线上日志、用户使用、用户反馈、迭代规划建议和 Bug 均按产品/版本/模块归属聚合，支撑首页 IT 团队看板 | [技术规格](../enterprise-ai-brain/spec.md) |
 | 代码仓库巡检 | 定时作业通过插件扫描仓库质量/安全/规范问题，结果进入代码巡检报告表并保留提交人维度，严重问题可去重创建 `code_inspection` 来源 Bug，并记录邮件/钉钉机器人通知反馈 | [PRD](../../01-prd/enterprise-ai-brain/prd.md)、[技术规格](../enterprise-ai-brain/spec.md) 和 [API 文档](../enterprise-ai-brain/api.md) |
 | AI 编排 | LangGraph 负责任务图和版本协作图，PostgreSQL Checkpointer 负责真实 interrupt/resume；确定性领域服务拥有状态写权限 | [技术规格](../enterprise-ai-brain/spec.md) |
-| 恢复一致性 | 领域表和事件 Inbox 是事实源，领域状态/审计/Outbox 同事务；Checkpoint 独立保存执行游标，节点通过幂等命令恢复；阻塞工作项按平台冻结的 resume_state 恢复 | [技术规格](../enterprise-ai-brain/spec.md) |
+| 恢复一致性 | 领域表和事件 Inbox 是事实源，领域状态/审计/Outbox 同事务；Checkpoint 独立保存执行游标，节点通过幂等命令恢复；阻塞工作项按平台冻结的 resume_state 恢复；最终派发统一按父运行到工作项加锁并拒绝向已暂停运行写入陈旧 reservation | [技术规格](../enterprise-ai-brain/spec.md) |
 | Agent 自治执行 | AgentLoopRun 管理执行轮次和预算，质量门禁独立于编码 Runner；自动合入必须具备独立证据，高风险变更转人工确认 | [技术规格](../enterprise-ai-brain/spec.md) |
 | 外部副作用 | 业务状态、审计与 Outbox 原子写入，独立 Worker 幂等执行 Runner/Jenkins/Git 写回；Webhook 先进入 Inbox | [技术规格](../enterprise-ai-brain/spec.md) |
 | 数据存储 | PostgreSQL + pgvector + Redis | [技术规格](../enterprise-ai-brain/spec.md) |
@@ -163,7 +163,7 @@ Docker Compose
   └─ minio：知识原始资产和解析产物
 ```
 
-API 容器启动入口会在服务启动前按已注册的 additive migration 清单执行迁移，用于升级已有数据库卷；破坏性的 `110_requirement_driven_rd_cutover.sql` 明确不注册，必须先完成围栏外只读预检，经 `draining` 收敛到零活动并进入不可回退旧运行时的 `cutover_locked`，再在健康标记和显式 cleanup 命令下执行。数据库结构或种子数据变更不得依赖清空 volume。PostgreSQL 服务使用同主版本 pgvector 镜像，避免已有 PG18 数据目录被错误挂载到 PG16。
+API 容器启动入口会在服务启动前执行普通 additive migration，用于升级已有数据库卷；它明确跳过破坏性的 `121_requirement_driven_rd_cutover.sql` 和四个大索引迁移 `125_rd_dispatch_due_index.sql` 至 `128_rd_dependency_successor_index.sql`。迁移 121 必须先完成围栏外只读预检，经 `draining` 收敛到零活动并进入不可回退旧运行时的 `cutover_locked`，再在健康标记和显式 cleanup 命令下执行。四个派发索引由正常 API 运行时的 repository schema-compatibility 路径接管：使用 autocommit 连接、共享的非阻塞 PostgreSQL advisory lock 和 `CREATE INDEX CONCURRENTLY`，有效索引直接复用，无效索引并发删除后重建，未取得锁的启动实例立即继续而不等待。数据库结构或种子数据变更不得依赖清空 volume。PostgreSQL 服务使用同主版本 pgvector 镜像，避免已有 PG18 数据目录被错误挂载到 PG16。
 
 ## 外部依赖
 

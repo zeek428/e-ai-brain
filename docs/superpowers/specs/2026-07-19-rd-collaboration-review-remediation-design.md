@@ -69,6 +69,26 @@ dispatch transaction; that transaction rechecks both values before creating
 any execution artifact, so a concurrent backoff update makes the reservation a
 safe no-op.
 
+Candidate reservation is not authority to dispatch after the parent aggregate
+changes. The final PostgreSQL bundle transaction first obtains the parent ID
+with a non-locking lookup, then follows the canonical
+`rd_collaboration_runs FOR UPDATE -> rd_work_items FOR UPDATE` lock order used
+by cancel and suspension. After both locks it revalidates parent ownership,
+run/item status, reservation version and due time. If a decision or another
+transaction has moved the run to `waiting_human` (or any terminal/non-active
+state), or cancelled the item after reservation, dispatch fails closed before
+any task, Runner, attempt, event, or audit artifact is committed. The shared
+lock order prevents the cancel/suspend race from producing SQLSTATE `40P01`.
+
+Large dispatch indexes and destructive cleanup have different startup
+lifecycles. The ordinary API entrypoint excludes cleanup migration 121 and
+index migrations 125-128. Cleanup 121 remains explicit and maintenance-fenced.
+For 125-128, non-test API repository initialization uses an autocommit
+compatibility connection, one non-blocking advisory lock, catalog
+validity/readiness checks, and concurrent index drop/create. Only one startup
+instance performs this work; other instances skip without waiting and a later
+startup rechecks the indexes.
+
 ## Completed implementation notes
 
 - **Task 4** — The implementation and source-spec verification scope is
@@ -90,13 +110,21 @@ safe no-op.
   5/10/20-second backoff and fourth-failure decision, then add indexed due
   pages, batch dependency hydration, durable fair continuation and stale
   reservation protection.
+- **Task 8** — `e775507e9` and `48e82eda2` separate ordinary startup migrations
+  from explicit cleanup/concurrent large-index work and add the parent-run
+  fence; `4623ddc13` canonicalizes final dispatch to run-then-item row locking
+  with post-lock provenance/status/version/due revalidation.
 
 Representative regression evidence is
 `test_postgres_autonomous_dispatch_persists_explicit_audit_bundle_without_reading_store_audits`,
 `test_postgres_runner_safety_approval_is_atomic_replay_safe_and_dispatchable`,
 `test_postgres_expired_runner_safety_approval_renews_without_dispatch_artifacts`,
 `test_postgres_stale_reserved_worker_cannot_bypass_new_retry_backoff` and
-`test_repository_reserves_fair_dispatch_pages_across_restart_and_workers`.
+`test_repository_reserves_fair_dispatch_pages_across_restart_and_workers`, plus
+`test_api_entrypoint_runs_only_ordinary_additive_migrations`,
+`test_concurrent_index_compatibility_path_serializes_and_skips_valid_index` and
+`test_postgres_final_dispatch_and_cancel_use_run_then_work_item_lock_order` and
+`test_postgres_final_dispatch_waits_for_parent_suspension_without_artifacts`.
 
 ## Compatibility and safety
 

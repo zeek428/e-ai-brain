@@ -25,7 +25,7 @@
 - [ ] 已复制 `.env.example` 为 `.env` 并填写必要配置。
 - [ ] Docker Compose 可用。
 - [ ] `docker compose config` 校验通过。
-- [ ] 数据库迁移脚本已随 API 镜像或启动流程执行。
+- [ ] 普通 additive 数据库迁移已随 API 镜像或启动流程执行；显式 cutover cleanup 与并发大索引路径已按下述边界单独核验。
 - [ ] 已配置默认模型网关，API Key 只存在 `.env` 或密钥管理系统中。
 - [ ] 已配置内部 GitLab 只读凭据引用和产品 Git 资源绑定；凭据不得出现在 API 响应、执行器输入或日志中。
 - [ ] 已配置 code-review 执行器适配器；未配置时必须让 code_review 任务失败为可排查状态，而不是静默跳过。
@@ -60,6 +60,15 @@ docker compose config
 ```bash
 docker compose up -d --build
 ```
+
+#### 数据库迁移执行边界
+
+正常 API 容器启动只执行普通 additive SQL，并显式跳过以下迁移：
+
+- `121_requirement_driven_rd_cutover.sql`：破坏性切换 cleanup，只能在维护围栏进入 `cutover_locked`、Schema v2 和新应用健康证据满足后，通过 `scripts/rd_collaboration_cutover.py cleanup --execute` 显式执行；不得依赖重启 API 容器触发。
+- `125_rd_dispatch_due_index.sql`、`126_rd_dispatch_page_index.sql`、`127_rd_active_run_dispatch_index.sql`、`128_rd_dependency_successor_index.sql`：大表派发索引，不在入口脚本的逐文件 SQL 循环中执行。
+
+正常非测试 API 初始化会由 repository schema-compatibility 路径接管 125-128：在 autocommit 连接上尝试同一个 PostgreSQL advisory lock；取得锁的实例逐个检查索引是否 `valid` 且 `ready`，无效索引使用 concurrent drop 后，以 `CREATE INDEX CONCURRENTLY` 创建；未取得锁的并发实例立即继续启动，不等待持锁实例。该路径在后续 API 启动时会再次检查，因此跳过不表示迁移完成。发布观察中应确认 API 日志没有 compatibility index 错误，并在 PostgreSQL 验证四个索引均有效、可用；如果 concurrent DDL 失败，不得改用会长期阻塞业务写入的普通 `CREATE INDEX` 临时绕过。
 
 ### 3. 验证服务
 
@@ -188,6 +197,7 @@ docker compose down
 - [ ] PostgreSQL 初始化包含 pgvector 扩展。
 - [ ] Redis 可连接。
 - [ ] API 日志无启动错误。
+- [ ] 普通 API 启动未执行 `121_requirement_driven_rd_cutover.sql`，且四个派发索引 125-128 已由 repository compatibility 路径确认为 valid/ready；并发启动未因索引 advisory lock 相互等待。
 - [ ] `./scripts/release_smoke.sh` 通过，核心页面真实浏览器 smoke 无空白页、无控制台错误。
 - [ ] 本地代码运行态使用真实管理员 `FULL_CHAIN_USERNAME`/`FULL_CHAIN_PASSWORD` 执行 `./scripts/full_chain_regression.py --api-base-url http://localhost:8000` 通过，确认真实全链路业务写入、代码巡检和 full-chain 聚合正常；日常快速治理回归可补充执行 `./scripts/full_chain_regression.py --suite all-targeted --api-base-url http://localhost:8000`，其中包含确定性 AI 助手问答 smoke，但不能替代完整主链路验收。
 - [ ] 模型网关配置可查询，API Key 只返回 configured 标记，不返回明文或密钥片段。
@@ -204,6 +214,7 @@ docker compose down
 | API 健康检查失败 | API 容器未启动或端口不一致 | 查看 `docker compose ps` 和 `docker compose logs api`。 |
 | 数据库连接失败 | `.env` 与 compose 服务名不一致 | 使用 compose 内部服务名连接 PostgreSQL。 |
 | pgvector 初始化失败 | 镜像或迁移配置不支持扩展 | 检查数据库镜像和 `001_init.sql`。 |
+| API 启动期间派发索引报错或缺失 | 125-128 的 concurrent compatibility DDL 失败、索引无效，或本实例未取得 advisory lock | 查看 API/PostgreSQL 日志和 `pg_index.indisvalid/indisready`；让后续单实例启动重新校验，不能把 125-128 放回普通入口事务，也不能手工执行 121。 |
 | 前端访问 API 失败 | API base URL 配置错误 | 检查 web 环境变量和浏览器网络请求。 |
 | MR 预览失败 | GitLab 项目未绑定、凭据无权限或 MR 不存在 | 检查产品 Git 资源、凭据引用、repository_id 和 mr_iid。 |
 | MR 快照失败或 diff 过大 | GitLab API 超时、限流或 diff 超过配置上限 | 重试、拆分 MR 或缩小 Review 范围，不允许静默截断正式报告。 |
