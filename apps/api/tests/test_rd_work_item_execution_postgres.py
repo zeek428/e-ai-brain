@@ -576,6 +576,36 @@ def test_postgres_auto_dispatch_keeps_successor_ready_without_completed_predeces
     assert repository.list_rd_work_item_attempts(ids["work_item_id"]) == []
 
 
+def test_postgres_auto_dispatch_keeps_successor_ready_for_cross_run_predecessor(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    prefix = "dispatch-cross-run-predecessor"
+    ids = _seed_dispatchable_work_item(repository, prefix=prefix)
+    other_ids = _seed_dispatchable_work_item(repository, prefix=f"{prefix}-other")
+    with repository._connect(autocommit=False) as connection:
+        connection.execute(
+            "UPDATE rd_work_items SET status = 'completed' WHERE id = %s",
+            (other_ids["work_item_id"],),
+        )
+    repository.save_rd_work_item_dependency_record(
+        {
+            "id": f"{prefix}-dependency",
+            "collaboration_run_id": ids["run_id"],
+            "plan_version": 1,
+            "predecessor_work_item_id": other_ids["work_item_id"],
+            "successor_work_item_id": ids["work_item_id"],
+            "dependency_type": "finish_to_start",
+            "status": "pending",
+        }
+    )
+
+    result = dispatch_ready_ai_work_items(PostgresRuntimeStore(repository))
+
+    assert ids["work_item_id"] not in result["dispatched_work_item_ids"]
+    assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "ready"
+    assert repository.list_rd_work_item_attempts(ids["work_item_id"]) == []
+
+
 def test_postgres_auto_dispatch_atomically_escalates_a_frozen_runner_safety_fault(
     repository: PostgresSnapshotRepository,
 ) -> None:

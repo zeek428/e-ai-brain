@@ -85,20 +85,26 @@ def _dependency_work_items(
         for dependency in dependencies
         if str(dependency.get("successor_work_item_id") or "") in candidates
     }
+    omitted_predecessor_id_set = predecessor_ids - items.keys()
+    omitted_predecessor_ids = sorted(omitted_predecessor_id_set)
     repository = _repository(store)
-    get_work_item = getattr(repository, "get_rd_work_item", None)
+    list_work_items_by_ids = getattr(repository, "list_rd_work_items_by_ids", None)
     memory_items = getattr(store, "rd_work_items", None)
-    for predecessor_id in sorted(predecessor_ids - items.keys()):
-        predecessor = (
-            get_work_item(predecessor_id)
-            if callable(get_work_item)
-            else (memory_items.get(predecessor_id) if isinstance(memory_items, dict) else None)
-        )
+    if callable(list_work_items_by_ids) and omitted_predecessor_ids:
+        predecessors = list_work_items_by_ids(collaboration_run_id, omitted_predecessor_ids)
+    elif repository is None and isinstance(memory_items, dict):
+        predecessors = [
+            memory_items.get(predecessor_id) for predecessor_id in omitted_predecessor_ids
+        ]
+    else:
+        predecessors = []
+    for predecessor in predecessors:
         if (
             isinstance(predecessor, dict)
+            and str(predecessor.get("id") or "") in omitted_predecessor_id_set
             and predecessor.get("collaboration_run_id") == collaboration_run_id
         ):
-            items[predecessor_id] = predecessor
+            items[str(predecessor["id"])] = predecessor
     return items
 
 

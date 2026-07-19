@@ -567,6 +567,31 @@ class RdCollaborationReadRepository(RdCollaborationWriteRepository):
             order_by=("plan_version", "priority", "id"),
         )
 
+    def list_rd_work_items_by_ids(
+        self,
+        collaboration_run_id: str,
+        work_item_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        if not work_item_ids:
+            return []
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT *
+                    FROM rd_work_items
+                    WHERE collaboration_run_id = %s
+                      AND id = ANY(%s)
+                    ORDER BY id
+                    """,
+                    (collaboration_run_id, work_item_ids),
+                )
+                return [
+                    row
+                    for item in cursor.fetchall()
+                    if (row := _row_dict(cursor, item)) is not None
+                ]
+
     def list_due_rd_work_items(self, collaboration_run_id: str) -> list[dict[str, Any]]:
         """Load only due automatic-dispatch candidates from PostgreSQL.
 

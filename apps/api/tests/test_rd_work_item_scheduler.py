@@ -90,6 +90,76 @@ def test_scheduler_uses_repository_due_candidates_before_dependency_checks() -> 
     assert [item["id"] for item in items] == ["due-item"]
 
 
+def test_scheduler_batches_omitted_predecessors_for_repository_due_candidates() -> None:
+    class DueCandidateRepository:
+        def __init__(self) -> None:
+            self.batch_calls: list[tuple[str, tuple[str, ...]]] = []
+
+        def list_due_rd_work_items(self, collaboration_run_id: str):
+            assert collaboration_run_id == "run-1"
+            return [
+                {
+                    "id": "successor-a",
+                    "collaboration_run_id": collaboration_run_id,
+                    "status": "ready",
+                    "priority": 2,
+                },
+                {
+                    "id": "successor-b",
+                    "collaboration_run_id": collaboration_run_id,
+                    "status": "ready",
+                    "priority": 1,
+                },
+            ]
+
+        def list_rd_work_item_dependencies(self, collaboration_run_id: str):
+            assert collaboration_run_id == "run-1"
+            return [
+                {
+                    "predecessor_work_item_id": "predecessor-a",
+                    "successor_work_item_id": "successor-a",
+                },
+                {
+                    "predecessor_work_item_id": "predecessor-b",
+                    "successor_work_item_id": "successor-a",
+                },
+                {
+                    "predecessor_work_item_id": "predecessor-b",
+                    "successor_work_item_id": "successor-b",
+                },
+            ]
+
+        def list_rd_work_items_by_ids(
+            self,
+            collaboration_run_id: str,
+            work_item_ids: list[str],
+        ):
+            self.batch_calls.append((collaboration_run_id, tuple(work_item_ids)))
+            return [
+                {
+                    "id": work_item_id,
+                    "collaboration_run_id": collaboration_run_id,
+                    "status": "completed",
+                }
+                for work_item_id in work_item_ids
+            ]
+
+        def get_rd_work_item(self, _work_item_id: str):
+            raise AssertionError("due polling must not perform per-predecessor gets")
+
+    repository = DueCandidateRepository()
+
+    items = ready_work_items(
+        SimpleNamespace(repository=repository),
+        collaboration_run_id="run-1",
+    )
+
+    assert [item["id"] for item in items] == ["successor-b", "successor-a"]
+    assert repository.batch_calls == [
+        ("run-1", ("predecessor-a", "predecessor-b")),
+    ]
+
+
 def test_persisted_plan_activates_only_root_work_items_for_claiming() -> None:
     store = MemoryStore()
     store.rd_collaboration_runs["run-plan"] = {
