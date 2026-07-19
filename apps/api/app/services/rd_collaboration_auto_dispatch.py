@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException
@@ -10,6 +11,7 @@ from app.core.repositories.rd_collaboration import RdCollaborationRepositoryErro
 from app.services.rd_dispatch_fault_decision import (
     classify_dispatch_fault,
     escalate_dispatch_fault_for_human,
+    record_retryable_dispatch_fault,
 )
 from app.services.rd_high_risk_dispatch_gate import (
     high_risk_dispatch_is_approved,
@@ -52,7 +54,12 @@ def _is_ai_owned(store: Any, work_item: dict[str, Any]) -> bool:
     return bool(owner and owner.get("subject_type") == "ai_employee")
 
 
-def dispatch_ready_ai_work_items(store: Any, *, limit: int = 50) -> dict[str, list[str]]:
+def dispatch_ready_ai_work_items(
+    store: Any,
+    *,
+    limit: int = 50,
+    now: datetime | None = None,
+) -> dict[str, list[str]]:
     """Dispatch AI-owned DAG work only after the frozen risk gate allows it.
 
     The dispatcher intentionally delegates the state transition to
@@ -78,6 +85,27 @@ def dispatch_ready_ai_work_items(store: Any, *, limit: int = 50) -> dict[str, li
     human_review_required: list[str] = []
     retryable: list[str] = []
     skipped: list[str] = []
+    observed_at = now or datetime.now(UTC)
+    if observed_at.tzinfo is None:
+        observed_at = observed_at.replace(tzinfo=UTC)
+
+    def record_retry(work_item: dict[str, Any], fault: Any) -> None:
+        work_item_id = str(work_item["id"])
+        recorded = record_retryable_dispatch_fault(
+            store,
+            collaboration_run_id=str(work_item["collaboration_run_id"]),
+            work_item_id=work_item_id,
+            expected_version=int(work_item.get("version") or 1),
+            fault=fault,
+            observed_at=observed_at,
+        )
+        if recorded is None:
+            skipped.append(work_item_id)
+        elif recorded.get("outcome") == "escalated":
+            escalated.append(work_item_id)
+        else:
+            retryable.append(work_item_id)
+
     processed = 0
     for run in sorted(_runs(store), key=lambda item: str(item.get("id") or "")):
         if processed >= limit or run.get("status") not in _DISPATCHABLE_RUN_STATUSES:
@@ -85,7 +113,11 @@ def dispatch_ready_ai_work_items(store: Any, *, limit: int = 50) -> dict[str, li
         run_id = str(run.get("id") or "")
         if not run_id:
             continue
-        for work_item in ready_work_items(store, collaboration_run_id=run_id):
+        for work_item in ready_work_items(
+            store,
+            collaboration_run_id=run_id,
+            now=observed_at,
+        ):
             if processed >= limit:
                 break
             if work_item.get("status") not in {"ready", "rework_required"}:
@@ -112,7 +144,7 @@ def dispatch_ready_ai_work_items(store: Any, *, limit: int = 50) -> dict[str, li
                         if fault.outcome == "deferred":
                             capacity_deferred.append(work_item_id)
                         else:
-                            retryable.append(work_item_id)
+                            record_retry(work_item, fault)
                         continue
                     human_review_required.append(work_item_id)
                     continue
@@ -128,7 +160,7 @@ def dispatch_ready_ai_work_items(store: Any, *, limit: int = 50) -> dict[str, li
                     capacity_deferred.append(work_item_id)
                     continue
                 if fault.outcome == "retryable":
-                    retryable.append(work_item_id)
+                    record_retry(work_item, fault)
                     continue
                 try:
                     escalate_dispatch_fault_for_human(
@@ -142,7 +174,7 @@ def dispatch_ready_ai_work_items(store: Any, *, limit: int = 50) -> dict[str, li
                     if escalation_fault.outcome == "deferred":
                         capacity_deferred.append(work_item_id)
                     else:
-                        retryable.append(work_item_id)
+                        record_retry(work_item, escalation_fault)
                     continue
                 escalated.append(work_item_id)
                 continue

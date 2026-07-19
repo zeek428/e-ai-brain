@@ -509,6 +509,167 @@ def test_postgres_auto_dispatch_atomically_escalates_a_frozen_runner_safety_faul
     )
 
 
+def test_postgres_auto_dispatch_persists_backoff_across_restarts_and_escalates_fourth_fault(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import rd_collaboration_auto_dispatch
+
+    ids = _seed_dispatchable_work_item(repository, prefix="dispatch-retry-backoff")
+    secret = "token=customer-secret /srv/private-workspace prompt=do-not-store"
+    attempts: list[datetime] = []
+
+    def retryable_dispatch(*_args, **_kwargs):
+        attempts.append(datetime.now(UTC))
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "UPSTREAM_TIMEOUT", "message": secret},
+        )
+
+    monkeypatch.setattr(
+        rd_collaboration_auto_dispatch,
+        "dispatch_ai_task_for_work_item",
+        retryable_dispatch,
+    )
+    started_at = datetime.now(UTC).replace(microsecond=0)
+    attempt_times = [
+        started_at,
+        started_at + timedelta(seconds=5),
+        started_at + timedelta(seconds=15),
+        started_at + timedelta(seconds=35),
+    ]
+
+    for failure_no, observed_at in enumerate(attempt_times[:3], start=1):
+        result = dispatch_ready_ai_work_items(
+            PostgresRuntimeStore(repository),
+            now=observed_at,
+        )
+        persisted = repository.get_rd_work_item(ids["work_item_id"])
+        assert result["retryable_work_item_ids"] == [ids["work_item_id"]]
+        assert persisted["dispatch_failure_count"] == failure_no
+        assert persisted["last_dispatch_error_code"] == "RD_AUTO_DISPATCH_RETRYABLE"
+        assert persisted["next_dispatch_at"] == observed_at + timedelta(
+            seconds=(5, 10, 20)[failure_no - 1]
+        )
+
+        early = dispatch_ready_ai_work_items(
+            PostgresRuntimeStore(repository),
+            now=persisted["next_dispatch_at"] - timedelta(microseconds=1),
+        )
+        assert early["retryable_work_item_ids"] == []
+        assert len(attempts) == failure_no
+
+    fourth = dispatch_ready_ai_work_items(
+        PostgresRuntimeStore(repository),
+        now=attempt_times[3],
+    )
+
+    paused = repository.get_rd_work_item(ids["work_item_id"])
+    assert fourth["retryable_work_item_ids"] == []
+    assert fourth["escalated_work_item_ids"] == [ids["work_item_id"]]
+    assert paused["status"] == "waiting_human"
+    assert paused["resume_state"] == "ready"
+    assert paused["dispatch_failure_count"] == 4
+    assert paused["last_dispatch_error_code"] == "RD_AUTO_DISPATCH_RETRYABLE"
+    assert paused["next_dispatch_at"] is None
+    decisions = repository.list_decision_requests(
+        subject_type="rd_work_item",
+        subject_id=ids["work_item_id"],
+    )
+    assert len(decisions) == 1
+    assert decisions[0]["decision_type"] == "dispatch_fault_resolution"
+    assert decisions[0]["decision_actor_selector"] == {
+        "seat_ids": ["dispatch-retry-backoff-reviewer"]
+    }
+    persisted_and_observable = json.dumps(
+        {
+            "decision": decisions[0],
+            "events": repository.list_rd_collaboration_events(ids["run_id"]),
+            "item": paused,
+            "result": fourth,
+        },
+        default=str,
+    )
+    assert secret not in persisted_and_observable
+    assert "customer-secret" not in persisted_and_observable
+
+
+def test_postgres_successful_dispatch_atomically_clears_retry_state(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import rd_collaboration_auto_dispatch
+
+    ids = _seed_dispatchable_work_item(repository, prefix="dispatch-retry-clear")
+    original_dispatch = rd_collaboration_auto_dispatch.dispatch_ai_task_for_work_item
+    monkeypatch.setattr(
+        rd_collaboration_auto_dispatch,
+        "dispatch_ai_task_for_work_item",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            HTTPException(status_code=503, detail={"code": "UPSTREAM_TIMEOUT"})
+        ),
+    )
+    observed_at = datetime.now(UTC).replace(microsecond=0)
+    dispatch_ready_ai_work_items(PostgresRuntimeStore(repository), now=observed_at)
+    monkeypatch.setattr(
+        rd_collaboration_auto_dispatch,
+        "dispatch_ai_task_for_work_item",
+        original_dispatch,
+    )
+
+    result = dispatch_ready_ai_work_items(
+        PostgresRuntimeStore(repository),
+        now=observed_at + timedelta(seconds=5),
+    )
+
+    persisted = repository.get_rd_work_item(ids["work_item_id"])
+    assert result["dispatched_work_item_ids"] == [ids["work_item_id"]]
+    assert persisted["status"] == "running"
+    assert persisted["dispatch_failure_count"] == 0
+    assert persisted["last_dispatch_error_code"] is None
+    assert persisted["next_dispatch_at"] is None
+
+
+def test_postgres_retry_record_is_rejected_after_candidate_becomes_stale(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import rd_collaboration_auto_dispatch
+
+    ids = _seed_dispatchable_work_item(repository, prefix="dispatch-retry-stale")
+
+    def stale_dispatch(*_args, **_kwargs):
+        with repository._connect(autocommit=False) as connection:
+            connection.execute(
+                """
+                UPDATE rd_work_items
+                SET status = 'running', version = version + 1
+                WHERE id = %s
+                """,
+                (ids["work_item_id"],),
+            )
+        raise HTTPException(status_code=409, detail={"code": "RD_WORK_ITEM_NOT_READY"})
+
+    monkeypatch.setattr(
+        rd_collaboration_auto_dispatch,
+        "dispatch_ai_task_for_work_item",
+        stale_dispatch,
+    )
+
+    result = dispatch_ready_ai_work_items(
+        PostgresRuntimeStore(repository),
+        now=datetime.now(UTC),
+    )
+
+    persisted = repository.get_rd_work_item(ids["work_item_id"])
+    assert result["retryable_work_item_ids"] == []
+    assert result["skipped_work_item_ids"] == [ids["work_item_id"]]
+    assert persisted["status"] == "running"
+    assert persisted["dispatch_failure_count"] == 0
+    assert persisted["last_dispatch_error_code"] is None
+    assert persisted["next_dispatch_at"] is None
+
+
 def test_postgres_dispatch_freezes_custom_quality_gate_before_later_policy_mutation(
     repository: PostgresSnapshotRepository,
 ) -> None:

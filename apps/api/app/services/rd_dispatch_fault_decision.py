@@ -119,6 +119,199 @@ def _human_decision_selector(reviewer: dict[str, Any] | None) -> dict[str, list[
     return {"role_codes": ["rd_owner"]}
 
 
+def _retry_limit_escalation_records(
+    *,
+    run: dict[str, Any],
+    work_item: dict[str, Any],
+    observed_at: datetime,
+    reviewer: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    work_item_id = str(work_item["id"])
+    version = int(work_item.get("version") or 1)
+    decision_id = f"auto-dispatch-retry-limit:{work_item_id}:{version}"
+    selector = _human_decision_selector(reviewer)
+    options = [
+        {
+            "code": "retry_after_configuration_repair",
+            "input_schema": {},
+            "outcome": "approve",
+            "subject_transition": "resume",
+        },
+        {
+            "code": "cancel_work_item",
+            "input_schema": {},
+            "outcome": "reject",
+            "requires_comment": True,
+            "subject_transition": "cancelled",
+        },
+    ]
+    safe_evidence = {
+        "decision_request_id": decision_id,
+        "error_code": "RD_AUTO_DISPATCH_RETRY_LIMIT",
+        "message": "Automatic dispatch retry limit reached",
+    }
+    decision = {
+        "id": decision_id,
+        "brain_app_id": run.get("brain_app_id", "rd_brain"),
+        "product_id": run["product_id"],
+        "subject_type": "rd_work_item",
+        "subject_id": work_item_id,
+        "decision_type": "dispatch_fault_resolution",
+        "plan_version": int(run.get("plan_version") or 0),
+        "options_json": options,
+        "options_hash": _canonical_hash(options),
+        "evidence_json": [
+            {
+                "error_code": "RD_AUTO_DISPATCH_RETRY_LIMIT",
+                "kind": "dispatch_fault",
+                "message": "Automatic dispatch retry limit reached",
+            }
+        ],
+        "recommendation_json": {
+            "action": "repair_configuration_or_cancel",
+            "error_code": "RD_AUTO_DISPATCH_RETRY_LIMIT",
+        },
+        "decision_actor_selector": selector,
+        "answer_actor_selector": {},
+        "answer_schema": {},
+        "status": "pending",
+        "expires_at": (observed_at + timedelta(hours=24)).isoformat(),
+        "timeout_policy": "escalate_keep_paused",
+        "escalation_target_selector": selector,
+        "escalation_level": 0,
+        "version": 1,
+        "created_by": run["created_by"],
+    }
+    event = {
+        "id": f"dispatch-retry-limit:{work_item_id}:{version}",
+        "collaboration_run_id": run["id"],
+        "event_type": "work_item.dispatch_fault_escalated",
+        "event_key": f"dispatch-retry-limit:{work_item_id}:{version}",
+        "subject_type": "rd_work_item",
+        "subject_id": work_item_id,
+        "payload_json": safe_evidence,
+        "occurred_at": observed_at.isoformat(),
+    }
+    audit = {
+        "id": f"dispatch-retry-limit-audit:{work_item_id}:{version}",
+        "event_type": "rd_work_item.dispatch_fault_escalated",
+        "actor_id": str(run["created_by"]),
+        "subject_type": "rd_work_item",
+        "subject_id": work_item_id,
+        "payload": safe_evidence,
+    }
+    return decision, event, audit
+
+
+def record_retryable_dispatch_fault(
+    store: Any,
+    *,
+    collaboration_run_id: str,
+    work_item_id: str,
+    expected_version: int,
+    fault: DispatchFault,
+    observed_at: datetime,
+) -> dict[str, Any] | None:
+    """Record retry state, or atomically freeze the fourth fault for a human."""
+    if fault.outcome != "retryable":
+        raise ValueError("only retryable dispatch faults can be recorded")
+    repository = getattr(store, "repository", None)
+    get_run = getattr(repository, "get_rd_collaboration_run", None)
+    get_item = getattr(repository, "get_rd_work_item", None)
+    get_seat = getattr(repository, "get_rd_run_seat", None)
+    run = (
+        get_run(collaboration_run_id)
+        if callable(get_run)
+        else _records(store, "rd_collaboration_runs").get(collaboration_run_id)
+    )
+    work_item = (
+        get_item(work_item_id)
+        if callable(get_item)
+        else _records(store, "rd_work_items").get(work_item_id)
+    )
+    if (
+        run is None
+        or work_item is None
+        or work_item.get("collaboration_run_id") != collaboration_run_id
+    ):
+        return None
+    decision, event, audit_event = _retry_limit_escalation_records(
+        run=dict(run),
+        work_item=dict(work_item),
+        observed_at=observed_at,
+        reviewer=(
+            get_seat(str(work_item.get("reviewer_seat_id") or ""))
+            if callable(get_seat)
+            else _records(store, "rd_run_seats").get(str(work_item.get("reviewer_seat_id") or ""))
+        ),
+    )
+    persist = getattr(repository, "record_rd_dispatch_retry_failure", None)
+    if callable(persist):
+        try:
+            return dict(
+                persist(
+                    work_item_id=work_item_id,
+                    expected_version=expected_version,
+                    safe_error_code=fault.error_code,
+                    observed_at=observed_at,
+                    escalation_decision=decision,
+                    escalation_event=event,
+                    escalation_audit_event=audit_event,
+                )
+            )
+        except (RdCollaborationRepositoryError, RdCollaborationVersionConflictError) as exc:
+            if exc.code in {"RD_WORK_ITEM_STATE_INVALID", "RD_VERSION_CONFLICT"}:
+                return None
+            raise
+
+    canonical = _records(store, "rd_work_items").get(work_item_id)
+    if (
+        canonical is None
+        or canonical.get("status") not in {"ready", "rework_required"}
+        or int(canonical.get("version") or 1) != int(expected_version)
+        or run.get("status") not in {"running", "integrating", "verifying"}
+    ):
+        return None
+    failure_count = int(canonical.get("dispatch_failure_count") or 0) + 1
+    canonical.update(
+        {
+            "dispatch_failure_count": failure_count,
+            "last_dispatch_error_code": fault.error_code,
+            "next_dispatch_at": (
+                observed_at + timedelta(seconds=(5, 10, 20)[failure_count - 1])
+            ).isoformat()
+            if failure_count < 4
+            else None,
+            "updated_at": observed_at.isoformat(),
+            "version": int(canonical.get("version") or 1) + 1,
+        }
+    )
+    if failure_count < 4:
+        return {"outcome": "retryable", "work_item": deepcopy(canonical)}
+    resume_state = str(canonical["status"])
+    _records(store, "decision_requests")[decision["id"]] = decision
+    canonical.update(
+        {
+            "status": "waiting_human",
+            "resume_state": resume_state,
+            "suspended_attempt_id": None,
+            "suspended_decision_request_id": decision["id"],
+            "suspended_at": observed_at.isoformat(),
+            "lease_owner": None,
+            "lease_expires_at": None,
+        }
+    )
+    _records(store, "rd_collaboration_events")[event["id"]] = event
+    audit = getattr(store, "audit", None)
+    if callable(audit):
+        audit(**{key: value for key, value in audit_event.items() if key != "id"})
+    return {
+        "decision_request": deepcopy(decision),
+        "outcome": "escalated",
+        "work_item": deepcopy(canonical),
+    }
+
+
 def runner_safety_approval_request_id(
     *,
     work_item_id: str,

@@ -63,18 +63,27 @@ def _dependencies(store: Any, collaboration_run_id: str) -> list[dict[str, Any]]
     ]
 
 
-def ready_work_items(store: Any, *, collaboration_run_id: str) -> list[dict[str, Any]]:
+def ready_work_items(
+    store: Any,
+    *,
+    collaboration_run_id: str,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
     """Return only items whose full predecessor set is satisfied.
 
     This is intentionally a read-side scheduler primitive.  State transitions
     are performed by a command service with optimistic locking, so a stale
     listing can never grant a lease by itself.
     """
+    observed_at = now or _now()
     items = {str(item["id"]): item for item in _work_items(store, collaboration_run_id)}
     dependencies = _dependencies(store, collaboration_run_id)
     ready: list[dict[str, Any]] = []
     for item_id, item in items.items():
         if item.get("status") not in {"ready", "draft", "rework_required", "blocked"}:
+            continue
+        next_dispatch_at = _parse_time(item.get("next_dispatch_at"))
+        if next_dispatch_at is not None and next_dispatch_at > observed_at:
             continue
         predecessor_ids = [
             str(edge.get("predecessor_work_item_id"))

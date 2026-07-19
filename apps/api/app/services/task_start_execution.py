@@ -682,7 +682,10 @@ def dispatch_ai_task_for_work_item(
     work_item.update(
         {
             "ai_task_id": task["id"],
+            "dispatch_failure_count": 0,
+            "last_dispatch_error_code": None,
             "lease_owner": owner["id"],
+            "next_dispatch_at": None,
             "status": "running",
             "version": int(work_item.get("version") or 1) + 1,
         }

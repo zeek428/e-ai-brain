@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
@@ -516,6 +517,155 @@ def test_auto_dispatch_classifies_stale_dispatch_reads_as_retryable(monkeypatch)
     assert result["escalated_work_item_ids"] == []
     assert store.rd_work_items["work-low"]["status"] == "ready"
     assert store.decision_requests == {}
+
+
+def test_auto_dispatch_persists_safe_retry_backoff_and_suppresses_early_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import rd_collaboration_auto_dispatch
+
+    store = _store_with_ready_ai_work_items()
+    store.rd_work_items = {"work-low": store.rd_work_items["work-low"]}
+    attempted: list[str] = []
+    secret = "token=customer-secret /tmp/private-workspace prompt=do-not-store"
+
+    def retryable_dispatch(*_args, **_kwargs):
+        attempted.append("work-low")
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "UPSTREAM_TIMEOUT", "message": secret},
+        )
+
+    monkeypatch.setattr(
+        rd_collaboration_auto_dispatch,
+        "dispatch_ai_task_for_work_item",
+        retryable_dispatch,
+    )
+    observed_at = datetime.now(UTC).replace(microsecond=0)
+
+    first = dispatch_ready_ai_work_items(store, now=observed_at)
+    early = dispatch_ready_ai_work_items(store, now=observed_at + timedelta(seconds=4))
+
+    item = store.rd_work_items["work-low"]
+    assert first["retryable_work_item_ids"] == ["work-low"]
+    assert early["retryable_work_item_ids"] == []
+    assert attempted == ["work-low"]
+    assert item["status"] == "ready"
+    assert item["dispatch_failure_count"] == 1
+    assert item["last_dispatch_error_code"] == "RD_AUTO_DISPATCH_RETRYABLE"
+    assert item["next_dispatch_at"] == (observed_at + timedelta(seconds=5)).isoformat()
+    durable_and_observable = json.dumps(
+        {"item": item, "first": first, "early": early},
+        ensure_ascii=False,
+    )
+    assert secret not in durable_and_observable
+    assert "customer-secret" not in durable_and_observable
+
+
+def test_auto_dispatch_uses_bounded_backoff_then_escalates_the_fourth_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import rd_collaboration_auto_dispatch
+
+    store = _store_with_ready_ai_work_items()
+    store.rd_work_items = {"work-low": store.rd_work_items["work-low"]}
+    monkeypatch.setattr(
+        rd_collaboration_auto_dispatch,
+        "dispatch_ai_task_for_work_item",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            HTTPException(status_code=503, detail={"code": "UPSTREAM_TIMEOUT"})
+        ),
+    )
+    started_at = datetime.now(UTC).replace(microsecond=0)
+    attempt_times = [
+        started_at,
+        started_at + timedelta(seconds=5),
+        started_at + timedelta(seconds=15),
+        started_at + timedelta(seconds=35),
+    ]
+    expected_delays = [5, 10, 20]
+
+    for attempt_index, observed_at in enumerate(attempt_times[:3]):
+        result = dispatch_ready_ai_work_items(store, now=observed_at)
+        item = store.rd_work_items["work-low"]
+        assert result["retryable_work_item_ids"] == ["work-low"]
+        assert item["dispatch_failure_count"] == attempt_index + 1
+        assert (
+            item["next_dispatch_at"]
+            == (observed_at + timedelta(seconds=expected_delays[attempt_index])).isoformat()
+        )
+
+    fourth = dispatch_ready_ai_work_items(store, now=attempt_times[3])
+
+    paused = store.rd_work_items["work-low"]
+    assert fourth["retryable_work_item_ids"] == []
+    assert fourth["escalated_work_item_ids"] == ["work-low"]
+    assert paused["status"] == "waiting_human"
+    assert paused["resume_state"] == "ready"
+    assert paused["dispatch_failure_count"] == 4
+    assert paused["last_dispatch_error_code"] == "RD_AUTO_DISPATCH_RETRYABLE"
+    assert paused["next_dispatch_at"] is None
+    decision = store.decision_requests[paused["suspended_decision_request_id"]]
+    assert decision["decision_type"] == "dispatch_fault_resolution"
+    assert decision["decision_actor_selector"] == {"seat_ids": ["seat-reviewer"]}
+    assert decision["evidence_json"][0]["error_code"] == "RD_AUTO_DISPATCH_RETRY_LIMIT"
+
+    dispatch_ready_ai_work_items(store, now=attempt_times[3] + timedelta(seconds=1))
+    assert list(store.decision_requests) == [decision["id"]]
+
+
+def test_auto_dispatch_does_not_record_retry_after_candidate_becomes_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import rd_collaboration_auto_dispatch
+
+    store = _store_with_ready_ai_work_items()
+    store.rd_work_items = {"work-low": store.rd_work_items["work-low"]}
+
+    def stale_dispatch(*_args, **_kwargs):
+        store.rd_work_items["work-low"].update({"status": "running", "version": 2})
+        raise HTTPException(status_code=409, detail={"code": "RD_WORK_ITEM_NOT_READY"})
+
+    monkeypatch.setattr(
+        rd_collaboration_auto_dispatch,
+        "dispatch_ai_task_for_work_item",
+        stale_dispatch,
+    )
+
+    result = dispatch_ready_ai_work_items(
+        store,
+        now=datetime.now(UTC),
+    )
+
+    item = store.rd_work_items["work-low"]
+    assert result["retryable_work_item_ids"] == []
+    assert result["skipped_work_item_ids"] == ["work-low"]
+    assert "dispatch_failure_count" not in item
+    assert "last_dispatch_error_code" not in item
+    assert "next_dispatch_at" not in item
+
+
+def test_successful_auto_dispatch_clears_retry_state() -> None:
+    store = _store_with_ready_ai_work_items()
+    store.rd_work_items = {"work-low": store.rd_work_items["work-low"]}
+    store.rd_work_items["work-low"].update(
+        {
+            "dispatch_failure_count": 3,
+            "last_dispatch_error_code": "RD_AUTO_DISPATCH_RETRYABLE",
+            "next_dispatch_at": datetime.now(UTC).isoformat(),
+        }
+    )
+
+    result = dispatch_ready_ai_work_items(
+        store,
+        now=datetime.now(UTC) + timedelta(seconds=1),
+    )
+
+    item = store.rd_work_items["work-low"]
+    assert result["dispatched_work_item_ids"] == ["work-low"]
+    assert item["dispatch_failure_count"] == 0
+    assert item["last_dispatch_error_code"] is None
+    assert item["next_dispatch_at"] is None
 
 
 def test_execution_worker_heartbeat_retains_classified_dispatch_outcomes(monkeypatch) -> None:

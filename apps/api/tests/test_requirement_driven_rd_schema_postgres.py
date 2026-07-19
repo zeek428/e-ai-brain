@@ -17,6 +17,7 @@ MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "app" / "db" / "migration
 MIGRATION_109 = MIGRATIONS_DIR / "109_requirement_driven_rd_collaboration.sql"
 MIGRATION_116 = MIGRATIONS_DIR / "116_rd_trusted_delivery_evidence.sql"
 MIGRATION_117 = MIGRATIONS_DIR / "117_rd_external_callback_facts.sql"
+MIGRATION_123 = MIGRATIONS_DIR / "123_rd_dispatch_retry_controls.sql"
 DEFAULT_POSTGRES_ADMIN_URL = "postgresql://ai_brain:ai_brain_password@127.0.0.1:5432/postgres"
 
 
@@ -698,6 +699,68 @@ def test_migration_117_keeps_verified_callback_facts_immutable(
                     """
                 )
             connection.rollback()
+
+
+def test_migration_123_adds_durable_dispatch_retry_controls(
+    postgres_admin_url: str,
+) -> None:
+    with _temporary_database(postgres_admin_url) as database_url:
+        _apply_historical_migrations(database_url, through=122)
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            _apply_migration(connection, MIGRATION_123)
+            columns = connection.execute(
+                """
+                SELECT column_name, column_default, is_nullable
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'rd_work_items'
+                  AND column_name IN (
+                    'dispatch_failure_count',
+                    'last_dispatch_error_code',
+                    'next_dispatch_at'
+                  )
+                ORDER BY column_name
+                """
+            ).fetchall()
+            indexes = connection.execute(
+                """
+                SELECT indexname, indexdef
+                FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND tablename = 'rd_work_items'
+                  AND indexname = 'idx_rd_work_items_dispatch_due'
+                """
+            ).fetchall()
+        with psycopg.connect(database_url) as connection:
+            ids = _seed_collaboration_scope(connection, prefix="dispatch-retry-controls")
+            with pytest.raises(psycopg.errors.CheckViolation):
+                connection.execute(
+                    """
+                    INSERT INTO rd_work_items (
+                      id, collaboration_run_id, plan_version, work_item_type,
+                      title, objective, status, idempotency_key,
+                      dispatch_failure_count
+                    ) VALUES (
+                      'dispatch-retry-controls-negative', %s, 1, 'implementation',
+                      'negative retry count', 'must be rejected', 'ready',
+                      'dispatch-retry-controls-negative', -1
+                    )
+                    """,
+                    (ids["run"],),
+                )
+
+    assert columns == [
+        ("dispatch_failure_count", "0", "NO"),
+        ("last_dispatch_error_code", None, "YES"),
+        ("next_dispatch_at", None, "YES"),
+    ]
+    assert len(indexes) == 1
+    assert "next_dispatch_at" in indexes[0][1]
+    assert "status" in indexes[0][1]
+    persistence_source = (
+        Path(__file__).resolve().parents[1] / "app" / "core" / "persistence.py"
+    ).read_text(encoding="utf-8")
+    assert '"123_rd_dispatch_retry_controls.sql"' in persistence_source
 
 
 def test_migration_109_normalizes_rows_from_previous_operation_constraint(

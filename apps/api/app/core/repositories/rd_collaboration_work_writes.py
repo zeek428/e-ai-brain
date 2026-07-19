@@ -41,6 +41,131 @@ class RdCollaborationWorkWriteMixin:
         r"(?::renewal:(?P<renewal_no>[1-9]\d*))?$"
     )
 
+    def record_rd_dispatch_retry_failure(
+        self,
+        *,
+        work_item_id: str,
+        expected_version: int,
+        safe_error_code: str,
+        observed_at: datetime,
+        escalation_decision: dict[str, Any],
+        escalation_event: dict[str, Any],
+        escalation_audit_event: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist one retry fault only while the locked candidate is dispatchable."""
+        return self._in_transaction(
+            lambda cursor: self._record_rd_dispatch_retry_failure_cursor(
+                cursor,
+                work_item_id=work_item_id,
+                expected_version=expected_version,
+                safe_error_code=safe_error_code,
+                observed_at=observed_at,
+                escalation_decision=escalation_decision,
+                escalation_event=escalation_event,
+                escalation_audit_event=escalation_audit_event,
+            )
+        )
+
+    def _record_rd_dispatch_retry_failure_cursor(
+        self,
+        cursor: Any,
+        *,
+        work_item_id: str,
+        expected_version: int,
+        safe_error_code: str,
+        observed_at: datetime,
+        escalation_decision: dict[str, Any],
+        escalation_event: dict[str, Any],
+        escalation_audit_event: dict[str, Any],
+    ) -> dict[str, Any]:
+        if re.fullmatch(r"[A-Z][A-Z0-9_]{1,127}", safe_error_code) is None:
+            raise ValueError("safe_error_code must be a stable uppercase code")
+        cursor.execute(
+            "SELECT collaboration_run_id FROM rd_work_items WHERE id = %s",
+            (work_item_id,),
+        )
+        identity = cursor.fetchone()
+        if identity is None:
+            raise RdCollaborationRepositoryError(
+                "RD_WORK_ITEM_STATE_INVALID", "work item does not exist"
+            )
+        cursor.execute(
+            "SELECT * FROM rd_collaboration_runs WHERE id = %s FOR UPDATE",
+            (identity[0],),
+        )
+        run = _row_dict(cursor, cursor.fetchone())
+        cursor.execute("SELECT * FROM rd_work_items WHERE id = %s FOR UPDATE", (work_item_id,))
+        work_item = _row_dict(cursor, cursor.fetchone())
+        if (
+            run is None
+            or work_item is None
+            or run.get("status") not in {"running", "integrating", "verifying"}
+            or work_item.get("status") not in {"ready", "rework_required"}
+        ):
+            raise RdCollaborationRepositoryError(
+                "RD_WORK_ITEM_STATE_INVALID", "work item is no longer dispatchable"
+            )
+        if int(work_item["version"]) != int(expected_version):
+            raise RdCollaborationVersionConflictError(int(work_item["version"]))
+
+        failure_count = int(work_item.get("dispatch_failure_count") or 0) + 1
+        if failure_count < 4:
+            delay_seconds = (5, 10, 20)[failure_count - 1]
+            cursor.execute(
+                """
+                UPDATE rd_work_items
+                SET dispatch_failure_count = %s,
+                    last_dispatch_error_code = %s,
+                    next_dispatch_at = %s::timestamptz + make_interval(secs => %s),
+                    version = version + 1,
+                    updated_at = now()
+                WHERE id = %s
+                RETURNING *
+                """,
+                (
+                    failure_count,
+                    safe_error_code,
+                    observed_at,
+                    delay_seconds,
+                    work_item_id,
+                ),
+            )
+            persisted = _row_dict(cursor, cursor.fetchone())
+            if persisted is None:
+                raise RuntimeError("dispatch retry state update returned no row")
+            return {"outcome": "retryable", "work_item": persisted}
+
+        paused = self._suspend_work_item_for_decision_cursor(
+            cursor,
+            work_item_id=work_item_id,
+            decision_request=escalation_decision,
+            expected_version=expected_version,
+        )
+        cursor.execute(
+            """
+            UPDATE rd_work_items
+            SET dispatch_failure_count = %s,
+                last_dispatch_error_code = %s,
+                next_dispatch_at = NULL,
+                updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (failure_count, safe_error_code, work_item_id),
+        )
+        persisted = _row_dict(cursor, cursor.fetchone())
+        if persisted is None:
+            raise RuntimeError("dispatch retry escalation update returned no row")
+        self._insert_event_cursor(cursor, escalation_event)
+        if self._upsert_audit_events is None:
+            raise RuntimeError("audit persistence callback is not configured")
+        self._upsert_audit_events(cursor, [escalation_audit_event])
+        return {
+            "decision_request": paused["decision_request"],
+            "outcome": "escalated",
+            "work_item": persisted,
+        }
+
     def record_rd_ready_for_release_evidence_bundle(
         self,
         *,
@@ -1203,7 +1328,9 @@ class RdCollaborationWorkWriteMixin:
             """
             UPDATE rd_work_items
             SET status = 'running', ai_task_id = %s, lease_owner = %s,
-                lease_expires_at = NULL, version = version + 1, updated_at = now()
+                lease_expires_at = NULL, dispatch_failure_count = 0,
+                last_dispatch_error_code = NULL, next_dispatch_at = NULL,
+                version = version + 1, updated_at = now()
             WHERE id = %s AND version = %s AND status = ANY(%s)
             RETURNING *
             """,
