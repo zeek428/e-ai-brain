@@ -21,6 +21,7 @@ from app.core.persistence import PostgresSnapshotRepository
 from app.core.persistence_runtime import PostgresRuntimeStore
 from app.core.rd_collaboration_graph import build_rd_collaboration_graph, rd_collaboration_thread_id
 from app.core.repositories.rd_collaboration import (
+    _ACTIVE_DISPATCH_RUN_PAGE_SQL,
     _DUE_DISPATCH_PAGE_SQL,
     RdCollaborationReadRepository,
     RdCollaborationRepositoryError,
@@ -906,6 +907,151 @@ def test_repository_reserves_fair_dispatch_pages_across_restart_and_workers(
     assert [item["id"] for item in third] == ["dispatch-fair-a-2"]
     concurrently_reserved_ids = [str(page[0]["id"]) for page in concurrent_pages]
     assert len(set(concurrently_reserved_ids)) == 2
+
+
+def test_repository_bounds_active_run_scan_and_reaches_late_work_after_restart(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    run_ids: list[str] = []
+    for index in range(9):
+        seeded = _seed_exact_run(repository, prefix=f"dispatch-budget-{index:02d}")
+        run_ids.append(str(seeded["run"]["id"]))
+    late_run_id = run_ids[-1]
+    with repository._connect(autocommit=False) as connection:
+        connection.execute(
+            """
+            INSERT INTO rd_work_items (
+              id, collaboration_run_id, plan_version, work_item_type, title,
+              objective, status, priority, idempotency_key
+            ) VALUES (
+              'dispatch-budget-late-work', %s, 1, 'implementation', 'late work',
+              'must eventually be reached', 'ready', 1, 'dispatch-budget-late-work'
+            )
+            """,
+            (late_run_id,),
+        )
+
+    assert repository.reserve_due_rd_dispatch_candidates(limit=2) == []
+    with repository._connect() as connection:
+        first_cursor = connection.execute(
+            "SELECT last_run_id FROM rd_dispatch_sweep_cursors WHERE id = 'automatic_dispatch'"
+        ).fetchone()[0]
+
+    restarted = PostgresSnapshotRepository(repository.database_url, pool_max_size=4)
+    try:
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            pages = list(
+                executor.map(
+                    lambda _: restarted.reserve_due_rd_dispatch_candidates(limit=2),
+                    range(4),
+                )
+            )
+    finally:
+        restarted._pool.close()
+
+    assert first_cursor == run_ids[1]
+    assert [str(item["id"]) for page in pages for item in page] == [
+        "dispatch-budget-late-work"
+    ]
+
+
+def test_active_run_page_uses_bounded_status_id_index_scans(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    for index in range(30):
+        _seed_exact_run(repository, prefix=f"active-run-plan-{index:02d}")
+    with repository._connect(autocommit=False) as connection:
+        connection.execute("ANALYZE rd_collaboration_runs")
+        connection.execute("SET LOCAL enable_seqscan = off")
+        plan = connection.execute(
+            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "
+            + _ACTIVE_DISPATCH_RUN_PAGE_SQL.format(cursor_predicate=""),
+            ("running", 2, "integrating", 2, "verifying", 2, 2),
+        ).fetchone()[0][0]["Plan"]
+
+    def nodes(value: dict[str, object]):
+        yield value
+        for child in value.get("Plans", []):
+            yield from nodes(child)
+
+    plan_nodes = list(nodes(plan))
+    index_nodes = [
+        node
+        for node in plan_nodes
+        if node.get("Index Name") == "idx_rd_collaboration_runs_status_id"
+    ]
+    assert index_nodes
+    assert sum(int(node["Actual Rows"]) for node in index_nodes) <= 6
+    assert not any(
+        node.get("Node Type") == "Seq Scan"
+        and node.get("Relation Name") == "rd_collaboration_runs"
+        for node in plan_nodes
+    )
+
+
+def test_successor_dependency_page_uses_successor_index_without_run_graph_scan(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="dependency-page-plan")
+    run_id = str(seeded["run"]["id"])
+    with repository._connect(autocommit=False) as connection:
+        connection.execute(
+            """
+            INSERT INTO rd_work_items (
+              id, collaboration_run_id, plan_version, work_item_type, title,
+              objective, status, priority, idempotency_key
+            )
+            SELECT
+              'dependency-page-work-' || value, %s, 1, 'implementation',
+              'work ' || value, 'objective', 'blocked', 100,
+              'dependency-page-work-' || value
+            FROM generate_series(1, 10001) AS value
+            """,
+            (run_id,),
+        )
+        connection.execute(
+            """
+            INSERT INTO rd_work_item_dependencies (
+              id, collaboration_run_id, plan_version,
+              predecessor_work_item_id, successor_work_item_id
+            )
+            SELECT
+              'dependency-page-edge-' || value, %s, 1,
+              'dependency-page-work-' || value,
+              'dependency-page-work-' || (value + 1)
+            FROM generate_series(1, 10000) AS value
+            """,
+            (run_id,),
+        )
+        connection.execute("ANALYZE rd_work_item_dependencies")
+        successor_ids = [f"dependency-page-work-{value}" for value in range(9997, 10002)]
+        plan = connection.execute(
+            """
+            EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+            SELECT *
+            FROM rd_work_item_dependencies
+            WHERE collaboration_run_id = %s
+              AND successor_work_item_id = ANY(%s)
+            ORDER BY successor_work_item_id, predecessor_work_item_id, id
+            """,
+            (run_id, successor_ids),
+        ).fetchone()[0][0]["Plan"]
+
+    def nodes(value: dict[str, object]):
+        yield value
+        for child in value.get("Plans", []):
+            yield from nodes(child)
+
+    plan_nodes = list(nodes(plan))
+    assert any(
+        node.get("Index Name") == "idx_rd_work_item_dependencies_successor"
+        for node in plan_nodes
+    )
+    assert not any(
+        node.get("Node Type") == "Seq Scan"
+        and node.get("Relation Name") == "rd_work_item_dependencies"
+        for node in plan_nodes
+    )
 
 
 def test_due_dispatch_page_uses_bounded_due_index_before_priority_sort(

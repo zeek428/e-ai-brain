@@ -195,6 +195,7 @@ def test_postgres_scheduled_job_run_list_delegates_run_ids_filter(monkeypatch):
 def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkeypatch):
     repository = PostgresSnapshotRepository("postgresql://unused")
     applied_migrations: list[str] = []
+    concurrent_migrations: list[tuple[str, str]] = []
 
     class FakeCursor:
         def __enter__(self):
@@ -216,11 +217,19 @@ def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkey
         def cursor(self):
             return FakeCursor()
 
-    monkeypatch.setattr(repository, "_connect", lambda: FakeConnection())
+    monkeypatch.setattr(repository, "_connect", lambda **_kwargs: FakeConnection())
     monkeypatch.setattr(
         repository,
         "_apply_additive_migration",
         lambda cursor, filename: applied_migrations.append(filename),
+    )
+    monkeypatch.setattr(
+        repository,
+        "_ensure_concurrent_index_migration",
+        lambda connection, filename, index_name: concurrent_migrations.append(
+            (filename, index_name)
+        ),
+        raising=False,
     )
 
     repository._ensure_schema_compatibility()
@@ -267,6 +276,76 @@ def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkey
     assert "109_requirement_driven_rd_collaboration.sql" in applied_migrations
     assert "112_rd_requirement_entry_adapters.sql" in applied_migrations
     assert "114_rd_work_item_execution_states.sql" in applied_migrations
+    assert concurrent_migrations == [
+        ("125_rd_dispatch_due_index.sql", "idx_rd_work_items_dispatch_due"),
+        ("126_rd_dispatch_page_index.sql", "idx_rd_work_items_dispatch_due_page"),
+        ("127_rd_active_run_dispatch_index.sql", "idx_rd_collaboration_runs_status_id"),
+        (
+            "128_rd_dependency_successor_index.sql",
+            "idx_rd_work_item_dependencies_successor",
+        ),
+    ]
+
+
+def test_concurrent_index_compatibility_path_serializes_and_skips_valid_index() -> None:
+    repository = PostgresSnapshotRepository("postgresql://unused")
+    calls: list[tuple[str, tuple[object, ...] | None]] = []
+
+    class FakeResult:
+        def __init__(self, row: tuple[object, ...] | None = None) -> None:
+            self.row = row
+
+        def fetchone(self):
+            return self.row
+
+    class FakeConnection:
+        autocommit = True
+
+        def execute(self, statement: str, params=None):
+            calls.append((statement, params))
+            if "pg_try_advisory_lock" in statement:
+                return FakeResult((True,))
+            if "indisvalid" in statement:
+                return FakeResult((True,))
+            return FakeResult()
+
+    repository._ensure_concurrent_index_migration(
+        FakeConnection(),
+        "127_rd_active_run_dispatch_index.sql",
+        "idx_rd_collaboration_runs_status_id",
+    )
+
+    assert "pg_try_advisory_lock" in calls[0][0]
+    assert calls[0][1] == ("schema-index:rd-dispatch-scaling",)
+    assert "indisvalid" in calls[1][0]
+    assert "pg_advisory_unlock" in calls[-1][0]
+    assert calls[-1][1] == ("schema-index:rd-dispatch-scaling",)
+    assert not any("CREATE INDEX" in statement for statement, _ in calls)
+
+
+def test_concurrent_index_compatibility_path_does_not_wait_for_another_startup() -> None:
+    repository = PostgresSnapshotRepository("postgresql://unused")
+    calls: list[str] = []
+
+    class FakeResult:
+        def fetchone(self):
+            return (False,)
+
+    class FakeConnection:
+        autocommit = True
+
+        def execute(self, statement: str, params=None):
+            calls.append(statement)
+            return FakeResult()
+
+    repository._ensure_concurrent_index_migration(
+        FakeConnection(),
+        "127_rd_active_run_dispatch_index.sql",
+        "idx_rd_collaboration_runs_status_id",
+    )
+
+    assert len(calls) == 1
+    assert "pg_try_advisory_lock" in calls[0]
 
 
 def test_postgres_execution_governance_delegates_to_domain_repository(monkeypatch):

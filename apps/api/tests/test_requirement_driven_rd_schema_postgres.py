@@ -13,12 +13,18 @@ import psycopg
 import pytest
 from psycopg import sql
 
+from app.core.persistence import PostgresSnapshotRepository
+
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "app" / "db" / "migrations"
 MIGRATION_109 = MIGRATIONS_DIR / "109_requirement_driven_rd_collaboration.sql"
 MIGRATION_116 = MIGRATIONS_DIR / "116_rd_trusted_delivery_evidence.sql"
 MIGRATION_117 = MIGRATIONS_DIR / "117_rd_external_callback_facts.sql"
 MIGRATION_123 = MIGRATIONS_DIR / "123_rd_dispatch_retry_controls.sql"
 MIGRATION_124 = MIGRATIONS_DIR / "124_rd_dispatch_fair_cursor.sql"
+MIGRATION_125 = MIGRATIONS_DIR / "125_rd_dispatch_due_index.sql"
+MIGRATION_126 = MIGRATIONS_DIR / "126_rd_dispatch_page_index.sql"
+MIGRATION_127 = MIGRATIONS_DIR / "127_rd_active_run_dispatch_index.sql"
+MIGRATION_128 = MIGRATIONS_DIR / "128_rd_dependency_successor_index.sql"
 DEFAULT_POSTGRES_ADMIN_URL = "postgresql://ai_brain:ai_brain_password@127.0.0.1:5432/postgres"
 
 
@@ -723,6 +729,7 @@ def test_migration_123_adds_durable_dispatch_retry_controls(
                 ORDER BY column_name
                 """
             ).fetchall()
+            _apply_migration(connection, MIGRATION_125)
             indexes = connection.execute(
                 """
                 SELECT indexname, indexdef
@@ -764,6 +771,151 @@ def test_migration_123_adds_durable_dispatch_retry_controls(
     assert '"123_rd_dispatch_retry_controls.sql"' in persistence_source
 
 
+def test_migration_123_repeat_does_not_replace_constraints_or_wait_for_table_lock(
+    postgres_admin_url: str,
+) -> None:
+    with _temporary_database(postgres_admin_url) as database_url:
+        _apply_historical_migrations(database_url, through=122)
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            _apply_migration(connection, MIGRATION_123)
+            before = connection.execute(
+                """
+                SELECT conname, oid, convalidated
+                FROM pg_constraint
+                WHERE conrelid = 'rd_work_items'::regclass
+                  AND conname IN (
+                    'ck_rd_work_items_dispatch_failure_count',
+                    'ck_rd_work_items_dispatch_error_code'
+                  )
+                ORDER BY conname
+                """
+            ).fetchall()
+
+        with psycopg.connect(database_url) as blocker:
+            blocker.execute("LOCK TABLE rd_work_items IN ACCESS SHARE MODE")
+            with psycopg.connect(database_url, autocommit=True) as retry:
+                retry.execute("SET lock_timeout = '250ms'")
+                _apply_migration(retry, MIGRATION_123)
+                after = retry.execute(
+                    """
+                    SELECT conname, oid, convalidated
+                    FROM pg_constraint
+                    WHERE conrelid = 'rd_work_items'::regclass
+                      AND conname IN (
+                        'ck_rd_work_items_dispatch_failure_count',
+                        'ck_rd_work_items_dispatch_error_code'
+                      )
+                    ORDER BY conname
+                    """
+                ).fetchall()
+
+    assert before == after
+    assert len(after) == 2
+    assert all(row[2] for row in after)
+
+
+def test_dispatch_scaling_indexes_are_transaction_compatible(
+    postgres_admin_url: str,
+) -> None:
+    with _temporary_database(postgres_admin_url) as database_url:
+        _apply_historical_migrations(database_url, through=124)
+        with psycopg.connect(database_url) as connection:
+            for migration in (MIGRATION_125, MIGRATION_126, MIGRATION_127, MIGRATION_128):
+                _apply_migration(connection, migration)
+            connection.commit()
+            indexes = connection.execute(
+                """
+                SELECT indexname, indexdef
+                FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND indexname IN (
+                    'idx_rd_work_items_dispatch_due',
+                    'idx_rd_work_items_dispatch_due_page',
+                    'idx_rd_collaboration_runs_status_id',
+                    'idx_rd_work_item_dependencies_successor'
+                  )
+                ORDER BY indexname
+                """
+            ).fetchall()
+
+    assert [row[0] for row in indexes] == [
+        "idx_rd_collaboration_runs_status_id",
+        "idx_rd_work_item_dependencies_successor",
+        "idx_rd_work_items_dispatch_due",
+        "idx_rd_work_items_dispatch_due_page",
+    ]
+    definitions = {name: definition for name, definition in indexes}
+    assert "(status, id)" in definitions["idx_rd_collaboration_runs_status_id"]
+    assert (
+        "(collaboration_run_id, successor_work_item_id, predecessor_work_item_id, id)"
+        in definitions["idx_rd_work_item_dependencies_successor"]
+    )
+
+
+def test_runtime_dispatch_index_upgrade_is_valid_and_one_time(
+    postgres_admin_url: str,
+) -> None:
+    migrations = (
+        (MIGRATION_125.name, "idx_rd_work_items_dispatch_due"),
+        (MIGRATION_126.name, "idx_rd_work_items_dispatch_due_page"),
+        (MIGRATION_127.name, "idx_rd_collaboration_runs_status_id"),
+        (MIGRATION_128.name, "idx_rd_work_item_dependencies_successor"),
+    )
+    with _temporary_database(postgres_admin_url) as database_url:
+        _apply_historical_migrations(database_url, through=124)
+        repository = PostgresSnapshotRepository(database_url)
+        try:
+            with repository._connect(autocommit=True) as connection:
+                for filename, index_name in migrations:
+                    repository._ensure_concurrent_index_migration(
+                        connection,
+                        filename,
+                        index_name,
+                    )
+                before = connection.execute(
+                    """
+                    SELECT index_class.relname, index_class.oid,
+                           index_state.indisvalid, index_state.indisready
+                    FROM pg_class AS index_class
+                    JOIN pg_namespace AS index_namespace
+                      ON index_namespace.oid = index_class.relnamespace
+                    JOIN pg_index AS index_state
+                      ON index_state.indexrelid = index_class.oid
+                    WHERE index_namespace.nspname = 'public'
+                      AND index_class.relname = ANY(%s)
+                    ORDER BY index_class.relname
+                    """,
+                    ([index_name for _, index_name in migrations],),
+                ).fetchall()
+                for filename, index_name in migrations:
+                    repository._ensure_concurrent_index_migration(
+                        connection,
+                        filename,
+                        index_name,
+                    )
+                after = connection.execute(
+                    """
+                    SELECT index_class.relname, index_class.oid,
+                           index_state.indisvalid, index_state.indisready
+                    FROM pg_class AS index_class
+                    JOIN pg_namespace AS index_namespace
+                      ON index_namespace.oid = index_class.relnamespace
+                    JOIN pg_index AS index_state
+                      ON index_state.indexrelid = index_class.oid
+                    WHERE index_namespace.nspname = 'public'
+                      AND index_class.relname = ANY(%s)
+                    ORDER BY index_class.relname
+                    """,
+                    ([index_name for _, index_name in migrations],),
+                ).fetchall()
+        finally:
+            repository._pool.close()
+
+    assert before == after
+    assert len(after) == 4
+    assert all(row[2:] == (True, True) for row in after)
+
+
 def test_migration_124_adds_durable_dispatch_cursor_and_page_index(
     postgres_admin_url: str,
 ) -> None:
@@ -771,6 +923,7 @@ def test_migration_124_adds_durable_dispatch_cursor_and_page_index(
         _apply_historical_migrations(database_url, through=123)
         with psycopg.connect(database_url, autocommit=True) as connection:
             _apply_migration(connection, MIGRATION_124)
+            _apply_migration(connection, MIGRATION_126)
             tables = connection.execute(
                 """
                 SELECT table_name

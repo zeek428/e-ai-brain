@@ -32,6 +32,34 @@ _DUE_DISPATCH_PAGE_SQL = f"""
     ORDER BY {_DUE_ORDER_SQL}, {_DISPATCH_PRIORITY_SQL}, id
     LIMIT %s
 """
+_ACTIVE_DISPATCH_RUN_STATUSES = ("running", "integrating", "verifying")
+_ACTIVE_DISPATCH_RUN_PAGE_SQL = """
+    SELECT id
+    FROM (
+      (SELECT id
+       FROM rd_collaboration_runs
+       WHERE status = %s
+         {cursor_predicate}
+       ORDER BY id
+       LIMIT %s)
+      UNION ALL
+      (SELECT id
+       FROM rd_collaboration_runs
+       WHERE status = %s
+         {cursor_predicate}
+       ORDER BY id
+       LIMIT %s)
+      UNION ALL
+      (SELECT id
+       FROM rd_collaboration_runs
+       WHERE status = %s
+         {cursor_predicate}
+       ORDER BY id
+       LIMIT %s)
+    ) AS active_run_status_pages
+    ORDER BY id
+    LIMIT %s
+"""
 
 
 def _row_dict(cursor: Any, row: Sequence[Any] | None) -> dict[str, Any] | None:
@@ -723,18 +751,19 @@ class RdCollaborationReadRepository(RdCollaborationWriteRepository):
                 )
                 last_run_row = cursor.fetchone()
                 last_run_id = str(last_run_row[0]) if last_run_row and last_run_row[0] else None
-                cursor.execute(
-                    """
-                    SELECT id
-                    FROM rd_collaboration_runs
-                    WHERE status IN ('running', 'integrating', 'verifying')
-                    ORDER BY id
-                    """
+                run_ids = self._list_active_rd_run_id_page_cursor(
+                    cursor,
+                    limit=limit,
+                    after_run_id=last_run_id,
                 )
-                run_ids = [str(row[0]) for row in cursor.fetchall()]
-                if last_run_id in run_ids:
-                    split = run_ids.index(last_run_id) + 1
-                    run_ids = run_ids[split:] + run_ids[:split]
+                if last_run_id is not None and len(run_ids) < limit:
+                    run_ids.extend(
+                        self._list_active_rd_run_id_page_cursor(
+                            cursor,
+                            limit=limit - len(run_ids),
+                            through_run_id=last_run_id,
+                        )
+                    )
 
                 last_examined_run_id = last_run_id
                 for run_id in run_ids:
@@ -812,6 +841,39 @@ class RdCollaborationReadRepository(RdCollaborationWriteRepository):
                 )
             connection.commit()
         return reserved
+
+    @staticmethod
+    def _list_active_rd_run_id_page_cursor(
+        cursor: Any,
+        *,
+        limit: int,
+        after_run_id: str | None = None,
+        through_run_id: str | None = None,
+    ) -> list[str]:
+        if limit <= 0:
+            return []
+        cursor_predicates: list[str] = []
+        cursor_params: list[Any] = []
+        if after_run_id is not None:
+            cursor_predicates.append("id > %s")
+            cursor_params.append(after_run_id)
+        if through_run_id is not None:
+            cursor_predicates.append("id <= %s")
+            cursor_params.append(through_run_id)
+        cursor_predicate = (
+            "AND " + " AND ".join(cursor_predicates) if cursor_predicates else ""
+        )
+        params: list[Any] = []
+        for status in _ACTIVE_DISPATCH_RUN_STATUSES:
+            params.append(status)
+            params.extend(cursor_params)
+            params.append(limit)
+        params.append(limit)
+        cursor.execute(
+            _ACTIVE_DISPATCH_RUN_PAGE_SQL.format(cursor_predicate=cursor_predicate),
+            tuple(params),
+        )
+        return [str(row[0]) for row in cursor.fetchall()]
 
     def get_rd_work_item_dependency(self, record_id: str) -> dict[str, Any] | None:
         return self._get("rd_work_item_dependencies", record_id)

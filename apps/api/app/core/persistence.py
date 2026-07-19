@@ -53,7 +53,7 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
 
     def _ensure_schema_compatibility(self) -> None:
         """Patch safe additive schema gaps for existing local Postgres volumes."""
-        with self._connect() as connection:
+        with self._connect(autocommit=True) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
@@ -446,6 +446,16 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
                     cursor,
                     "124_rd_dispatch_fair_cursor.sql",
                 )
+            for filename, index_name in (
+                ("125_rd_dispatch_due_index.sql", "idx_rd_work_items_dispatch_due"),
+                ("126_rd_dispatch_page_index.sql", "idx_rd_work_items_dispatch_due_page"),
+                ("127_rd_active_run_dispatch_index.sql", "idx_rd_collaboration_runs_status_id"),
+                (
+                    "128_rd_dependency_successor_index.sql",
+                    "idx_rd_work_item_dependencies_successor",
+                ),
+            ):
+                self._ensure_concurrent_index_migration(connection, filename, index_name)
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
@@ -457,6 +467,65 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
         sql = migration_path.read_text(encoding="utf-8").strip()
         if sql:
             cursor.execute(sql)
+
+    def _ensure_concurrent_index_migration(
+        self,
+        connection: Any,
+        filename: str,
+        index_name: str,
+    ) -> None:
+        """Install one large compatibility index once without blocking writers."""
+        if not connection.autocommit:
+            raise RuntimeError("concurrent index migrations require an autocommit connection")
+        if not index_name.replace("_", "").isalnum():
+            raise RuntimeError(f"unsafe compatibility index name: {index_name}")
+        migration_lock_key = "schema-index:rd-dispatch-scaling"
+        acquired = connection.execute(
+            "SELECT pg_try_advisory_lock(hashtextextended(%s, 0))",
+            (migration_lock_key,),
+        ).fetchone()
+        if acquired is None or not bool(acquired[0]):
+            return
+        try:
+            existing = connection.execute(
+                """
+                SELECT index_state.indisvalid AND index_state.indisready
+                FROM pg_class AS index_class
+                JOIN pg_namespace AS index_namespace
+                  ON index_namespace.oid = index_class.relnamespace
+                JOIN pg_index AS index_state
+                  ON index_state.indexrelid = index_class.oid
+                WHERE index_namespace.nspname = 'public'
+                  AND index_class.relname = %s
+                """,
+                (index_name,),
+            ).fetchone()
+            if existing is not None and bool(existing[0]):
+                return
+            if existing is not None:
+                connection.execute(
+                    f'DROP INDEX CONCURRENTLY IF EXISTS public."{index_name}"'
+                )
+            migration_path = (
+                Path(__file__).resolve().parents[1] / "db" / "migrations" / filename
+            )
+            if not migration_path.exists():
+                return
+            migration_sql = migration_path.read_text(encoding="utf-8").strip()
+            expected_prefix = "CREATE INDEX IF NOT EXISTS"
+            if not migration_sql.startswith(expected_prefix):
+                raise RuntimeError(f"{filename} is not a single compatible index migration")
+            concurrent_sql = migration_sql.replace(
+                expected_prefix,
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS",
+                1,
+            )
+            connection.execute(concurrent_sql)
+        finally:
+            connection.execute(
+                "SELECT pg_advisory_unlock(hashtextextended(%s, 0))",
+                (migration_lock_key,),
+            )
 
     def load(self) -> dict[str, Any] | None:
         return self._system_state_repository.load_snapshot()

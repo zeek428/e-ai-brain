@@ -1,25 +1,105 @@
-ALTER TABLE IF EXISTS rd_work_items
-  ADD COLUMN IF NOT EXISTS dispatch_failure_count integer NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS last_dispatch_error_code text,
-  ADD COLUMN IF NOT EXISTS next_dispatch_at timestamptz;
+DO $migration$
+DECLARE
+  retry_count_nullable boolean;
+BEGIN
+  IF to_regclass('public.rd_work_items') IS NULL THEN
+    RETURN;
+  END IF;
 
-ALTER TABLE IF EXISTS rd_work_items
-  DROP CONSTRAINT IF EXISTS ck_rd_work_items_dispatch_failure_count;
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'rd_work_items'
+      AND column_name = 'dispatch_failure_count'
+  ) THEN
+    ALTER TABLE rd_work_items
+      ADD COLUMN dispatch_failure_count integer NOT NULL DEFAULT 0;
+  ELSE
+    IF NOT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'rd_work_items'
+        AND column_name = 'dispatch_failure_count'
+        AND column_default = '0'
+    ) THEN
+      ALTER TABLE rd_work_items ALTER COLUMN dispatch_failure_count SET DEFAULT 0;
+    END IF;
 
-ALTER TABLE IF EXISTS rd_work_items
-  ADD CONSTRAINT ck_rd_work_items_dispatch_failure_count
-  CHECK (dispatch_failure_count >= 0);
+    SELECT is_nullable = 'YES'
+    INTO retry_count_nullable
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'rd_work_items'
+      AND column_name = 'dispatch_failure_count';
+    IF retry_count_nullable THEN
+      UPDATE rd_work_items SET dispatch_failure_count = 0 WHERE dispatch_failure_count IS NULL;
+      ALTER TABLE rd_work_items ALTER COLUMN dispatch_failure_count SET NOT NULL;
+    END IF;
+  END IF;
 
-ALTER TABLE IF EXISTS rd_work_items
-  DROP CONSTRAINT IF EXISTS ck_rd_work_items_dispatch_error_code;
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'rd_work_items'
+      AND column_name = 'last_dispatch_error_code'
+  ) THEN
+    ALTER TABLE rd_work_items ADD COLUMN last_dispatch_error_code text;
+  END IF;
 
-ALTER TABLE IF EXISTS rd_work_items
-  ADD CONSTRAINT ck_rd_work_items_dispatch_error_code
-  CHECK (
-    last_dispatch_error_code IS NULL
-    OR last_dispatch_error_code ~ '^[A-Z][A-Z0-9_]{1,127}$'
-  );
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'rd_work_items'
+      AND column_name = 'next_dispatch_at'
+  ) THEN
+    ALTER TABLE rd_work_items ADD COLUMN next_dispatch_at timestamptz;
+  END IF;
 
-CREATE INDEX IF NOT EXISTS idx_rd_work_items_dispatch_due
-  ON rd_work_items (collaboration_run_id, next_dispatch_at, priority, id)
-  WHERE status IN ('ready', 'rework_required');
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'rd_work_items'::regclass
+      AND conname = 'ck_rd_work_items_dispatch_failure_count'
+  ) THEN
+    ALTER TABLE rd_work_items
+      ADD CONSTRAINT ck_rd_work_items_dispatch_failure_count
+      CHECK (dispatch_failure_count >= 0) NOT VALID;
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'rd_work_items'::regclass
+      AND conname = 'ck_rd_work_items_dispatch_failure_count'
+      AND NOT convalidated
+  ) THEN
+    ALTER TABLE rd_work_items VALIDATE CONSTRAINT ck_rd_work_items_dispatch_failure_count;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'rd_work_items'::regclass
+      AND conname = 'ck_rd_work_items_dispatch_error_code'
+  ) THEN
+    ALTER TABLE rd_work_items
+      ADD CONSTRAINT ck_rd_work_items_dispatch_error_code
+      CHECK (
+        last_dispatch_error_code IS NULL
+        OR last_dispatch_error_code ~ '^[A-Z][A-Z0-9_]{1,127}$'
+      ) NOT VALID;
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'rd_work_items'::regclass
+      AND conname = 'ck_rd_work_items_dispatch_error_code'
+      AND NOT convalidated
+  ) THEN
+    ALTER TABLE rd_work_items VALIDATE CONSTRAINT ck_rd_work_items_dispatch_error_code;
+  END IF;
+END
+$migration$;

@@ -19,12 +19,3 @@ CREATE TABLE IF NOT EXISTS rd_dispatch_run_cursors (
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT ck_rd_dispatch_run_cursor_version CHECK (version > 0)
 );
-
-CREATE INDEX IF NOT EXISTS idx_rd_work_items_dispatch_due_page
-  ON rd_work_items (
-    collaboration_run_id,
-    (COALESCE(next_dispatch_at, '-infinity'::timestamptz)),
-    ((CASE WHEN priority = 0 THEN 100 ELSE priority END)),
-    id
-  )
-  WHERE status IN ('ready', 'rework_required');
