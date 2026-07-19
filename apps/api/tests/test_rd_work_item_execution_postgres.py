@@ -2532,6 +2532,51 @@ def test_concurrent_postgres_dispatch_reuses_one_active_task_attempt_and_runner(
     )
 
 
+def test_postgres_final_dispatch_fences_bundle_reserved_before_parent_suspension(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-parent-suspend-final-fence",
+        autonomy_mode="autonomous_loop",
+    )
+    dispatch_bundle, captured_bundle = _capture_postgres_dispatch_bundle(
+        repository,
+        monkeypatch,
+        ids=ids,
+    )
+    decision_id = "work-item-parent-suspend-final-fence-decision"
+    repository.save_decision_request_record(
+        _decision_record(
+            {"product": ids["product_id"], "run": {"id": ids["run_id"]}},
+            decision_id=decision_id,
+        )
+    )
+    repository.suspend_collaboration_run(
+        collaboration_run_id=ids["run_id"],
+        decision_request_id=decision_id,
+        expected_version=1,
+    )
+    with repository._connect() as connection:
+        audit_count_before = int(
+            connection.execute("SELECT count(*) FROM audit_events").fetchone()[0]
+        )
+
+    with pytest.raises(RdCollaborationRepositoryError) as exc_info:
+        dispatch_bundle(**captured_bundle)
+
+    assert exc_info.value.code == "RD_WORK_ITEM_STATE_INVALID"
+    assert repository.get_rd_collaboration_run(ids["run_id"])["status"] == "waiting_human"
+    assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "ready"
+    _assert_no_dispatch_bundle_artifacts(repository, work_item_id=ids["work_item_id"])
+    with repository._connect() as connection:
+        audit_count_after = int(
+            connection.execute("SELECT count(*) FROM audit_events").fetchone()[0]
+        )
+    assert audit_count_after == audit_count_before
+
+
 def test_postgres_work_item_transition_rolls_back_task_attempt_event_and_audit(
     repository: PostgresSnapshotRepository,
 ) -> None:

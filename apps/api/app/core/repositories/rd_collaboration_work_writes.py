@@ -1223,6 +1223,20 @@ class RdCollaborationWorkWriteMixin:
             raise RdCollaborationRepositoryError(
                 "RD_WORK_ITEM_STATE_INVALID", "work item is not ready for dispatch"
             )
+        cursor.execute(
+            "SELECT * FROM rd_collaboration_runs WHERE id = %s FOR UPDATE",
+            (work_item.get("collaboration_run_id"),),
+        )
+        collaboration_run = _row_dict(cursor, cursor.fetchone())
+        if collaboration_run is None or collaboration_run.get("status") not in {
+            "running",
+            "integrating",
+            "verifying",
+        }:
+            raise RdCollaborationRepositoryError(
+                "RD_WORK_ITEM_STATE_INVALID",
+                "collaboration run is not active for dispatch",
+            )
         if int(work_item["version"]) != int(expected_version):
             raise RdCollaborationVersionConflictError(int(work_item["version"]))
         if dispatch_due_at is not None:
