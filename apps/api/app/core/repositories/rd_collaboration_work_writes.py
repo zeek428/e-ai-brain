@@ -1217,15 +1217,19 @@ class RdCollaborationWorkWriteMixin:
         runner_safety_approval_request: dict[str, Any] | None = None,
         runner_safety_decision: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        cursor.execute("SELECT * FROM rd_work_items WHERE id = %s FOR UPDATE", (work_item_id,))
-        work_item = _row_dict(cursor, cursor.fetchone())
-        if work_item is None or work_item.get("status") not in {"ready", "rework_required"}:
+        cursor.execute(
+            "SELECT collaboration_run_id FROM rd_work_items WHERE id = %s",
+            (work_item_id,),
+        )
+        identity = cursor.fetchone()
+        if identity is None:
             raise RdCollaborationRepositoryError(
                 "RD_WORK_ITEM_STATE_INVALID", "work item is not ready for dispatch"
             )
+        collaboration_run_id = str(identity[0])
         cursor.execute(
             "SELECT * FROM rd_collaboration_runs WHERE id = %s FOR UPDATE",
-            (work_item.get("collaboration_run_id"),),
+            (collaboration_run_id,),
         )
         collaboration_run = _row_dict(cursor, cursor.fetchone())
         if collaboration_run is None or collaboration_run.get("status") not in {
@@ -1236,6 +1240,16 @@ class RdCollaborationWorkWriteMixin:
             raise RdCollaborationRepositoryError(
                 "RD_WORK_ITEM_STATE_INVALID",
                 "collaboration run is not active for dispatch",
+            )
+        cursor.execute("SELECT * FROM rd_work_items WHERE id = %s FOR UPDATE", (work_item_id,))
+        work_item = _row_dict(cursor, cursor.fetchone())
+        if (
+            work_item is None
+            or str(work_item.get("collaboration_run_id")) != collaboration_run_id
+            or work_item.get("status") not in {"ready", "rework_required"}
+        ):
+            raise RdCollaborationRepositoryError(
+                "RD_WORK_ITEM_STATE_INVALID", "work item is not ready for dispatch"
             )
         if int(work_item["version"]) != int(expected_version):
             raise RdCollaborationVersionConflictError(int(work_item["version"]))

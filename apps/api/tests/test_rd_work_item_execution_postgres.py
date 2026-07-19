@@ -5,6 +5,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from queue import Queue
 from threading import Event, Thread, current_thread
 from types import SimpleNamespace
 from typing import Any
@@ -298,6 +299,8 @@ def _assert_no_dispatch_bundle_artifacts(
     repository: PostgresSnapshotRepository,
     *,
     work_item_id: str,
+    event_id: str | None = None,
+    audit_event_ids: list[str] | None = None,
 ) -> None:
     assert repository.list_rd_work_item_attempts(work_item_id) == []
     assert repository.list_ai_executor_tasks(ai_task_id=None) == []
@@ -314,6 +317,24 @@ def _assert_no_dispatch_bundle_artifacts(
             """
         ).fetchone()
     assert counts == (0, 0, 0, 0, 0)
+    if event_id is not None:
+        with repository._connect() as connection:
+            assert (
+                connection.execute(
+                    "SELECT count(*) FROM rd_collaboration_events WHERE id = %s",
+                    (event_id,),
+                ).fetchone()[0]
+                == 0
+            )
+    if audit_event_ids:
+        with repository._connect() as connection:
+            assert (
+                connection.execute(
+                    "SELECT count(*) FROM audit_events WHERE id = ANY(%s)",
+                    (audit_event_ids,),
+                ).fetchone()[0]
+                == 0
+            )
 
 
 def _add_dispatch_predecessor(
@@ -2575,6 +2596,220 @@ def test_postgres_final_dispatch_fences_bundle_reserved_before_parent_suspension
             connection.execute("SELECT count(*) FROM audit_events").fetchone()[0]
         )
     assert audit_count_after == audit_count_before
+
+
+def test_postgres_final_dispatch_and_cancel_use_run_then_work_item_lock_order(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-final-dispatch-cancel-lock-order",
+        autonomy_mode="autonomous_loop",
+    )
+    dispatch_bundle, captured_bundle = _capture_postgres_dispatch_bundle(
+        repository,
+        monkeypatch,
+        ids=ids,
+    )
+    cancel_has_run_lock = Event()
+    release_cancel = Event()
+    cancel_requesting_work_item = Event()
+    dispatch_lock_order: Queue[str] = Queue()
+    original_cancel = repository._cancel_work_item_bundle_cursor
+    original_dispatch = repository._dispatch_work_item_execution_bundle_cursor
+    errors: list[BaseException] = []
+
+    class DispatchCursor:
+        def __init__(self, cursor: Any) -> None:
+            self._cursor = cursor
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._cursor, name)
+
+        def execute(self, query: Any, params: Any = None, **kwargs: Any) -> Any:
+            if "SELECT * FROM rd_collaboration_runs WHERE id = %s FOR UPDATE" in str(query):
+                dispatch_lock_order.put("run")
+            result = self._cursor.execute(query, params, **kwargs)
+            if "SELECT * FROM rd_work_items WHERE id = %s FOR UPDATE" in str(query):
+                dispatch_lock_order.put("work_item")
+                assert cancel_requesting_work_item.wait(timeout=5)
+            return result
+
+    class CancelCursor:
+        def __init__(self, cursor: Any) -> None:
+            self._cursor = cursor
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._cursor, name)
+
+        def execute(self, query: Any, params: Any = None, **kwargs: Any) -> Any:
+            if "SELECT * FROM rd_work_items WHERE id = %s FOR UPDATE" in str(query):
+                cancel_requesting_work_item.set()
+            return self._cursor.execute(query, params, **kwargs)
+
+    def hold_cancel_run_lock(cursor: Any, **kwargs: Any) -> dict[str, Any]:
+        cursor.execute(
+            "SELECT id FROM rd_collaboration_runs WHERE id = %s FOR UPDATE",
+            (ids["run_id"],),
+        )
+        cancel_has_run_lock.set()
+        assert release_cancel.wait(timeout=5)
+        return original_cancel(CancelCursor(cursor), **kwargs)
+
+    def observe_dispatch_locks(cursor: Any, **kwargs: Any) -> dict[str, Any]:
+        return original_dispatch(DispatchCursor(cursor), **kwargs)
+
+    monkeypatch.setattr(repository, "_cancel_work_item_bundle_cursor", hold_cancel_run_lock)
+    monkeypatch.setattr(
+        repository,
+        "_dispatch_work_item_execution_bundle_cursor",
+        observe_dispatch_locks,
+    )
+
+    def cancel() -> None:
+        try:
+            repository.cancel_work_item_bundle(
+                work_item_id=ids["work_item_id"],
+                expected_version=1,
+                high_risk=False,
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    def dispatch() -> None:
+        try:
+            dispatch_bundle(**captured_bundle)
+        except RdCollaborationRepositoryError as exc:
+            if exc.code != "RD_WORK_ITEM_STATE_INVALID":
+                errors.append(exc)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    cancelling = Thread(target=cancel)
+    cancelling.start()
+    assert cancel_has_run_lock.wait(timeout=5)
+    dispatching = Thread(target=dispatch)
+    dispatching.start()
+    first_dispatch_lock = dispatch_lock_order.get(timeout=5)
+    release_cancel.set()
+    cancelling.join(timeout=10)
+    dispatching.join(timeout=10)
+
+    assert not cancelling.is_alive()
+    assert not dispatching.is_alive()
+    assert all(getattr(error, "sqlstate", None) != "40P01" for error in errors)
+    assert not errors
+    assert first_dispatch_lock == "run"
+    assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "cancelled"
+    _assert_no_dispatch_bundle_artifacts(
+        repository,
+        work_item_id=ids["work_item_id"],
+        event_id=str(captured_bundle["event"]["id"]),
+        audit_event_ids=[str(event["id"]) for event in captured_bundle["audit_events"]],
+    )
+
+
+def test_postgres_final_dispatch_waits_for_parent_suspension_without_artifacts(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-final-dispatch-suspend-lock-order",
+        autonomy_mode="autonomous_loop",
+    )
+    dispatch_bundle, captured_bundle = _capture_postgres_dispatch_bundle(
+        repository,
+        monkeypatch,
+        ids=ids,
+    )
+    decision_id = "work-item-final-dispatch-suspend-lock-order-decision"
+    repository.save_decision_request_record(
+        _decision_record(
+            {"product": ids["product_id"], "run": {"id": ids["run_id"]}},
+            decision_id=decision_id,
+        )
+    )
+    suspend_has_run_lock = Event()
+    release_suspend = Event()
+    dispatch_requesting_run = Event()
+    original_suspend = repository._suspend_collaboration_run_cursor
+    original_dispatch = repository._dispatch_work_item_execution_bundle_cursor
+    errors: list[BaseException] = []
+
+    class DispatchCursor:
+        def __init__(self, cursor: Any) -> None:
+            self._cursor = cursor
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._cursor, name)
+
+        def execute(self, query: Any, params: Any = None, **kwargs: Any) -> Any:
+            if "SELECT * FROM rd_collaboration_runs WHERE id = %s FOR UPDATE" in str(query):
+                dispatch_requesting_run.set()
+            return self._cursor.execute(query, params, **kwargs)
+
+    def hold_suspend_run_lock(cursor: Any, **kwargs: Any) -> dict[str, Any]:
+        cursor.execute(
+            "SELECT id FROM rd_collaboration_runs WHERE id = %s FOR UPDATE",
+            (ids["run_id"],),
+        )
+        suspend_has_run_lock.set()
+        assert release_suspend.wait(timeout=5)
+        return original_suspend(cursor, **kwargs)
+
+    def observe_dispatch_locks(cursor: Any, **kwargs: Any) -> dict[str, Any]:
+        return original_dispatch(DispatchCursor(cursor), **kwargs)
+
+    monkeypatch.setattr(repository, "_suspend_collaboration_run_cursor", hold_suspend_run_lock)
+    monkeypatch.setattr(
+        repository,
+        "_dispatch_work_item_execution_bundle_cursor",
+        observe_dispatch_locks,
+    )
+
+    def suspend() -> None:
+        try:
+            repository.suspend_collaboration_run(
+                collaboration_run_id=ids["run_id"],
+                decision_request_id=decision_id,
+                expected_version=1,
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    def dispatch() -> None:
+        try:
+            dispatch_bundle(**captured_bundle)
+        except RdCollaborationRepositoryError as exc:
+            if exc.code != "RD_WORK_ITEM_STATE_INVALID":
+                errors.append(exc)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    suspending = Thread(target=suspend)
+    suspending.start()
+    assert suspend_has_run_lock.wait(timeout=5)
+    dispatching = Thread(target=dispatch)
+    dispatching.start()
+    assert dispatch_requesting_run.wait(timeout=5)
+    release_suspend.set()
+    suspending.join(timeout=10)
+    dispatching.join(timeout=10)
+
+    assert not suspending.is_alive()
+    assert not dispatching.is_alive()
+    assert all(getattr(error, "sqlstate", None) != "40P01" for error in errors)
+    assert not errors
+    assert repository.get_rd_collaboration_run(ids["run_id"])["status"] == "waiting_human"
+    assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "ready"
+    _assert_no_dispatch_bundle_artifacts(
+        repository,
+        work_item_id=ids["work_item_id"],
+        event_id=str(captured_bundle["event"]["id"]),
+        audit_event_ids=[str(event["id"]) for event in captured_bundle["audit_events"]],
+    )
 
 
 def test_postgres_work_item_transition_rolls_back_task_attempt_event_and_audit(
