@@ -1,6 +1,7 @@
 import json
 import sys
 import zipfile
+from copy import deepcopy
 from datetime import UTC, datetime
 from io import BytesIO
 from types import SimpleNamespace
@@ -2890,6 +2891,106 @@ def test_ai_executor_runner_blocks_high_risk_instruction_before_queue():
     assert approval_audit_events[0]["payload"]["approved_operations"] == [
         "git_push_or_merge",
     ]
+
+
+def test_generic_ai_executor_approval_rejects_rd_collaboration_gate() -> None:
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    approval_request_id = "rd-runner-safety:work-sensitive:attempt:1"
+    approval_request = {
+        "approval_request_id": approval_request_id,
+        "attempt_no": 1,
+        "blocked_operations": ["git_push_or_merge"],
+        "policy_version": "runner_safety_v1",
+        "source": "rd_collaboration_work_item",
+        "work_item_id": "work-sensitive",
+    }
+    record = {
+        "id": approval_request_id,
+        "approval": {},
+        "approval_request": approval_request,
+        "blocked_operations": ["git_push_or_merge"],
+        "executor_type": "codex",
+        "requested_by": "user_owner",
+        "runner_id": "runner-sensitive",
+        "status": "pending",
+        "workspace_root": "",
+    }
+    app.state.store.ai_executor_approval_requests[approval_request_id] = record
+    before = deepcopy(record)
+
+    response = client.post(
+        f"/api/system/ai-executor-approval-requests/{approval_request_id}/approve",
+        json={
+            "expires_at": "2099-01-01T00:00:00+00:00",
+            "reason": "customer-token=secret /srv/private-workspace",
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail | {"trace_id": "trace"} == {
+        "code": "RD_COLLABORATION_APPROVAL_DECISION_REQUIRED",
+        "message": "Collaboration approval must be resolved through its frozen decision",
+        "trace_id": "trace",
+    }
+    assert app.state.store.ai_executor_approval_requests[approval_request_id] == before
+    assert app.state.store.audit_events == []
+
+
+def test_plugin_action_approval_cannot_bypass_rd_collaboration_gate() -> None:
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    approval_request_id = "rd-runner-safety:work-action-bypass:attempt:1"
+    app.state.store.ai_executor_approval_requests[approval_request_id] = {
+        "id": approval_request_id,
+        "approval": {},
+        "approval_request": {
+            "approval_request_id": approval_request_id,
+            "attempt_no": 1,
+            "blocked_operations": ["git_push_or_merge"],
+            "policy_version": "runner_safety_v1",
+            "source": "rd_collaboration_work_item",
+            "work_item_id": "work-action-bypass",
+        },
+        "blocked_operations": ["git_push_or_merge"],
+        "executor_type": "codex",
+        "requested_by": "user_owner",
+        "runner_id": "runner-sensitive",
+        "status": "pending",
+        "workspace_root": "",
+    }
+    action = {
+        "id": "action-sensitive",
+        "plugin_id": "plugin_standard_ai_executor",
+        "request_config": {},
+        "status": "active",
+    }
+    app.state.store.plugin_actions[action["id"]] = action
+    before_request = deepcopy(app.state.store.ai_executor_approval_requests[approval_request_id])
+    before_action = deepcopy(action)
+
+    response = client.post(
+        f"/api/system/plugin-actions/{action['id']}/ai-executor-approval",
+        json={
+            "approval_request": {"approval_request_id": approval_request_id},
+            "approved_operations": ["git_push_or_merge"],
+            "expires_at": "2099-01-01T00:00:00+00:00",
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail | {"trace_id": "trace"} == {
+        "code": "RD_COLLABORATION_APPROVAL_DECISION_REQUIRED",
+        "message": "Collaboration approval must be resolved through its frozen decision",
+        "trace_id": "trace",
+    }
+    assert app.state.store.ai_executor_approval_requests[approval_request_id] == before_request
+    assert app.state.store.plugin_actions[action["id"]] == before_action
+    assert app.state.store.audit_events == []
 
 
 def test_ai_executor_runner_allows_high_risk_instruction_with_approval_snapshot():

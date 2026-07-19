@@ -119,9 +119,72 @@ def _human_decision_selector(reviewer: dict[str, Any] | None) -> dict[str, list[
     return {"role_codes": ["rd_owner"]}
 
 
-def runner_safety_approval_request_id(*, work_item_id: str, attempt_no: int) -> str:
+def runner_safety_approval_request_id(
+    *,
+    work_item_id: str,
+    attempt_no: int,
+    renewal_no: int = 0,
+) -> str:
     """Return the stable approval identity for the next durable attempt."""
-    return f"rd-runner-safety:{work_item_id}:attempt:{attempt_no}"
+    base = f"rd-runner-safety:{work_item_id}:attempt:{attempt_no}"
+    return f"{base}:renewal:{renewal_no}" if renewal_no > 0 else base
+
+
+def _load_runner_safety_approval_request(store: Any, record_id: str) -> dict[str, Any] | None:
+    repository = getattr(store, "repository", None)
+    get_request = getattr(repository, "get_ai_executor_approval_request", None)
+    record = (
+        get_request(record_id)
+        if callable(get_request)
+        else _records(store, "ai_executor_approval_requests").get(record_id)
+    )
+    return dict(record) if isinstance(record, dict) else None
+
+
+def current_runner_safety_approval_request(
+    store: Any,
+    *,
+    work_item_id: str,
+    attempt_no: int,
+) -> tuple[str, dict[str, Any] | None, int]:
+    """Return the latest contiguous immutable approval identity for one attempt."""
+    renewal_no = 0
+    record_id = runner_safety_approval_request_id(
+        work_item_id=work_item_id,
+        attempt_no=attempt_no,
+    )
+    record = _load_runner_safety_approval_request(store, record_id)
+    if record is None:
+        return record_id, None, renewal_no
+    while True:
+        next_renewal_no = renewal_no + 1
+        next_record_id = runner_safety_approval_request_id(
+            work_item_id=work_item_id,
+            attempt_no=attempt_no,
+            renewal_no=next_renewal_no,
+        )
+        next_record = _load_runner_safety_approval_request(store, next_record_id)
+        if next_record is None:
+            return record_id, record, renewal_no
+        renewal_no = next_renewal_no
+        record_id = next_record_id
+        record = next_record
+
+
+def _approved_request_expired(record: dict[str, Any]) -> bool:
+    if record.get("status") == "expired":
+        return True
+    approval = record.get("approval")
+    expires_at = approval.get("expires_at") if isinstance(approval, dict) else None
+    if not expires_at:
+        return False
+    try:
+        parsed = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC) <= _now()
 
 
 def _next_attempt_no(store: Any, work_item_id: str) -> int:
@@ -184,11 +247,32 @@ def _runner_safety_approval_records(
             "Runner safety approval has no stable blocked-operation evidence",
         )
     work_item_id = str(work_item["id"])
-    approval_request_id = runner_safety_approval_request_id(
-        work_item_id=work_item_id,
-        attempt_no=attempt_no,
+    approval_request_id, existing_approval_request, renewal_no = (
+        current_runner_safety_approval_request(
+            store,
+            work_item_id=work_item_id,
+            attempt_no=attempt_no,
+        )
     )
-    decision_id = f"runner-safety-approval:{work_item_id}:attempt:{attempt_no}"
+    if existing_approval_request is not None:
+        status = str(existing_approval_request.get("status") or "")
+        if status in {"approved", "expired"} and _approved_request_expired(
+            existing_approval_request
+        ):
+            renewal_no += 1
+            approval_request_id = runner_safety_approval_request_id(
+                work_item_id=work_item_id,
+                attempt_no=attempt_no,
+                renewal_no=renewal_no,
+            )
+        elif status != "pending":
+            raise api_error(
+                409,
+                "RD_DECISION_REQUIRED",
+                "Runner safety approval request cannot be renewed",
+            )
+    identity_suffix = f":renewal:{renewal_no}" if renewal_no > 0 else ""
+    decision_id = f"runner-safety-approval:{work_item_id}:attempt:{attempt_no}{identity_suffix}"
     executor_type, runner_id = _runner_identity(store, work_item)
     now = _now().isoformat()
     approval_request_snapshot = {
@@ -199,6 +283,8 @@ def _runner_safety_approval_records(
         "source": "rd_collaboration_work_item",
         "work_item_id": work_item_id,
     }
+    if renewal_no > 0:
+        approval_request_snapshot["renewal_no"] = renewal_no
     approval_request = {
         "id": approval_request_id,
         "action_id": None,
@@ -279,16 +365,23 @@ def _runner_safety_approval_records(
         "created_by": run["created_by"],
     }
     event = {
-        "id": f"runner-safety-approval-required:{work_item_id}:attempt:{attempt_no}",
+        "id": (
+            f"runner-safety-approval-required:{work_item_id}:attempt:{attempt_no}{identity_suffix}"
+        ),
         "collaboration_run_id": str(run["id"]),
         "event_type": "work_item.runner_safety_approval_required",
-        "event_key": f"runner-safety-approval-required:{work_item_id}:attempt:{attempt_no}",
+        "event_key": (
+            f"runner-safety-approval-required:{work_item_id}:attempt:{attempt_no}{identity_suffix}"
+        ),
         "subject_type": "rd_work_item",
         "subject_id": work_item_id,
         "payload_json": safe_evidence,
     }
     audit = {
-        "id": f"runner-safety-approval-required-audit:{work_item_id}:attempt:{attempt_no}",
+        "id": (
+            f"runner-safety-approval-required-audit:{work_item_id}:attempt:{attempt_no}"
+            f"{identity_suffix}"
+        ),
         "event_type": "rd_work_item.runner_safety_approval_required",
         "actor_id": str(run["created_by"]),
         "subject_type": "rd_work_item",
@@ -341,6 +434,10 @@ def escalate_dispatch_fault_for_human(
         version = int(work_item.get("version") or 1)
         execute = getattr(repository, "execute_idempotent_rd_command", None)
         if callable(execute):
+            renewal_no = int(
+                (approval_request.get("approval_request") or {}).get("renewal_no") or 0
+            )
+            identity_suffix = f":renewal:{renewal_no}" if renewal_no > 0 else ""
 
             def approval_operation(transaction: Any) -> dict[str, Any]:
                 transaction.save_runner_safety_approval_request(approval_request)
@@ -366,7 +463,7 @@ def escalate_dispatch_fault_for_human(
                     command_type="runner_safety_approval_required",
                     aggregate_type="rd_work_item",
                     aggregate_id=work_item_id,
-                    idempotency_key=f"attempt:{fault.attempt_no or 0}",
+                    idempotency_key=(f"attempt:{fault.attempt_no or 0}{identity_suffix}"),
                     request_hash=_canonical_hash(
                         {
                             "approval_request_id": approval_request["id"],
@@ -377,7 +474,7 @@ def escalate_dispatch_fault_for_human(
                     ),
                     command_record_id=(
                         f"runner-safety-approval-command:{work_item_id}:"
-                        f"attempt:{fault.attempt_no or 0}"
+                        f"attempt:{fault.attempt_no or 0}{identity_suffix}"
                     ),
                     operation=approval_operation,
                 )

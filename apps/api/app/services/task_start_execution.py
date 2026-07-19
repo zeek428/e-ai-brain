@@ -19,7 +19,7 @@ from app.services.model_gateway import (
     call_model_gateway_for_task,
 )
 from app.services.operational_records import read_memory_dict
-from app.services.rd_dispatch_fault_decision import runner_safety_approval_request_id
+from app.services.rd_dispatch_fault_decision import current_runner_safety_approval_request
 from app.services.rd_requirement_entry_adapters import require_v2_task_work_item_entrypoint
 from app.services.rd_task_executor_policies import (
     prepare_rd_task_executor_task,
@@ -472,7 +472,8 @@ def dispatch_ai_task_for_work_item(
         ),
         default=0,
     )
-    approval_request_id = runner_safety_approval_request_id(
+    approval_request_id, _approval_request, _renewal_no = current_runner_safety_approval_request(
+        current_store,
         work_item_id=work_item_id,
         attempt_no=attempt_no,
     )

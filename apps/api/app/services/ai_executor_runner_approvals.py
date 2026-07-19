@@ -375,6 +375,19 @@ def _approval_request_payload(value: Any) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def _reject_rd_collaboration_generic_approval(value: Any) -> None:
+    record = value if isinstance(value, dict) else {}
+    request_snapshot = record.get("approval_request")
+    if not isinstance(request_snapshot, dict):
+        request_snapshot = record
+    if request_snapshot.get("source") == "rd_collaboration_work_item":
+        raise api_error(
+            409,
+            "RD_COLLABORATION_APPROVAL_DECISION_REQUIRED",
+            "Collaboration approval must be resolved through its frozen decision",
+        )
+
+
 def approve_plugin_action_ai_executor_response(
     *,
     action_id: str,
@@ -389,6 +402,17 @@ def approve_plugin_action_ai_executor_response(
         raise api_error(404, "NOT_FOUND", "Plugin action not found")
 
     approval_request = _approval_request_payload(getattr(payload, "approval_request", None))
+    _reject_rd_collaboration_generic_approval(approval_request)
+    approval_request_id = str((approval_request or {}).get("approval_request_id") or "").strip()
+    if approval_request_id:
+        sync_ai_executor_approval_request_store(current_store)
+        _reject_rd_collaboration_generic_approval(
+            _read_memory_record(
+                current_store,
+                "ai_executor_approval_requests",
+                approval_request_id,
+            )
+        )
     approval_id = (
         ensure_non_blank(getattr(payload, "approval_id", None), "approval_id")
         if getattr(payload, "approval_id", None)
@@ -459,6 +483,7 @@ def approve_ai_executor_approval_request_response(
     )
     if approval_request_record is None:
         raise api_error(404, "NOT_FOUND", "AI executor approval request not found")
+    _reject_rd_collaboration_generic_approval(approval_request_record)
     if approval_request_record.get("status") == "approved":
         return {
             "action": None,

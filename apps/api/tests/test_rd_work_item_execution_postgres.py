@@ -9,6 +9,7 @@ from threading import Event, Thread
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from psycopg.types.json import Jsonb
 
 from app.core.persistence import PostgresRuntimeStore, PostgresSnapshotRepository
 from app.main import app
@@ -814,6 +815,190 @@ def test_postgres_runner_safety_approval_is_atomic_replay_safe_and_dispatchable(
     assert len(tasks) == 1
     assert tasks[0]["request_config"]["ai_executor_approval"] == approval
     assert tasks[0]["request_config"]["ai_executor_safety"]["status"] == "approved"
+
+
+def test_postgres_expired_runner_safety_approval_renews_without_dispatch_artifacts(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="runner-safety-renewal",
+        autonomy_mode="autonomous_loop",
+    )
+    store = PostgresRuntimeStore(repository)
+    secret = "customer-token=secret-value /srv/private-workspace"
+    monkeypatch.setattr(
+        "app.services.rd_task_executor_policies.render_executor_instruction",
+        lambda *_args, **_kwargs: f"Run git push. {secret}",
+    )
+
+    first_gate = dispatch_ready_ai_work_items(store)
+    assert first_gate["escalated_work_item_ids"] == [ids["work_item_id"]]
+    first_decision = repository.list_decision_requests(
+        subject_type="rd_work_item",
+        subject_id=ids["work_item_id"],
+    )[0]
+    first_approval_request_id = f"rd-runner-safety:{ids['work_item_id']}:attempt:1"
+    apply_decision(
+        store,
+        decision_request_id=first_decision["id"],
+        selected_option="authorize_blocked_operations",
+        input_value={},
+        comment=None,
+        actor={"id": "user_reviewer", "roles": []},
+        version=1,
+        idempotency_key="approve-runner-safety-renewal-initial",
+    )
+    first_record = repository.get_ai_executor_approval_request(first_approval_request_id)
+    assert first_record is not None
+    expired_at = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+    expired_approval = {**first_record["approval"], "expires_at": expired_at}
+    with repository._connect() as connection:
+        connection.execute(
+            """
+            UPDATE ai_executor_approval_requests
+            SET approval = %s, expires_at = %s
+            WHERE id = %s
+            """,
+            (Jsonb(expired_approval), expired_at, first_approval_request_id),
+        )
+        connection.commit()
+    immutable_expired_record = repository.get_ai_executor_approval_request(
+        first_approval_request_id
+    )
+
+    renewed_gate = dispatch_ready_ai_work_items(PostgresRuntimeStore(repository))
+
+    assert renewed_gate["escalated_work_item_ids"] == [ids["work_item_id"]]
+    renewal_request_id = f"{first_approval_request_id}:renewal:1"
+    renewal_record = repository.get_ai_executor_approval_request(renewal_request_id)
+    assert renewal_record is not None
+    assert renewal_record["status"] == "pending"
+    assert renewal_record["approval"] == {}
+    assert renewal_record["approval_request"] == {
+        "approval_request_id": renewal_request_id,
+        "attempt_no": 1,
+        "blocked_operations": ["git_push_or_merge"],
+        "policy_version": "runner_safety_v1",
+        "renewal_no": 1,
+        "source": "rd_collaboration_work_item",
+        "work_item_id": ids["work_item_id"],
+    }
+    assert (
+        repository.get_ai_executor_approval_request(first_approval_request_id)
+        == immutable_expired_record
+    )
+    decisions = repository.list_decision_requests(
+        subject_type="rd_work_item",
+        subject_id=ids["work_item_id"],
+    )
+    renewal_decision = next(decision for decision in decisions if decision["status"] == "pending")
+    assert renewal_decision["id"] == (
+        f"runner-safety-approval:{ids['work_item_id']}:attempt:1:renewal:1"
+    )
+    assert renewal_decision["recommendation_json"]["approval_request_id"] == renewal_request_id
+    assert repository.list_rd_work_item_attempts(ids["work_item_id"]) == []
+    assert repository.list_ai_executor_tasks(ai_task_id=None) == []
+    with repository._connect() as connection:
+        artifact_counts = connection.execute(
+            """
+            SELECT
+              (SELECT count(*) FROM ai_tasks),
+              (SELECT count(*) FROM execution_context_manifests),
+              (SELECT count(*) FROM agent_loop_runs),
+              (SELECT count(*) FROM agent_loop_iterations),
+              (SELECT count(*) FROM trusted_delivery_records
+               WHERE record_type = 'agent_budget_ledger')
+            """
+        ).fetchone()
+    assert artifact_counts == (0, 0, 0, 0, 0)
+    renewal_events = [
+        event
+        for event in repository.list_rd_collaboration_events(ids["run_id"])
+        if (event.get("payload_json") or {}).get("approval_request_id") == renewal_request_id
+    ]
+    renewal_audits = [
+        event
+        for event in repository.list_audit_events(
+            event_type="rd_work_item.runner_safety_approval_required",
+            subject_type="rd_work_item",
+            subject_id=ids["work_item_id"],
+        )
+        if (event.get("payload") or {}).get("approval_request_id") == renewal_request_id
+    ]
+    assert len(renewal_events) == 1
+    assert len(renewal_audits) == 1
+    durable_gate = json.dumps(
+        {
+            "old_approval": immutable_expired_record,
+            "renewal": renewal_record,
+            "decision": renewal_decision,
+            "events": renewal_events,
+            "audits": renewal_audits,
+            "outcome": renewed_gate,
+        },
+        default=str,
+    )
+    assert secret not in durable_gate
+    assert "customer-token" not in durable_gate
+    assert "/srv/private-workspace" not in durable_gate
+
+    replay = dispatch_ready_ai_work_items(PostgresRuntimeStore(repository))
+    assert replay["escalated_work_item_ids"] == []
+    with repository._connect() as connection:
+        assert (
+            connection.execute("SELECT count(*) FROM ai_executor_approval_requests").fetchone()[0]
+            == 2
+        )
+    assert (
+        len(
+            repository.list_decision_requests(
+                subject_type="rd_work_item",
+                subject_id=ids["work_item_id"],
+            )
+        )
+        == 2
+    )
+
+    decided = apply_decision(
+        PostgresRuntimeStore(repository),
+        decision_request_id=renewal_decision["id"],
+        selected_option="authorize_blocked_operations",
+        input_value={},
+        comment=None,
+        actor={"id": "user_reviewer", "roles": []},
+        version=1,
+        idempotency_key="approve-runner-safety-renewal-1",
+    )
+    replayed_decision = apply_decision(
+        PostgresRuntimeStore(repository),
+        decision_request_id=renewal_decision["id"],
+        selected_option="authorize_blocked_operations",
+        input_value={},
+        comment=None,
+        actor={"id": "user_reviewer", "roles": []},
+        version=1,
+        idempotency_key="approve-runner-safety-renewal-1",
+    )
+    assert decided["idempotent_replay"] is False
+    assert replayed_decision == {**decided, "idempotent_replay": True}
+
+    dispatched = dispatch_ready_ai_work_items(PostgresRuntimeStore(repository))
+
+    assert dispatched["dispatched_work_item_ids"] == [ids["work_item_id"]]
+    attempts = repository.list_rd_work_item_attempts(ids["work_item_id"])
+    assert len(attempts) == 1
+    assert attempts[0]["attempt_no"] == 1
+    tasks = repository.list_ai_executor_tasks(ai_task_id=None)
+    assert len(tasks) == 1
+    renewed_approval = repository.get_ai_executor_approval_request(renewal_request_id)["approval"]
+    assert tasks[0]["request_config"]["ai_executor_approval"] == renewed_approval
+    assert tasks[0]["request_config"]["ai_executor_safety"]["status"] == "approved"
+    assert (
+        repository.get_ai_executor_approval_request(first_approval_request_id)
+        == immutable_expired_record
+    )
 
 
 def test_postgres_runner_safety_rejection_atomically_cancels_without_dispatch(
