@@ -6,6 +6,11 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.core.repositories.rd_collaboration import RdCollaborationRepositoryError
+from app.services.rd_dispatch_fault_decision import (
+    classify_dispatch_fault,
+    escalate_dispatch_fault_for_human,
+)
 from app.services.rd_high_risk_dispatch_gate import (
     high_risk_dispatch_is_approved,
     require_human_approval_for_high_risk_dispatch,
@@ -42,11 +47,9 @@ def _seat(store: Any, seat_id: str) -> dict[str, Any] | None:
 
 def _is_ai_owned(store: Any, work_item: dict[str, Any]) -> bool:
     owner = _seat(store, str(work_item.get("owner_seat_id") or ""))
-    return bool(
-        owner
-        and owner.get("status") == "active"
-        and owner.get("subject_type") == "ai_employee"
-    )
+    # An inactive frozen AI seat is still AI-owned work and must reach the
+    # classifier so it can be paused for repair instead of silently omitted.
+    return bool(owner and owner.get("subject_type") == "ai_employee")
 
 
 def dispatch_ready_ai_work_items(store: Any, *, limit: int = 50) -> dict[str, list[str]]:
@@ -63,13 +66,17 @@ def dispatch_ready_ai_work_items(store: Any, *, limit: int = 50) -> dict[str, li
         return {
             "capacity_deferred_work_item_ids": [],
             "dispatched_work_item_ids": [],
+            "escalated_work_item_ids": [],
             "human_review_required_work_item_ids": [],
+            "retryable_work_item_ids": [],
             "skipped_work_item_ids": [],
         }
 
     dispatched: list[str] = []
     capacity_deferred: list[str] = []
+    escalated: list[str] = []
     human_review_required: list[str] = []
+    retryable: list[str] = []
     skipped: list[str] = []
     for run in sorted(_runs(store), key=lambda item: str(item.get("id") or "")):
         if len(dispatched) >= limit or run.get("status") not in _DISPATCHABLE_RUN_STATUSES:
@@ -98,8 +105,12 @@ def dispatch_ready_ai_work_items(store: Any, *, limit: int = 50) -> dict[str, li
                             collaboration_run_id=run_id,
                             work_item_id=work_item_id,
                         )
-                    except HTTPException:
-                        skipped.append(work_item_id)
+                    except HTTPException as exc:
+                        fault = classify_dispatch_fault(exc)
+                        if fault.outcome == "deferred":
+                            capacity_deferred.append(work_item_id)
+                        else:
+                            retryable.append(work_item_id)
                         continue
                     human_review_required.append(work_item_id)
                     continue
@@ -109,24 +120,36 @@ def dispatch_ready_ai_work_items(store: Any, *, limit: int = 50) -> dict[str, li
                     collaboration_run_id=run_id,
                     work_item_id=work_item_id,
                 )
-            except HTTPException as exc:
-                code = ""
-                try:
-                    code = str(exc.detail.get("code") or "")
-                except (AttributeError, TypeError):
-                    pass
-                if code == "RD_SEAT_CAPACITY_EXHAUSTED":
+            except (HTTPException, RdCollaborationRepositoryError) as exc:
+                fault = classify_dispatch_fault(exc)
+                if fault.outcome == "deferred":
                     capacity_deferred.append(work_item_id)
                     continue
-                # A concurrent claim, a disabled frozen executor, or a stale
-                # read is a normal retryable worker outcome.  The immutable
-                # work-item state remains the source of truth for the next sweep.
-                skipped.append(work_item_id)
+                if fault.outcome == "retryable":
+                    retryable.append(work_item_id)
+                    continue
+                try:
+                    escalate_dispatch_fault_for_human(
+                        store,
+                        collaboration_run_id=run_id,
+                        work_item_id=work_item_id,
+                        fault=fault,
+                    )
+                except HTTPException as escalation_exc:
+                    escalation_fault = classify_dispatch_fault(escalation_exc)
+                    if escalation_fault.outcome == "deferred":
+                        capacity_deferred.append(work_item_id)
+                    else:
+                        retryable.append(work_item_id)
+                    continue
+                escalated.append(work_item_id)
                 continue
             dispatched.append(work_item_id)
     return {
         "capacity_deferred_work_item_ids": capacity_deferred,
         "dispatched_work_item_ids": dispatched,
+        "escalated_work_item_ids": escalated,
         "human_review_required_work_item_ids": human_review_required,
+        "retryable_work_item_ids": retryable,
         "skipped_work_item_ids": skipped,
     }

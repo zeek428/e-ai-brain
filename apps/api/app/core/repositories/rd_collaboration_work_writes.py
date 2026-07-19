@@ -1238,7 +1238,7 @@ class RdCollaborationWorkWriteMixin:
                 cursor.execute(
                     """
                     UPDATE rd_work_items
-                    SET status = 'waiting_human', resume_state = 'ready',
+                    SET status = 'waiting_human', resume_state = %s,
                         suspended_attempt_id = NULL,
                         suspended_decision_request_id = %s,
                         suspended_at = now(), lease_owner = NULL,
@@ -1247,7 +1247,7 @@ class RdCollaborationWorkWriteMixin:
                     WHERE id = %s
                     RETURNING *
                     """,
-                    (persisted_decision["id"], work_item_id),
+                    (work_item["status"], persisted_decision["id"], work_item_id),
                 )
                 paused_work_item = _row_dict(cursor, cursor.fetchone())
                 if paused_work_item is None:

@@ -361,6 +361,60 @@ def test_postgres_auto_dispatch_releases_a_high_risk_item_only_after_its_decisio
     assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "running"
 
 
+def test_postgres_auto_dispatch_atomically_escalates_a_frozen_runner_safety_fault(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    secret_workspace = "/srv/customer-secret-token"
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="dispatch-fault-escalation",
+        git_config={"workspace_root": secret_workspace},
+    )
+    store = PostgresRuntimeStore(repository)
+
+    result = dispatch_ready_ai_work_items(store)
+
+    assert result["escalated_work_item_ids"] == [ids["work_item_id"]]
+    assert result["retryable_work_item_ids"] == []
+    paused = repository.get_rd_work_item(ids["work_item_id"])
+    assert paused is not None
+    assert paused["status"] == "waiting_human"
+    assert paused["resume_state"] == "ready"
+    decisions = repository.list_decision_requests(
+        subject_type="rd_work_item",
+        subject_id=ids["work_item_id"],
+    )
+    assert len(decisions) == 1
+    assert decisions[0]["decision_type"] == "dispatch_fault_resolution"
+    events = repository.list_rd_collaboration_events(ids["run_id"])
+    fault_events = [
+        event for event in events if event["event_type"] == "work_item.dispatch_fault_escalated"
+    ]
+    assert len(fault_events) == 1
+    audits = repository.list_audit_events(
+        event_type="rd_work_item.dispatch_fault_escalated",
+        subject_type="rd_work_item",
+        subject_id=ids["work_item_id"],
+    )
+    assert len(audits) == 1
+    persisted_fault_records = json.dumps(
+        {"audits": audits, "decisions": decisions, "events": fault_events},
+        default=str,
+    )
+    assert secret_workspace not in persisted_fault_records
+
+    dispatch_ready_ai_work_items(store)
+    assert (
+        len(
+            repository.list_decision_requests(
+                subject_type="rd_work_item",
+                subject_id=ids["work_item_id"],
+            )
+        )
+        == 1
+    )
+
+
 def test_postgres_dispatch_freezes_custom_quality_gate_before_later_policy_mutation(
     repository: PostgresSnapshotRepository,
 ) -> None:

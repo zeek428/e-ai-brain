@@ -72,6 +72,26 @@ def run_execution_worker_iteration(
         "rd_collaboration_plan_count": len(rd_collaboration_planning["planned_run_ids"]),
         "reconciliation_count": reconciliation_count,
     }
+    classified_dispatch_counts = {
+        "rd_collaboration_auto_dispatch_deferred_count": len(
+            rd_collaboration_auto_dispatch.get("capacity_deferred_work_item_ids", [])
+        ),
+        "rd_collaboration_auto_dispatch_escalated_count": len(
+            rd_collaboration_auto_dispatch.get("escalated_work_item_ids", [])
+        ),
+        "rd_collaboration_auto_dispatch_retryable_count": len(
+            rd_collaboration_auto_dispatch.get("retryable_work_item_ids", [])
+        ),
+    }
+    if any(
+        key in rd_collaboration_auto_dispatch
+        for key in (
+            "capacity_deferred_work_item_ids",
+            "escalated_work_item_ids",
+            "retryable_work_item_ids",
+        )
+    ):
+        counts.update(classified_dispatch_counts)
     record_execution_worker_heartbeat(current_store, counts=counts, worker_id=worker_id)
     return counts
 
