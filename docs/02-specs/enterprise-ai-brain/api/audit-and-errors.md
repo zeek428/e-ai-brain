@@ -71,6 +71,7 @@ GET /api/audit/events/export?subject_type=knowledge_document&created_from=2026-0
 | 评估策略收紧 | 409 | RD_POLICY_HUMAN_DECISION_REQUIRED / RD_POLICY_RESOLUTION_LIMIT | 否，先人工决策 | 记录 assessment、冲突字段或轮次上限、决策请求和冻结快照。 | 保持评估 waiting_human，打开返回的决策请求。 |
 | 协作运行内部 `create_ai_task_for_work_item` / `dispatch_ai_task_for_work_item` | 409 | RD_ROLE_ASSIGNMENT_REQUIRED / RD_WORK_ITEM_NOT_READY | 否 | 记录工作项、冻结策略、缺失岗位、候选席位和失败原因。 | 保持工作项阻断，补齐岗位席位或前置条件后由调度器恢复。 |
 | 协作运行内部任务派发 | 503 | RD_EXECUTOR_UNAVAILABLE | 是，按 `retry_after_seconds` | 记录 executor profile、健康/容量摘要、work_item_id 和 trace_id，不记录凭据。 | 展示执行器暂不可用；到期后由调度器重试，不创建空 attempt。 |
+| AI 执行器 Runner 高风险指令（含协作内部派发） | 409 | AI_EXECUTOR_APPROVAL_REQUIRED | 否，必须处理冻结审批决定 | 记录安全审批请求、协作工作项/attempt、命中操作和 trace_id；不得记录工作区路径、Prompt、Token、凭据或异常原文。 | 普通 Runner/插件场景按既有平台审批流程处理；协作工作项必须打开专用 `runner_safety_approval` 决策，批准后由调度器重新校验并派发，拒绝取消工作项。 |
 | POST `/api/product-versions/{version_id}/scope-change-requests` | 409 | RD_SCOPE_VERSION_CONFLICT / RD_RUN_GENERATION_CONFLICT / RD_SCOPE_FROZEN | 否，先刷新或处理现有决策 | 记录版本、来源运行、提交/当前 scope 与 generation、冻结边界或现有决策，不记录任意 payload。 | 刷新协作运行；待发布前使用受控入口，已有决策先处理，待发布后创建后续需求。 |
 | POST `/api/product-versions/{version_id}/scope-change-requests` | 422 | RD_SCOPE_CHANGE_INVALID | 否，修改提议后重试 | 记录 operations_hash、operation index、字段问题和 trace_id；不得记录应用成功或部分范围审计。 | 保留表单并定位 operation/field，修正后使用新 request_id 提交。 |
 | 协作运行内部任务派发 | 400 | MODEL_GATEWAY_CONFIG_INVALID | 否 | 记录任务失败、工作项 attempt 和配置缺陷，不记录密钥明文。 | 提示管理员修复冻结执行器所依赖的模型网关配置，再由调度器恢复工作项。 |
@@ -142,6 +143,7 @@ GET /api/audit/events/export?subject_type=knowledge_document&created_from=2026-0
 | RELEASE_READINESS_NOT_CONFIRMED | 上线后分析任务缺少同需求、同产品版本下已完成发布评估。 |
 | REVIEW_VERSION_CONFLICT | 人工确认版本冲突。 |
 | MODEL_GATEWAY_FAILED | 模型网关调用失败并导致任务失败。 |
+| AI_EXECUTOR_APPROVAL_REQUIRED | Runner 指令命中高风险操作且缺少、过期或未完整覆盖的人工审批快照；协作工作项必须通过专用冻结安全决策处理。 |
 | KNOWLEDGE_DEPOSIT_STATE_INVALID | 知识沉淀候选状态不允许该操作。 |
 | KNOWLEDGE_INDEX_FAILED | 知识文档索引失败。 |
 | KNOWLEDGE_INDEX_STATE_INVALID | 知识文档当前索引状态不允许重试。 |

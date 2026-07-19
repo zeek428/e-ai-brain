@@ -704,6 +704,24 @@
 
 ---
 
+### TC-AIBRAIN-RD-FUNC-035C: P1 DB-first 自动派发、Runner 安全审批与公平续扫
+
+| 项目 | 内容 |
+|------|------|
+| 优先级 | P1 |
+| 适用阶段 | v2.0 P1 |
+
+1. 在 PostgreSQL 运行态让低/中风险 AI 工作项派发到 Runner；分别注入 Runner 写入失败、bundle 后段失败和两个 Worker 并发派发。查询 AI task、Runner task、attempt、执行上下文清单、Agent Loop run/iteration、预算台账、协作事件和 `audit_events`，并验证派发准备代码没有读取运行时 `audit_events` 集合。
+2. 对命中高风险 Runner 指令的工作项触发 `AI_EXECUTOR_APPROVAL_REQUIRED`；重复 sweep、重启和并发处理后，分别用专用协作决策批准、拒绝、篡改审批来源/操作集/安全快照，以及等待审批过期后再次派发。再尝试用通用 Runner/插件审批接口处理该协作审批请求。
+3. 连续四次注入可重试派发故障，在每次退避边界前后运行调度；随后模拟成功派发、容量耗尽，以及候选保留后被另一事务更新 `next_dispatch_at` 或 `version` 的竞争。
+4. 创建多个活动协作运行及各自多个到期工作项和依赖；以低 `limit` 连续扫描、重启 Worker 并并发扫描。记录每次候选页、依赖前驱查询、全局/运行游标和最终派发结果。
+
+**预期结果**: 任务、Runner、attempt、上下文、Agent Loop、预算、协作事件和显式构造的审计 bundle 只在同一 PostgreSQL 事务成功时同时存在；任一失败或并发落选均无孤立记录，审计以数据库事实为准。Runner 安全阻断只暂停受影响工作项，并创建一个以 `work_item_id + attempt_no (+ renewal_no)` 确定的 `runner_safety_approval` 决策和审批请求，不创建 Runner task 或 attempt；批准仅保存覆盖冻结操作的不可变快照，拒绝取消工作项，过期仅创建同 attempt 的确定性 renewal。通用审批路径不得替代协作决策；最终派发在同一事务锁定并重验指令、安全快照、审批来源/身份/证据/操作集、策略版本及过期时间，篡改、不完整覆盖或过期均 fail closed 且无 bundle 写入。前三次可重试故障仅保存安全码、失败计数和 5/10/20 秒 `next_dispatch_at`，到期前不再派发，成功清零；第 4 次暂停并创建冻结 `dispatch_fault_resolution` 决策，容量耗尽不计入退避。扫描只读取到期的 `ready/rework_required` 候选，候选与依赖均为有界批量页；全局轮转与每运行续扫游标持久化，使重启/多 Worker 后仍公平继续。`limit` 覆盖所有检查结果；reservation version 与 `due_at` 在最终事务中重验，陈旧保留返回无副作用跳过，不得绕过新的退避或产生执行记录。
+
+**状态**: 已自动化覆盖，见 `apps/api/tests/test_rd_work_item_execution_postgres.py::test_postgres_dispatch_rolls_back_task_runner_attempt_event_and_audit_together`、`::test_postgres_autonomous_dispatch_persists_explicit_audit_bundle_without_reading_store_audits`、`::test_postgres_runner_safety_approval_is_atomic_replay_safe_and_dispatchable`、`::test_postgres_dispatch_rejects_approval_that_expires_while_waiting_for_its_row_lock`、`::test_postgres_expired_runner_safety_approval_renews_without_dispatch_artifacts`、`::test_postgres_stale_reserved_worker_cannot_bypass_new_retry_backoff`，以及 `apps/api/tests/test_rd_collaboration_auto_dispatch.py::test_auto_dispatch_persists_safe_retry_backoff_and_suppresses_early_retry`、`::test_auto_dispatch_does_not_record_retry_after_candidate_becomes_stale`、`apps/api/tests/test_rd_collaboration_repository.py::test_repository_reserves_fair_dispatch_pages_across_restart_and_workers` 和 `apps/api/tests/test_rd_work_item_scheduler.py::test_scheduler_batches_omitted_predecessors_for_repository_due_candidates`。
+
+---
+
 ### TC-AIBRAIN-RD-FUNC-036: 默认待发布终点与可信远程交付
 
 | 项目 | 内容 |
