@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
+from datetime import datetime
 from typing import Any
 
 from psycopg import sql
@@ -592,25 +593,55 @@ class RdCollaborationReadRepository(RdCollaborationWriteRepository):
                     if (row := _row_dict(cursor, item)) is not None
                 ]
 
-    def list_due_rd_work_items(self, collaboration_run_id: str) -> list[dict[str, Any]]:
+    def list_due_rd_work_items(
+        self,
+        collaboration_run_id: str,
+        *,
+        limit: int | None = None,
+        after: tuple[int, str] | None = None,
+        due_at: datetime | None = None,
+    ) -> list[dict[str, Any]]:
         """Load only due automatic-dispatch candidates from PostgreSQL.
 
         Keep the due predicate in SQL so the partial dispatch-due index from
         migration 123 can serve worker polling. Dependency eligibility remains
         a scheduler concern because it spans multiple work-item rows.
         """
+        paged = limit is not None or after is not None
+        params: list[Any] = [collaboration_run_id]
+        due_predicate = "CURRENT_TIMESTAMP"
+        if due_at is not None:
+            due_predicate = "%s"
+            params.append(due_at)
+        priority_order = "(CASE WHEN priority = 0 THEN 100 ELSE priority END)"
+        cursor_predicate = ""
+        if after is not None:
+            cursor_predicate = f"""
+                      AND (
+                        {priority_order} > %s
+                        OR ({priority_order} = %s AND id > %s)
+                      )
+            """
+            params.extend((after[0], after[0], after[1]))
+        order_by = f"{priority_order}, id" if paged else "plan_version, priority, id"
+        limit_clause = ""
+        if limit is not None:
+            limit_clause = "LIMIT %s"
+            params.append(limit)
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    """
+                    f"""
                     SELECT *
                     FROM rd_work_items
                     WHERE collaboration_run_id = %s
                       AND status IN ('ready', 'rework_required')
-                      AND (next_dispatch_at IS NULL OR next_dispatch_at <= CURRENT_TIMESTAMP)
-                    ORDER BY plan_version, priority, id
+                      AND (next_dispatch_at IS NULL OR next_dispatch_at <= {due_predicate})
+                    {cursor_predicate}
+                    ORDER BY {order_by}
+                    {limit_clause}
                     """,
-                    (collaboration_run_id,),
+                    tuple(params),
                 )
                 return [
                     row

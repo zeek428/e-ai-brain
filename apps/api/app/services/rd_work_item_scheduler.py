@@ -44,10 +44,23 @@ def _work_items(
     collaboration_run_id: str,
     *,
     due_candidates_only: bool = False,
+    scan_limit: int | None = None,
+    after: tuple[int, str] | None = None,
+    due_at: datetime | None = None,
 ) -> list[dict[str, Any]]:
     repository = _repository(store)
     list_due_items = getattr(repository, "list_due_rd_work_items", None)
     if due_candidates_only and callable(list_due_items):
+        if scan_limit is not None:
+            return [
+                dict(item)
+                for item in list_due_items(
+                    collaboration_run_id,
+                    limit=scan_limit,
+                    after=after,
+                    due_at=due_at,
+                )
+            ]
         return [dict(item) for item in list_due_items(collaboration_run_id)]
     list_items = getattr(repository, "list_rd_work_items", None)
     if callable(list_items):
@@ -57,6 +70,30 @@ def _work_items(
         for item in _records(store, "rd_work_items").values()
         if item.get("collaboration_run_id") == collaboration_run_id
     ]
+
+
+def _dispatch_order_key(item: dict[str, Any]) -> tuple[int, str]:
+    return (int(item.get("priority") or 100), str(item["id"]))
+
+
+def _bounded_due_candidates(
+    items: list[dict[str, Any]],
+    *,
+    observed_at: datetime,
+    scan_limit: int,
+    after: tuple[int, str] | None,
+) -> list[dict[str, Any]]:
+    candidates = []
+    for item in items:
+        if item.get("status") not in {"ready", "rework_required"}:
+            continue
+        next_dispatch_at = _parse_time(item.get("next_dispatch_at"))
+        if next_dispatch_at is not None and next_dispatch_at > observed_at:
+            continue
+        if after is not None and _dispatch_order_key(item) <= after:
+            continue
+        candidates.append(item)
+    return sorted(candidates, key=_dispatch_order_key)[:scan_limit]
 
 
 def _dependencies(store: Any, collaboration_run_id: str) -> list[dict[str, Any]]:
@@ -153,7 +190,66 @@ def ready_work_items(
             for predecessor_id in predecessor_ids
         ):
             ready.append(deepcopy(item))
-    return sorted(ready, key=lambda item: (int(item.get("priority") or 100), str(item["id"])))
+    return sorted(ready, key=_dispatch_order_key)
+
+
+def ready_work_item_page(
+    store: Any,
+    *,
+    collaboration_run_id: str,
+    scan_limit: int,
+    after: tuple[int, str] | None = None,
+    now: datetime | None = None,
+) -> tuple[list[dict[str, Any]], tuple[int, str] | None, int]:
+    """Return a bounded priority/ID page, continuation cursor, and scan count."""
+    if scan_limit <= 0:
+        return [], None, 0
+    observed_at = _normalize_utc_time(now or _now())
+    repository = _repository(store)
+    list_due_items = getattr(repository, "list_due_rd_work_items", None)
+    if callable(list_due_items):
+        candidates = _work_items(
+            store,
+            collaboration_run_id,
+            due_candidates_only=True,
+            scan_limit=scan_limit,
+            after=after,
+            due_at=observed_at if now is not None else None,
+        )
+    else:
+        candidates = _bounded_due_candidates(
+            _work_items(store, collaboration_run_id),
+            observed_at=observed_at,
+            scan_limit=scan_limit,
+            after=after,
+        )
+    candidates = [
+        item
+        for item in sorted(candidates, key=_dispatch_order_key)
+        if after is None or _dispatch_order_key(item) > after
+    ][:scan_limit]
+    candidate_map = {str(item["id"]): item for item in candidates}
+    dependencies = _dependencies(store, collaboration_run_id)
+    dependency_items = _dependency_work_items(
+        store,
+        collaboration_run_id,
+        candidates=candidate_map,
+        dependencies=dependencies,
+    )
+    ready: list[dict[str, Any]] = []
+    for item_id, item in candidate_map.items():
+        predecessor_ids = [
+            str(edge.get("predecessor_work_item_id"))
+            for edge in dependencies
+            if edge.get("successor_work_item_id") == item_id
+        ]
+        if all(
+            dependency_items.get(predecessor_id, {}).get("status") in _SATISFIED_PREDECESSOR_STATES
+            for predecessor_id in predecessor_ids
+        ):
+            ready.append(deepcopy(item))
+    next_cursor = _dispatch_order_key(candidates[-1]) if len(candidates) == scan_limit else None
+    return sorted(ready, key=_dispatch_order_key), next_cursor, len(candidates)
 
 
 def is_terminal_work_item_status(status: str | None) -> bool:

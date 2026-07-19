@@ -17,7 +17,7 @@ from app.services.rd_high_risk_dispatch_gate import (
     high_risk_dispatch_is_approved,
     require_human_approval_for_high_risk_dispatch,
 )
-from app.services.rd_work_item_scheduler import ready_work_items
+from app.services.rd_work_item_scheduler import ready_work_item_page
 from app.services.task_start_execution import dispatch_ai_task_for_work_item
 
 _DISPATCHABLE_RUN_STATUSES = {"running", "integrating", "verifying"}
@@ -107,79 +107,85 @@ def dispatch_ready_ai_work_items(
         else:
             retryable.append(work_item_id)
 
-    processed = 0
+    examined = 0
     for run in sorted(_runs(store), key=lambda item: str(item.get("id") or "")):
-        if processed >= limit or run.get("status") not in _DISPATCHABLE_RUN_STATUSES:
+        if examined >= limit or run.get("status") not in _DISPATCHABLE_RUN_STATUSES:
             continue
         run_id = str(run.get("id") or "")
         if not run_id:
             continue
-        for work_item in ready_work_items(
-            store,
-            collaboration_run_id=run_id,
-            now=scheduler_now,
-        ):
-            if processed >= limit:
-                break
-            if work_item.get("status") not in {"ready", "rework_required"}:
-                continue
-            if not _is_ai_owned(store, work_item):
-                continue
-            work_item_id = str(work_item["id"])
-            processed += 1
-            risk_level = str(work_item.get("risk_level") or "medium").lower()
-            if risk_level in _HUMAN_REVIEW_RISK_LEVELS:
-                if not high_risk_dispatch_is_approved(
-                    store,
-                    collaboration_run_id=run_id,
-                    work_item_id=work_item_id,
-                ):
-                    try:
-                        require_human_approval_for_high_risk_dispatch(
-                            store,
-                            collaboration_run_id=run_id,
-                            work_item_id=work_item_id,
-                        )
-                    except HTTPException as exc:
-                        fault = classify_dispatch_fault(exc)
-                        if fault.outcome == "deferred":
-                            capacity_deferred.append(work_item_id)
-                        else:
-                            record_retry(work_item, fault)
-                        continue
-                    human_review_required.append(work_item_id)
+        cursor: tuple[int, str] | None = None
+        while examined < limit:
+            page, next_cursor, examined_count = ready_work_item_page(
+                store,
+                collaboration_run_id=run_id,
+                scan_limit=limit - examined,
+                after=cursor,
+                now=scheduler_now,
+            )
+            examined += examined_count
+            for work_item in page:
+                if work_item.get("status") not in {"ready", "rework_required"}:
                     continue
-            try:
-                dispatch_ai_task_for_work_item(
-                    store,
-                    collaboration_run_id=run_id,
-                    work_item_id=work_item_id,
-                )
-            except (HTTPException, RdCollaborationRepositoryError) as exc:
-                fault = classify_dispatch_fault(exc)
-                if fault.outcome == "deferred":
-                    capacity_deferred.append(work_item_id)
+                if not _is_ai_owned(store, work_item):
                     continue
-                if fault.outcome == "retryable":
-                    record_retry(work_item, fault)
-                    continue
-                try:
-                    escalate_dispatch_fault_for_human(
+                work_item_id = str(work_item["id"])
+                risk_level = str(work_item.get("risk_level") or "medium").lower()
+                if risk_level in _HUMAN_REVIEW_RISK_LEVELS:
+                    if not high_risk_dispatch_is_approved(
                         store,
                         collaboration_run_id=run_id,
                         work_item_id=work_item_id,
-                        fault=fault,
+                    ):
+                        try:
+                            require_human_approval_for_high_risk_dispatch(
+                                store,
+                                collaboration_run_id=run_id,
+                                work_item_id=work_item_id,
+                            )
+                        except HTTPException as exc:
+                            fault = classify_dispatch_fault(exc)
+                            if fault.outcome == "deferred":
+                                capacity_deferred.append(work_item_id)
+                            else:
+                                record_retry(work_item, fault)
+                            continue
+                        human_review_required.append(work_item_id)
+                        continue
+                try:
+                    dispatch_ai_task_for_work_item(
+                        store,
+                        collaboration_run_id=run_id,
+                        work_item_id=work_item_id,
                     )
-                except HTTPException as escalation_exc:
-                    escalation_fault = classify_dispatch_fault(escalation_exc)
-                    if escalation_fault.outcome == "deferred":
+                except (HTTPException, RdCollaborationRepositoryError) as exc:
+                    fault = classify_dispatch_fault(exc)
+                    if fault.outcome == "deferred":
                         capacity_deferred.append(work_item_id)
-                    else:
-                        record_retry(work_item, escalation_fault)
+                        continue
+                    if fault.outcome == "retryable":
+                        record_retry(work_item, fault)
+                        continue
+                    try:
+                        escalate_dispatch_fault_for_human(
+                            store,
+                            collaboration_run_id=run_id,
+                            work_item_id=work_item_id,
+                            fault=fault,
+                        )
+                    except HTTPException as escalation_exc:
+                        escalation_fault = classify_dispatch_fault(escalation_exc)
+                        if escalation_fault.outcome == "deferred":
+                            capacity_deferred.append(work_item_id)
+                        else:
+                            record_retry(work_item, escalation_fault)
+                        continue
+                    escalated.append(work_item_id)
                     continue
-                escalated.append(work_item_id)
-                continue
-            dispatched.append(work_item_id)
+                dispatched.append(work_item_id)
+            if examined >= limit or next_cursor is None or next_cursor == cursor:
+                break
+            cursor = next_cursor
     return {
         "capacity_deferred_work_item_ids": capacity_deferred,
         "dispatched_work_item_ids": dispatched,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -276,6 +277,103 @@ def test_auto_dispatch_limit_counts_dispatch_decision_and_deferred_outcomes() ->
         + len(result["human_review_required_work_item_ids"])
         + len(result["retryable_work_item_ids"])
     ) == 2
+
+
+def test_auto_dispatch_bounds_repository_candidate_and_predecessor_scans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import rd_collaboration_auto_dispatch
+
+    class BoundedDispatchRepository:
+        def __init__(self) -> None:
+            self.candidate_calls: list[dict[str, object]] = []
+            self.predecessor_calls: list[tuple[str, tuple[str, ...]]] = []
+            self.candidates = [
+                {
+                    "id": f"work-{index:03d}",
+                    "collaboration_run_id": "run-1",
+                    "owner_seat_id": "seat-human" if index == 0 else "seat-ai",
+                    "status": "ready",
+                    "risk_level": "low",
+                    "priority": index + 1,
+                    "version": 1,
+                }
+                for index in range(100)
+            ]
+
+        def list_rd_collaboration_runs(self):
+            return [{"id": "run-1", "status": "running"}]
+
+        def get_rd_run_seat(self, seat_id: str):
+            assert seat_id in {"seat-ai", "seat-human"}
+            return {
+                "id": seat_id,
+                "subject_type": "human_user" if seat_id == "seat-human" else "ai_employee",
+            }
+
+        def list_due_rd_work_items(
+            self,
+            collaboration_run_id: str,
+            *,
+            limit: int | None = None,
+            after: tuple[int, str] | None = None,
+            due_at: datetime | None = None,
+        ):
+            assert collaboration_run_id == "run-1"
+            self.candidate_calls.append({"limit": limit, "after": after, "due_at": due_at})
+            candidates = self.candidates
+            if after is not None:
+                candidates = [
+                    item for item in candidates if (int(item["priority"]), str(item["id"])) > after
+                ]
+            return candidates if limit is None else candidates[:limit]
+
+        def list_rd_work_item_dependencies(self, collaboration_run_id: str):
+            assert collaboration_run_id == "run-1"
+            return [
+                {
+                    "predecessor_work_item_id": f"predecessor-{index:03d}",
+                    "successor_work_item_id": f"work-{index:03d}",
+                }
+                for index in range(100)
+            ]
+
+        def list_rd_work_items_by_ids(
+            self,
+            collaboration_run_id: str,
+            work_item_ids: list[str],
+        ):
+            self.predecessor_calls.append((collaboration_run_id, tuple(work_item_ids)))
+            return [
+                {
+                    "id": work_item_id,
+                    "collaboration_run_id": collaboration_run_id,
+                    "status": "completed",
+                }
+                for work_item_id in work_item_ids
+            ]
+
+    repository = BoundedDispatchRepository()
+    dispatched_ids: list[str] = []
+    monkeypatch.setattr(
+        rd_collaboration_auto_dispatch,
+        "dispatch_ai_task_for_work_item",
+        lambda _store, *, collaboration_run_id, work_item_id: dispatched_ids.append(work_item_id),
+    )
+
+    result = dispatch_ready_ai_work_items(
+        SimpleNamespace(repository=repository),
+        limit=2,
+    )
+
+    assert result["dispatched_work_item_ids"] == ["work-001"]
+    assert dispatched_ids == ["work-001"]
+    assert repository.candidate_calls == [
+        {"limit": 2, "after": None, "due_at": None},
+    ]
+    assert repository.predecessor_calls == [
+        ("run-1", ("predecessor-000", "predecessor-001")),
+    ]
 
 
 def test_auto_dispatch_escalates_a_frozen_runner_safety_fault_without_leaking_paths() -> None:

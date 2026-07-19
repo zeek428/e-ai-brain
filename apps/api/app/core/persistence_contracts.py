@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any, Protocol
 
 from app.core.persistence_fields import (
@@ -207,6 +208,14 @@ class RdCollaborationRepository(Protocol):
     def list_rd_work_items(self, collaboration_run_id: str) -> list[dict[str, Any]]: ...
     def list_rd_work_items_by_ids(
         self, collaboration_run_id: str, work_item_ids: list[str]
+    ) -> list[dict[str, Any]]: ...
+    def list_due_rd_work_items(
+        self,
+        collaboration_run_id: str,
+        *,
+        limit: int | None = None,
+        after: tuple[int, str] | None = None,
+        due_at: datetime | None = None,
     ) -> list[dict[str, Any]]: ...
     def get_rd_work_item_dependency(self, record_id: str) -> dict[str, Any] | None: ...
     def list_rd_work_item_dependencies(self, collaboration_run_id: str) -> list[dict[str, Any]]: ...
