@@ -79,30 +79,31 @@ def create_ai_executor_task(
             "workspace_root": workspace_root,
         }
         safety_snapshot = {**safety_snapshot, "approval_request": approval_request}
-        save_pending_ai_executor_approval_request(
-            current_store,
-            approval_request=approval_request,
-            requested_by=created_by,
-            safety_snapshot=safety_snapshot,
-        )
-        record_audit_event(
-            current_store,
-            event_type="ai_executor_task.approval_requested",
-            actor_id=created_by,
-            subject_type="ai_executor_runner",
-            subject_id=runner_id,
-            payload={
-                "action_id": action_id,
-                "approval_request": approval_request,
-                "blocked_operations": safety_snapshot["blocked_operations"],
-                "connection_id": connection_id,
-                "executor_type": executor_type,
-                "risk_level": safety_snapshot["risk_level"],
-                "scheduled_job_id": scheduled_job_id,
-                "scheduled_job_run_id": scheduled_job_run_id,
-                "workspace_root": workspace_root,
-            },
-        )
+        if persist:
+            save_pending_ai_executor_approval_request(
+                current_store,
+                approval_request=approval_request,
+                requested_by=created_by,
+                safety_snapshot=safety_snapshot,
+            )
+            record_audit_event(
+                current_store,
+                event_type="ai_executor_task.approval_requested",
+                actor_id=created_by,
+                subject_type="ai_executor_runner",
+                subject_id=runner_id,
+                payload={
+                    "action_id": action_id,
+                    "approval_request": approval_request,
+                    "blocked_operations": safety_snapshot["blocked_operations"],
+                    "connection_id": connection_id,
+                    "executor_type": executor_type,
+                    "risk_level": safety_snapshot["risk_level"],
+                    "scheduled_job_id": scheduled_job_id,
+                    "scheduled_job_run_id": scheduled_job_run_id,
+                    "workspace_root": workspace_root,
+                },
+            )
         raise api_error(
             409,
             "AI_EXECUTOR_APPROVAL_REQUIRED",

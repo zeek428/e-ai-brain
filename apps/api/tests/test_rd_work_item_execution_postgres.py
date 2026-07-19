@@ -460,6 +460,58 @@ def test_postgres_dispatch_rolls_back_task_runner_attempt_event_and_audit_togeth
     assert str(dispatch_error) == "inject runner insert failure"
 
 
+def test_postgres_safety_rejected_dispatch_retry_leaves_no_preparation_records(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-safety-rejected",
+        autonomy_mode="autonomous_loop",
+    )
+    store = PostgresRuntimeStore(repository)
+    allocated_task_ids: list[str] = []
+    original_next_id = repository.next_id
+
+    def capture_task_id(prefix: str) -> str:
+        record_id = original_next_id(prefix)
+        if prefix == "task":
+            allocated_task_ids.append(record_id)
+        return record_id
+
+    monkeypatch.setattr(repository, "next_id", capture_task_id)
+    monkeypatch.setattr(
+        "app.services.rd_task_executor_policies.render_executor_instruction",
+        lambda *_args, **_kwargs: "Run git push",
+    )
+
+    for _ in range(2):
+        with pytest.raises(HTTPException) as exc_info:
+            dispatch_ai_task_for_work_item(
+                store,
+                collaboration_run_id=ids["run_id"],
+                work_item_id=ids["work_item_id"],
+            )
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail["code"] == "AI_EXECUTOR_APPROVAL_REQUIRED"
+
+    assert len(allocated_task_ids) == 2
+    assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "ready"
+    assert repository.list_rd_work_item_attempts(ids["work_item_id"]) == []
+    assert repository.list_ai_executor_tasks(ai_task_id=None) == []
+    for task_id in allocated_task_ids:
+        _assert_no_autonomous_dispatch_records(repository, ai_task_id=task_id)
+    with repository._connect() as connection:
+        assert connection.execute("SELECT count(*) FROM ai_executor_approval_requests").fetchone()[
+            0
+        ] == 0
+    assert store.ai_executor_approval_requests == {}
+    assert not any(
+        event.get("event_type") == "ai_executor_task.approval_requested"
+        for event in store.audit_events
+    )
+
+
 def test_concurrent_postgres_dispatch_reuses_one_active_task_attempt_and_runner(
     repository: PostgresSnapshotRepository,
     monkeypatch: pytest.MonkeyPatch,

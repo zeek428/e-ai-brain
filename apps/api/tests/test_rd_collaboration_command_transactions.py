@@ -173,6 +173,53 @@ def test_transaction_exposes_every_task3_command_bundle() -> None:
     assert TRANSACTION_METHODS.issubset(RdCollaborationTransaction.__dict__)
 
 
+def test_dispatch_bundle_contract_and_transaction_forward_governance_records() -> None:
+    governance_parameters = {
+        "agent_budget_ledger",
+        "agent_loop_iterations",
+        "agent_loop_run",
+        "context_manifest",
+    }
+    assert governance_parameters.issubset(
+        inspect.signature(RdCollaborationRepository.dispatch_work_item_execution_bundle).parameters
+    )
+    captured: dict[str, Any] = {}
+
+    class CapturingRepository:
+        def _dispatch_work_item_execution_bundle_cursor(
+            self,
+            cursor: object,
+            **kwargs: Any,
+        ) -> dict[str, Any]:
+            captured["cursor"] = cursor
+            captured.update(kwargs)
+            return {"forwarded": True}
+
+    cursor = object()
+    transaction = RdCollaborationTransaction(CapturingRepository(), cursor)
+    records = {
+        "agent_budget_ledger": {"id": "budget-1"},
+        "agent_loop_iterations": [{"id": "iteration-1"}],
+        "agent_loop_run": {"id": "loop-1"},
+        "context_manifest": {"id": "manifest-1"},
+    }
+    result = transaction.dispatch_work_item_execution_bundle(
+        work_item_id="work-item-1",
+        expected_version=1,
+        task={"id": "task-1"},
+        requirement={"id": "requirement-1"},
+        runner_task={"id": "runner-task-1"},
+        attempt={"id": "attempt-1"},
+        event={"id": "event-1"},
+        audit_events=[{"id": "audit-1"}],
+        **records,
+    )
+
+    assert result == {"forwarded": True}
+    assert captured["cursor"] is cursor
+    assert all(captured[name] is records[name] for name in governance_parameters)
+
+
 def test_assessment_snapshot_and_start_roll_back_with_command(
     repository: PostgresSnapshotRepository,
 ) -> None:
