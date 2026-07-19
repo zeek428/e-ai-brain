@@ -18,6 +18,7 @@ MIGRATION_109 = MIGRATIONS_DIR / "109_requirement_driven_rd_collaboration.sql"
 MIGRATION_116 = MIGRATIONS_DIR / "116_rd_trusted_delivery_evidence.sql"
 MIGRATION_117 = MIGRATIONS_DIR / "117_rd_external_callback_facts.sql"
 MIGRATION_123 = MIGRATIONS_DIR / "123_rd_dispatch_retry_controls.sql"
+MIGRATION_124 = MIGRATIONS_DIR / "124_rd_dispatch_fair_cursor.sql"
 DEFAULT_POSTGRES_ADMIN_URL = "postgresql://ai_brain:ai_brain_password@127.0.0.1:5432/postgres"
 
 
@@ -761,6 +762,41 @@ def test_migration_123_adds_durable_dispatch_retry_controls(
         Path(__file__).resolve().parents[1] / "app" / "core" / "persistence.py"
     ).read_text(encoding="utf-8")
     assert '"123_rd_dispatch_retry_controls.sql"' in persistence_source
+
+
+def test_migration_124_adds_durable_dispatch_cursor_and_page_index(
+    postgres_admin_url: str,
+) -> None:
+    with _temporary_database(postgres_admin_url) as database_url:
+        _apply_historical_migrations(database_url, through=123)
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            _apply_migration(connection, MIGRATION_124)
+            tables = connection.execute(
+                """
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name IN ('rd_dispatch_sweep_cursors', 'rd_dispatch_run_cursors')
+                ORDER BY table_name
+                """
+            ).fetchall()
+            indexes = connection.execute(
+                """
+                SELECT indexname, indexdef
+                FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND indexname = 'idx_rd_work_items_dispatch_due_page'
+                """
+            ).fetchall()
+
+    assert tables == [("rd_dispatch_run_cursors",), ("rd_dispatch_sweep_cursors",)]
+    assert len(indexes) == 1
+    assert "COALESCE(next_dispatch_at" in indexes[0][1]
+    assert "CASE" in indexes[0][1]
+    persistence_source = (
+        Path(__file__).resolve().parents[1] / "app" / "core" / "persistence.py"
+    ).read_text(encoding="utf-8")
+    assert '"124_rd_dispatch_fair_cursor.sql"' in persistence_source
 
 
 def test_migration_109_normalizes_rows_from_previous_operation_constraint(

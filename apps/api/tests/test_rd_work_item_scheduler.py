@@ -160,6 +160,63 @@ def test_scheduler_batches_omitted_predecessors_for_repository_due_candidates() 
     ]
 
 
+def test_scheduler_scopes_dependency_lookup_to_the_bounded_successor_page() -> None:
+    class SuccessorScopedRepository:
+        def __init__(self) -> None:
+            self.dependency_calls: list[tuple[str, tuple[str, ...]]] = []
+
+        def list_due_rd_work_items(
+            self,
+            collaboration_run_id: str,
+            *,
+            limit: int,
+            after=None,
+            due_at=None,
+        ):
+            assert collaboration_run_id == "run-1"
+            return [
+                {
+                    "id": "successor-page-a",
+                    "collaboration_run_id": collaboration_run_id,
+                    "status": "ready",
+                    "priority": 1,
+                },
+                {
+                    "id": "successor-page-b",
+                    "collaboration_run_id": collaboration_run_id,
+                    "status": "ready",
+                    "priority": 2,
+                },
+            ][:limit]
+
+        def list_rd_work_item_dependencies_for_successors(
+            self,
+            collaboration_run_id: str,
+            successor_work_item_ids: list[str],
+        ):
+            self.dependency_calls.append((collaboration_run_id, tuple(successor_work_item_ids)))
+            return []
+
+        def list_rd_work_item_dependencies(self, _collaboration_run_id: str):
+            raise AssertionError("bounded scheduling must not load the run-wide graph")
+
+    repository = SuccessorScopedRepository()
+
+    from app.services.rd_work_item_scheduler import ready_work_item_page
+
+    page, _, examined = ready_work_item_page(
+        SimpleNamespace(repository=repository),
+        collaboration_run_id="run-1",
+        scan_limit=2,
+    )
+
+    assert [item["id"] for item in page] == ["successor-page-a", "successor-page-b"]
+    assert examined == 2
+    assert repository.dependency_calls == [
+        ("run-1", ("successor-page-a", "successor-page-b")),
+    ]
+
+
 def test_persisted_plan_activates_only_root_work_items_for_claiming() -> None:
     store = MemoryStore()
     store.rd_collaboration_runs["run-plan"] = {

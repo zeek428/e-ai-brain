@@ -45,7 +45,7 @@ def _work_items(
     *,
     due_candidates_only: bool = False,
     scan_limit: int | None = None,
-    after: tuple[int, str] | None = None,
+    after: tuple[datetime | None, int, str] | None = None,
     due_at: datetime | None = None,
 ) -> list[dict[str, Any]]:
     repository = _repository(store)
@@ -76,12 +76,25 @@ def _dispatch_order_key(item: dict[str, Any]) -> tuple[int, str]:
     return (int(item.get("priority") or 100), str(item["id"]))
 
 
+def _candidate_scan_order_key(item: dict[str, Any]) -> tuple[datetime, int, str]:
+    return (
+        _parse_time(item.get("next_dispatch_at")) or datetime.min.replace(tzinfo=UTC),
+        *_dispatch_order_key(item),
+    )
+
+
+def _cursor_scan_order_key(
+    cursor: tuple[datetime | None, int, str],
+) -> tuple[datetime, int, str]:
+    return (cursor[0] or datetime.min.replace(tzinfo=UTC), cursor[1], cursor[2])
+
+
 def _bounded_due_candidates(
     items: list[dict[str, Any]],
     *,
     observed_at: datetime,
     scan_limit: int,
-    after: tuple[int, str] | None,
+    after: tuple[datetime | None, int, str] | None,
 ) -> list[dict[str, Any]]:
     candidates = []
     for item in items:
@@ -90,14 +103,33 @@ def _bounded_due_candidates(
         next_dispatch_at = _parse_time(item.get("next_dispatch_at"))
         if next_dispatch_at is not None and next_dispatch_at > observed_at:
             continue
-        if after is not None and _dispatch_order_key(item) <= after:
+        if after is not None and _candidate_scan_order_key(item) <= _cursor_scan_order_key(after):
             continue
         candidates.append(item)
-    return sorted(candidates, key=_dispatch_order_key)[:scan_limit]
+    bounded = sorted(candidates, key=_candidate_scan_order_key)[:scan_limit]
+    return sorted(bounded, key=_dispatch_order_key)
 
 
-def _dependencies(store: Any, collaboration_run_id: str) -> list[dict[str, Any]]:
+def _dependencies(
+    store: Any,
+    collaboration_run_id: str,
+    *,
+    successor_work_item_ids: list[str] | None = None,
+) -> list[dict[str, Any]]:
     repository = _repository(store)
+    list_scoped_dependencies = getattr(
+        repository,
+        "list_rd_work_item_dependencies_for_successors",
+        None,
+    )
+    if successor_work_item_ids is not None and callable(list_scoped_dependencies):
+        return [
+            dict(item)
+            for item in list_scoped_dependencies(
+                collaboration_run_id,
+                successor_work_item_ids,
+            )
+        ]
     list_dependencies = getattr(repository, "list_rd_work_item_dependencies", None)
     if callable(list_dependencies):
         return [dict(item) for item in list_dependencies(collaboration_run_id)]
@@ -105,6 +137,10 @@ def _dependencies(store: Any, collaboration_run_id: str) -> list[dict[str, Any]]
         dependency
         for dependency in _records(store, "rd_work_item_dependencies").values()
         if dependency.get("collaboration_run_id") == collaboration_run_id
+        and (
+            successor_work_item_ids is None
+            or str(dependency.get("successor_work_item_id") or "") in successor_work_item_ids
+        )
     ]
 
 
@@ -198,16 +234,19 @@ def ready_work_item_page(
     *,
     collaboration_run_id: str,
     scan_limit: int,
-    after: tuple[int, str] | None = None,
+    after: tuple[datetime | None, int, str] | None = None,
     now: datetime | None = None,
-) -> tuple[list[dict[str, Any]], tuple[int, str] | None, int]:
+    candidate_items: list[dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], tuple[datetime | None, int, str] | None, int]:
     """Return a bounded priority/ID page, continuation cursor, and scan count."""
     if scan_limit <= 0:
         return [], None, 0
     observed_at = _normalize_utc_time(now or _now())
     repository = _repository(store)
     list_due_items = getattr(repository, "list_due_rd_work_items", None)
-    if callable(list_due_items):
+    if candidate_items is not None:
+        candidates = sorted(candidate_items, key=_dispatch_order_key)[:scan_limit]
+    elif callable(list_due_items):
         candidates = _work_items(
             store,
             collaboration_run_id,
@@ -226,10 +265,14 @@ def ready_work_item_page(
     candidates = [
         item
         for item in sorted(candidates, key=_dispatch_order_key)
-        if after is None or _dispatch_order_key(item) > after
+        if after is None or _candidate_scan_order_key(item) > _cursor_scan_order_key(after)
     ][:scan_limit]
     candidate_map = {str(item["id"]): item for item in candidates}
-    dependencies = _dependencies(store, collaboration_run_id)
+    dependencies = _dependencies(
+        store,
+        collaboration_run_id,
+        successor_work_item_ids=sorted(candidate_map),
+    )
     dependency_items = _dependency_work_items(
         store,
         collaboration_run_id,
@@ -248,7 +291,15 @@ def ready_work_item_page(
             for predecessor_id in predecessor_ids
         ):
             ready.append(deepcopy(item))
-    next_cursor = _dispatch_order_key(candidates[-1]) if len(candidates) == scan_limit else None
+    last_candidate = max(candidates, key=_candidate_scan_order_key) if candidates else None
+    next_cursor = (
+        (
+            _parse_time(last_candidate.get("next_dispatch_at")),
+            *_dispatch_order_key(last_candidate),
+        )
+        if last_candidate is not None
+        else None
+    )
     return sorted(ready, key=_dispatch_order_key), next_cursor, len(candidates)
 
 

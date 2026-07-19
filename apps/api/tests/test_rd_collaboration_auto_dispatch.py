@@ -287,6 +287,7 @@ def test_auto_dispatch_bounds_repository_candidate_and_predecessor_scans(
     class BoundedDispatchRepository:
         def __init__(self) -> None:
             self.candidate_calls: list[dict[str, object]] = []
+            self.dependency_calls: list[tuple[str, tuple[str, ...]]] = []
             self.predecessor_calls: list[tuple[str, tuple[str, ...]]] = []
             self.candidates = [
                 {
@@ -328,15 +329,24 @@ def test_auto_dispatch_bounds_repository_candidate_and_predecessor_scans(
                 ]
             return candidates if limit is None else candidates[:limit]
 
-        def list_rd_work_item_dependencies(self, collaboration_run_id: str):
+        def list_rd_work_item_dependencies_for_successors(
+            self,
+            collaboration_run_id: str,
+            successor_work_item_ids: list[str],
+        ):
             assert collaboration_run_id == "run-1"
+            self.dependency_calls.append((collaboration_run_id, tuple(successor_work_item_ids)))
             return [
                 {
                     "predecessor_work_item_id": f"predecessor-{index:03d}",
                     "successor_work_item_id": f"work-{index:03d}",
                 }
                 for index in range(100)
+                if f"work-{index:03d}" in successor_work_item_ids
             ]
+
+        def list_rd_work_item_dependencies(self, _collaboration_run_id: str):
+            raise AssertionError("dispatch must not load the run-wide dependency graph")
 
         def list_rd_work_items_by_ids(
             self,
@@ -371,9 +381,128 @@ def test_auto_dispatch_bounds_repository_candidate_and_predecessor_scans(
     assert repository.candidate_calls == [
         {"limit": 2, "after": None, "due_at": None},
     ]
+    assert repository.dependency_calls == [
+        ("run-1", ("work-000", "work-001")),
+    ]
     assert repository.predecessor_calls == [
         ("run-1", ("predecessor-000", "predecessor-001")),
     ]
+
+
+def test_auto_dispatch_continues_past_a_blocked_row_and_rotates_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import rd_collaboration_auto_dispatch
+
+    store = MemoryStore()
+    store.rd_collaboration_runs.update(
+        {
+            "run-a": {"id": "run-a", "status": "running"},
+            "run-b": {"id": "run-b", "status": "running"},
+        }
+    )
+    store.rd_run_seats["seat-ai"] = {
+        "id": "seat-ai",
+        "subject_type": "ai_employee",
+    }
+    store.rd_work_items.update(
+        {
+            "blocked-first": {
+                "id": "blocked-first",
+                "collaboration_run_id": "run-a",
+                "owner_seat_id": "seat-ai",
+                "status": "ready",
+                "priority": 1,
+                "version": 1,
+            },
+            "later-same-run": {
+                "id": "later-same-run",
+                "collaboration_run_id": "run-a",
+                "owner_seat_id": "seat-ai",
+                "status": "ready",
+                "priority": 2,
+                "version": 1,
+            },
+            "later-run": {
+                "id": "later-run",
+                "collaboration_run_id": "run-b",
+                "owner_seat_id": "seat-ai",
+                "status": "ready",
+                "priority": 1,
+                "version": 1,
+            },
+            "unfinished-predecessor": {
+                "id": "unfinished-predecessor",
+                "collaboration_run_id": "run-a",
+                "status": "running",
+                "priority": 0,
+            },
+        }
+    )
+    store.rd_work_item_dependencies["blocked-edge"] = {
+        "id": "blocked-edge",
+        "collaboration_run_id": "run-a",
+        "predecessor_work_item_id": "unfinished-predecessor",
+        "successor_work_item_id": "blocked-first",
+    }
+    dispatched: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        rd_collaboration_auto_dispatch,
+        "dispatch_ai_task_for_work_item",
+        lambda _store, *, collaboration_run_id, work_item_id: dispatched.append(
+            (collaboration_run_id, work_item_id)
+        ),
+    )
+
+    first = dispatch_ready_ai_work_items(store, limit=1)
+    second = dispatch_ready_ai_work_items(store, limit=1)
+    third = dispatch_ready_ai_work_items(store, limit=1)
+
+    assert first["dispatched_work_item_ids"] == []
+    assert second["dispatched_work_item_ids"] == ["later-run"]
+    assert third["dispatched_work_item_ids"] == ["later-same-run"]
+    assert dispatched == [
+        ("run-b", "later-run"),
+        ("run-a", "later-same-run"),
+    ]
+
+
+def test_auto_dispatch_continues_past_a_repeated_capacity_deferral(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import rd_collaboration_auto_dispatch
+
+    store = MemoryStore()
+    store.rd_collaboration_runs["run-1"] = {"id": "run-1", "status": "running"}
+    store.rd_run_seats["seat-ai"] = {
+        "id": "seat-ai",
+        "subject_type": "ai_employee",
+    }
+    for priority, work_item_id in enumerate(("deferred-first", "later-work"), start=1):
+        store.rd_work_items[work_item_id] = {
+            "id": work_item_id,
+            "collaboration_run_id": "run-1",
+            "owner_seat_id": "seat-ai",
+            "status": "ready",
+            "priority": priority,
+            "version": 1,
+        }
+
+    def dispatch(_store, *, collaboration_run_id: str, work_item_id: str) -> None:
+        assert collaboration_run_id == "run-1"
+        if work_item_id == "deferred-first":
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "RD_SEAT_CAPACITY_EXHAUSTED"},
+            )
+
+    monkeypatch.setattr(rd_collaboration_auto_dispatch, "dispatch_ai_task_for_work_item", dispatch)
+
+    first = dispatch_ready_ai_work_items(store, limit=1)
+    second = dispatch_ready_ai_work_items(store, limit=1)
+
+    assert first["capacity_deferred_work_item_ids"] == ["deferred-first"]
+    assert second["dispatched_work_item_ids"] == ["later-work"]
 
 
 def test_auto_dispatch_escalates_a_frozen_runner_safety_fault_without_leaking_paths() -> None:

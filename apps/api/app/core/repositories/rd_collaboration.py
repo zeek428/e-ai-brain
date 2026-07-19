@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from psycopg import sql
@@ -19,6 +19,19 @@ __all__ = [
     "RdCollaborationRepositoryError",
     "RdCollaborationVersionConflictError",
 ]
+
+_DUE_ORDER_SQL = "COALESCE(next_dispatch_at, '-infinity'::timestamptz)"
+_DISPATCH_PRIORITY_SQL = "(CASE WHEN priority = 0 THEN 100 ELSE priority END)"
+_DUE_DISPATCH_PAGE_SQL = f"""
+    SELECT *
+    FROM rd_work_items
+    WHERE collaboration_run_id = %s
+      AND status IN ('ready', 'rework_required')
+      AND {_DUE_ORDER_SQL} <= %s
+      {{after_predicate}}
+    ORDER BY {_DUE_ORDER_SQL}, {_DISPATCH_PRIORITY_SQL}, id
+    LIMIT %s
+"""
 
 
 def _row_dict(cursor: Any, row: Sequence[Any] | None) -> dict[str, Any] | None:
@@ -598,56 +611,207 @@ class RdCollaborationReadRepository(RdCollaborationWriteRepository):
         collaboration_run_id: str,
         *,
         limit: int | None = None,
-        after: tuple[int, str] | None = None,
+        after: tuple[datetime | None, int, str] | None = None,
         due_at: datetime | None = None,
     ) -> list[dict[str, Any]]:
         """Load only due automatic-dispatch candidates from PostgreSQL.
 
-        Keep the due predicate in SQL so the partial dispatch-due index from
-        migration 123 can serve worker polling. Dependency eligibility remains
-        a scheduler concern because it spans multiple work-item rows.
+        Keep the due predicate and page order aligned with the partial index
+        from migration 124. Dependency eligibility remains a scheduler concern
+        because it spans multiple work-item rows.
         """
-        paged = limit is not None or after is not None
-        params: list[Any] = [collaboration_run_id]
-        due_predicate = "CURRENT_TIMESTAMP"
-        if due_at is not None:
-            due_predicate = "%s"
-            params.append(due_at)
-        priority_order = "(CASE WHEN priority = 0 THEN 100 ELSE priority END)"
-        cursor_predicate = ""
-        if after is not None:
-            cursor_predicate = f"""
-                      AND (
-                        {priority_order} > %s
-                        OR ({priority_order} = %s AND id > %s)
-                      )
-            """
-            params.extend((after[0], after[0], after[1]))
-        order_by = f"{priority_order}, id" if paged else "plan_version, priority, id"
-        limit_clause = ""
-        if limit is not None:
-            limit_clause = "LIMIT %s"
-            params.append(limit)
         with self._connect() as connection:
             with connection.cursor() as cursor:
+                if limit is not None or after is not None:
+                    observed_at = due_at or datetime.now(UTC)
+                    if observed_at.tzinfo is None:
+                        observed_at = observed_at.replace(tzinfo=UTC)
+                    page = self._list_due_rd_work_item_page_cursor(
+                        cursor,
+                        collaboration_run_id=collaboration_run_id,
+                        limit=limit or 50,
+                        after=after,
+                        due_at=observed_at,
+                    )
+                    return sorted(
+                        page,
+                        key=lambda item: (
+                            int(item.get("priority") or 100),
+                            str(item["id"]),
+                        ),
+                    )
                 cursor.execute(
-                    f"""
+                    """
                     SELECT *
                     FROM rd_work_items
                     WHERE collaboration_run_id = %s
                       AND status IN ('ready', 'rework_required')
-                      AND (next_dispatch_at IS NULL OR next_dispatch_at <= {due_predicate})
-                    {cursor_predicate}
-                    ORDER BY {order_by}
-                    {limit_clause}
+                      AND (next_dispatch_at IS NULL OR next_dispatch_at <= CURRENT_TIMESTAMP)
+                    ORDER BY plan_version, priority, id
                     """,
-                    tuple(params),
+                    (collaboration_run_id,),
                 )
                 return [
                     row
                     for item in cursor.fetchall()
                     if (row := _row_dict(cursor, item)) is not None
                 ]
+
+    @staticmethod
+    def _list_due_rd_work_item_page_cursor(
+        cursor: Any,
+        *,
+        collaboration_run_id: str,
+        limit: int,
+        after: tuple[datetime | None, int, str] | None,
+        due_at: datetime,
+    ) -> list[dict[str, Any]]:
+        params: list[Any] = [collaboration_run_id, due_at]
+        after_predicate = ""
+        if after is not None:
+            after_predicate = f"""
+              AND (
+                {_DUE_ORDER_SQL} > COALESCE(%s, '-infinity'::timestamptz)
+                OR (
+                  {_DUE_ORDER_SQL} = COALESCE(%s, '-infinity'::timestamptz)
+                  AND {_DISPATCH_PRIORITY_SQL} > %s
+                )
+                OR (
+                  {_DUE_ORDER_SQL} = COALESCE(%s, '-infinity'::timestamptz)
+                  AND {_DISPATCH_PRIORITY_SQL} = %s
+                  AND id > %s
+                )
+              )
+            """
+            params.extend((after[0], after[0], after[1], after[0], after[1], after[2]))
+        params.append(limit)
+        cursor.execute(
+            _DUE_DISPATCH_PAGE_SQL.format(after_predicate=after_predicate),
+            tuple(params),
+        )
+        return [row for item in cursor.fetchall() if (row := _row_dict(cursor, item)) is not None]
+
+    def reserve_due_rd_dispatch_candidates(
+        self,
+        *,
+        limit: int,
+        due_at: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        """Atomically reserve a bounded, restart-safe round-robin candidate page."""
+        if limit <= 0:
+            return []
+        observed_at = due_at or datetime.now(UTC)
+        if observed_at.tzinfo is None:
+            observed_at = observed_at.replace(tzinfo=UTC)
+        reserved: list[dict[str, Any]] = []
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO rd_dispatch_sweep_cursors (id)
+                    VALUES ('automatic_dispatch')
+                    ON CONFLICT (id) DO NOTHING
+                    """
+                )
+                cursor.execute(
+                    """
+                    SELECT last_run_id
+                    FROM rd_dispatch_sweep_cursors
+                    WHERE id = 'automatic_dispatch'
+                    FOR UPDATE
+                    """
+                )
+                last_run_row = cursor.fetchone()
+                last_run_id = str(last_run_row[0]) if last_run_row and last_run_row[0] else None
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM rd_collaboration_runs
+                    WHERE status IN ('running', 'integrating', 'verifying')
+                    ORDER BY id
+                    """
+                )
+                run_ids = [str(row[0]) for row in cursor.fetchall()]
+                if last_run_id in run_ids:
+                    split = run_ids.index(last_run_id) + 1
+                    run_ids = run_ids[split:] + run_ids[:split]
+
+                last_examined_run_id = last_run_id
+                for run_id in run_ids:
+                    remaining = limit - len(reserved)
+                    if remaining <= 0:
+                        break
+                    cursor.execute(
+                        """
+                        SELECT cursor_next_dispatch_at, cursor_priority, cursor_work_item_id
+                        FROM rd_dispatch_run_cursors
+                        WHERE collaboration_run_id = %s
+                        """,
+                        (run_id,),
+                    )
+                    cursor_row = cursor.fetchone()
+                    after = (
+                        (cursor_row[0], int(cursor_row[1]), str(cursor_row[2]))
+                        if cursor_row is not None
+                        else None
+                    )
+                    page = self._list_due_rd_work_item_page_cursor(
+                        cursor,
+                        collaboration_run_id=run_id,
+                        limit=remaining,
+                        after=after,
+                        due_at=observed_at,
+                    )
+                    if not page and after is not None:
+                        page = self._list_due_rd_work_item_page_cursor(
+                            cursor,
+                            collaboration_run_id=run_id,
+                            limit=remaining,
+                            after=None,
+                            due_at=observed_at,
+                        )
+                    if page:
+                        last_item = page[-1]
+                        cursor.execute(
+                            """
+                            INSERT INTO rd_dispatch_run_cursors (
+                              collaboration_run_id, cursor_next_dispatch_at,
+                              cursor_priority, cursor_work_item_id
+                            ) VALUES (%s, %s, %s, %s)
+                            ON CONFLICT (collaboration_run_id) DO UPDATE SET
+                              cursor_next_dispatch_at = EXCLUDED.cursor_next_dispatch_at,
+                              cursor_priority = EXCLUDED.cursor_priority,
+                              cursor_work_item_id = EXCLUDED.cursor_work_item_id,
+                              version = rd_dispatch_run_cursors.version + 1,
+                              updated_at = now()
+                            """,
+                            (
+                                run_id,
+                                last_item.get("next_dispatch_at"),
+                                int(last_item.get("priority") or 100),
+                                str(last_item["id"]),
+                            ),
+                        )
+                        reserved.extend(
+                            sorted(
+                                page,
+                                key=lambda item: (
+                                    int(item.get("priority") or 100),
+                                    str(item["id"]),
+                                ),
+                            )
+                        )
+                    last_examined_run_id = run_id
+                cursor.execute(
+                    """
+                    UPDATE rd_dispatch_sweep_cursors
+                    SET last_run_id = %s, version = version + 1, updated_at = now()
+                    WHERE id = 'automatic_dispatch'
+                    """,
+                    (last_examined_run_id,),
+                )
+            connection.commit()
+        return reserved
 
     def get_rd_work_item_dependency(self, record_id: str) -> dict[str, Any] | None:
         return self._get("rd_work_item_dependencies", record_id)
@@ -661,6 +825,31 @@ class RdCollaborationReadRepository(RdCollaborationWriteRepository):
             filters={"collaboration_run_id": collaboration_run_id},
             order_by=("plan_version", "predecessor_work_item_id", "id"),
         )
+
+    def list_rd_work_item_dependencies_for_successors(
+        self,
+        collaboration_run_id: str,
+        successor_work_item_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        if not successor_work_item_ids:
+            return []
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT *
+                    FROM rd_work_item_dependencies
+                    WHERE collaboration_run_id = %s
+                      AND successor_work_item_id = ANY(%s)
+                    ORDER BY successor_work_item_id, predecessor_work_item_id, id
+                    """,
+                    (collaboration_run_id, successor_work_item_ids),
+                )
+                return [
+                    row
+                    for item in cursor.fetchall()
+                    if (row := _row_dict(cursor, item)) is not None
+                ]
 
     def get_rd_work_item_attempt(self, record_id: str) -> dict[str, Any] | None:
         return self._get("rd_work_item_attempts", record_id)

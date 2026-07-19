@@ -442,6 +442,10 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
                     cursor,
                     "123_rd_dispatch_retry_controls.sql",
                 )
+                self._apply_additive_migration(
+                    cursor,
+                    "124_rd_dispatch_fair_cursor.sql",
+                )
 
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)

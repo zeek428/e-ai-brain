@@ -21,6 +21,7 @@ from app.core.persistence import PostgresSnapshotRepository
 from app.core.persistence_runtime import PostgresRuntimeStore
 from app.core.rd_collaboration_graph import build_rd_collaboration_graph, rd_collaboration_thread_id
 from app.core.repositories.rd_collaboration import (
+    _DUE_DISPATCH_PAGE_SQL,
     RdCollaborationReadRepository,
     RdCollaborationRepositoryError,
     RdCollaborationVersionConflictError,
@@ -818,6 +819,150 @@ def test_repository_lists_only_due_dispatch_candidates_in_plan_priority_id_order
         "due-candidates-priority-2",
         "due-candidates-later-plan",
     ]
+
+
+def test_repository_priority_sorts_only_within_the_bounded_due_page(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="due-page-priority")
+    run_id = str(seeded["run"]["id"])
+    observed_at = datetime.now(UTC)
+    with repository._connect(autocommit=False) as connection:
+        for item_id, seconds_ago, priority in (
+            ("due-page-old-low-priority", 3, 9),
+            ("due-page-middle-high-priority", 2, 1),
+            ("due-page-newest", 1, 0),
+        ):
+            connection.execute(
+                """
+                INSERT INTO rd_work_items (
+                  id, collaboration_run_id, plan_version, work_item_type, title,
+                  objective, status, priority, idempotency_key, next_dispatch_at
+                ) VALUES (%s, %s, 1, 'implementation', %s, 'objective', 'ready', %s, %s, %s)
+                """,
+                (
+                    item_id,
+                    run_id,
+                    item_id,
+                    priority,
+                    item_id,
+                    observed_at - timedelta(seconds=seconds_ago),
+                ),
+            )
+
+    candidates = repository.list_due_rd_work_items(
+        run_id,
+        limit=2,
+        due_at=observed_at,
+    )
+
+    assert [candidate["id"] for candidate in candidates] == [
+        "due-page-middle-high-priority",
+        "due-page-old-low-priority",
+    ]
+
+
+def test_repository_reserves_fair_dispatch_pages_across_restart_and_workers(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    run_a = _seed_exact_run(repository, prefix="dispatch-fair-a")
+    run_b = _seed_exact_run(repository, prefix="dispatch-fair-b")
+    run_a_id = str(run_a["run"]["id"])
+    run_b_id = str(run_b["run"]["id"])
+    with repository._connect(autocommit=False) as connection:
+        for item_id, run_id, priority in (
+            ("dispatch-fair-a-1", run_a_id, 1),
+            ("dispatch-fair-a-2", run_a_id, 2),
+            ("dispatch-fair-b-1", run_b_id, 1),
+            ("dispatch-fair-b-2", run_b_id, 2),
+        ):
+            connection.execute(
+                """
+                INSERT INTO rd_work_items (
+                  id, collaboration_run_id, plan_version, work_item_type, title,
+                  objective, status, priority, idempotency_key
+                ) VALUES (%s, %s, 1, 'implementation', %s, 'objective', 'ready', %s, %s)
+                """,
+                (item_id, run_id, item_id, priority, item_id),
+            )
+
+    first = repository.reserve_due_rd_dispatch_candidates(limit=1)
+    restarted_repository = PostgresSnapshotRepository(repository.database_url, pool_max_size=4)
+    try:
+        second = restarted_repository.reserve_due_rd_dispatch_candidates(limit=1)
+        third = restarted_repository.reserve_due_rd_dispatch_candidates(limit=1)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            concurrent_pages = list(
+                executor.map(
+                    lambda _: restarted_repository.reserve_due_rd_dispatch_candidates(limit=1),
+                    range(2),
+                )
+            )
+    finally:
+        restarted_repository._pool.close()
+
+    assert [item["id"] for item in first] == ["dispatch-fair-a-1"]
+    assert [item["id"] for item in second] == ["dispatch-fair-b-1"]
+    assert [item["id"] for item in third] == ["dispatch-fair-a-2"]
+    concurrently_reserved_ids = [str(page[0]["id"]) for page in concurrent_pages]
+    assert len(set(concurrently_reserved_ids)) == 2
+
+
+def test_due_dispatch_page_uses_bounded_due_index_before_priority_sort(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="dispatch-plan")
+    run_id = str(seeded["run"]["id"])
+    with repository._connect(autocommit=False) as connection:
+        connection.execute(
+            """
+            INSERT INTO rd_work_items (
+              id, collaboration_run_id, plan_version, work_item_type, title,
+              objective, status, priority, idempotency_key, next_dispatch_at
+            )
+            SELECT
+              'dispatch-plan-work-' || value,
+              %s,
+              1,
+              'implementation',
+              'work ' || value,
+              'objective',
+              'ready',
+              1 + (value %% 100),
+              'dispatch-plan-work-' || value,
+              CASE
+                WHEN value <= 100 THEN now() - interval '1 minute'
+                ELSE now() + interval '1 day'
+              END
+            FROM generate_series(1, 10000) AS value
+            """,
+            (run_id,),
+        )
+        connection.execute("ANALYZE rd_work_items")
+        connection.execute("SET LOCAL enable_seqscan = off")
+        plan = connection.execute(
+            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "
+            + _DUE_DISPATCH_PAGE_SQL.format(after_predicate=""),
+            (run_id, datetime.now(UTC), 10),
+        ).fetchone()[0][0]["Plan"]
+
+    def nodes(value: dict[str, object]):
+        yield value
+        for child in value.get("Plans", []):
+            yield from nodes(child)
+
+    plan_nodes = list(nodes(plan))
+    index_nodes = [
+        node
+        for node in plan_nodes
+        if node.get("Node Type") in {"Index Scan", "Index Only Scan"}
+        and node.get("Index Name") == "idx_rd_work_items_dispatch_due_page"
+    ]
+    limit_nodes = [node for node in plan_nodes if node.get("Node Type") == "Limit"]
+    assert index_nodes
+    assert limit_nodes
+    assert index_nodes[0]["Actual Rows"] == 10
+    assert limit_nodes[0]["Actual Rows"] == 10
 
 
 def _seed_startable_collaboration_version(

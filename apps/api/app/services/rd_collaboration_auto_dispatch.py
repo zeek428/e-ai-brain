@@ -54,6 +54,21 @@ def _is_ai_owned(store: Any, work_item: dict[str, Any]) -> bool:
     return bool(owner and owner.get("subject_type") == "ai_employee")
 
 
+def _decode_cursor(value: Any) -> tuple[datetime | None, int, str] | None:
+    if not isinstance(value, list) or len(value) != 3:
+        return None
+    due_at = value[0]
+    if isinstance(due_at, str):
+        due_at = datetime.fromisoformat(due_at.replace("Z", "+00:00"))
+    if due_at is not None and not isinstance(due_at, datetime):
+        return None
+    return due_at, int(value[1]), str(value[2])
+
+
+def _encode_cursor(cursor: tuple[datetime | None, int, str]) -> list[Any]:
+    return [cursor[0].isoformat() if cursor[0] is not None else None, cursor[1], cursor[2]]
+
+
 def dispatch_ready_ai_work_items(
     store: Any,
     *,
@@ -107,15 +122,55 @@ def dispatch_ready_ai_work_items(
         else:
             retryable.append(work_item_id)
 
-    examined = 0
-    for run in sorted(_runs(store), key=lambda item: str(item.get("id") or "")):
-        if examined >= limit or run.get("status") not in _DISPATCHABLE_RUN_STATUSES:
-            continue
-        run_id = str(run.get("id") or "")
-        if not run_id:
-            continue
-        cursor: tuple[int, str] | None = None
-        while examined < limit:
+    candidate_pages: list[tuple[str, list[dict[str, Any]]]] = []
+    repository = getattr(store, "repository", None)
+    reserve_candidates = getattr(repository, "reserve_due_rd_dispatch_candidates", None)
+    if callable(reserve_candidates):
+        reserved = [
+            dict(item)
+            for item in reserve_candidates(
+                limit=limit,
+                due_at=scheduler_now,
+            )
+        ][:limit]
+        candidates_by_run: dict[str, list[dict[str, Any]]] = {}
+        for item in reserved:
+            run_id = str(item.get("collaboration_run_id") or "")
+            if run_id:
+                candidates_by_run.setdefault(run_id, []).append(item)
+        for run_id, candidates in candidates_by_run.items():
+            page, _, _ = ready_work_item_page(
+                store,
+                collaboration_run_id=run_id,
+                scan_limit=len(candidates),
+                now=scheduler_now,
+                candidate_items=candidates,
+            )
+            candidate_pages.append((run_id, page))
+    else:
+        runs = [
+            run
+            for run in sorted(_runs(store), key=lambda item: str(item.get("id") or ""))
+            if run.get("status") in _DISPATCHABLE_RUN_STATUSES and str(run.get("id") or "")
+        ]
+        settings = getattr(store, "system_settings", None)
+        if not isinstance(settings, dict):
+            settings = {}
+            store.system_settings = settings
+        cursor_state = settings.setdefault(
+            "_rd_dispatch_candidate_cursor",
+            {"last_run_id": None, "runs": {}},
+        )
+        last_run_id = cursor_state.get("last_run_id")
+        run_ids = [str(run["id"]) for run in runs]
+        if last_run_id in run_ids:
+            split = run_ids.index(last_run_id) + 1
+            run_ids = run_ids[split:] + run_ids[:split]
+        examined = 0
+        for run_id in run_ids:
+            if examined >= limit:
+                break
+            cursor = _decode_cursor(cursor_state["runs"].get(run_id))
             page, next_cursor, examined_count = ready_work_item_page(
                 store,
                 collaboration_run_id=run_id,
@@ -123,69 +178,80 @@ def dispatch_ready_ai_work_items(
                 after=cursor,
                 now=scheduler_now,
             )
+            if examined_count == 0 and cursor is not None:
+                page, next_cursor, examined_count = ready_work_item_page(
+                    store,
+                    collaboration_run_id=run_id,
+                    scan_limit=limit - examined,
+                    after=None,
+                    now=scheduler_now,
+                )
             examined += examined_count
-            for work_item in page:
-                if work_item.get("status") not in {"ready", "rework_required"}:
-                    continue
-                if not _is_ai_owned(store, work_item):
-                    continue
-                work_item_id = str(work_item["id"])
-                risk_level = str(work_item.get("risk_level") or "medium").lower()
-                if risk_level in _HUMAN_REVIEW_RISK_LEVELS:
-                    if not high_risk_dispatch_is_approved(
-                        store,
-                        collaboration_run_id=run_id,
-                        work_item_id=work_item_id,
-                    ):
-                        try:
-                            require_human_approval_for_high_risk_dispatch(
-                                store,
-                                collaboration_run_id=run_id,
-                                work_item_id=work_item_id,
-                            )
-                        except HTTPException as exc:
-                            fault = classify_dispatch_fault(exc)
-                            if fault.outcome == "deferred":
-                                capacity_deferred.append(work_item_id)
-                            else:
-                                record_retry(work_item, fault)
-                            continue
-                        human_review_required.append(work_item_id)
-                        continue
-                try:
-                    dispatch_ai_task_for_work_item(
-                        store,
-                        collaboration_run_id=run_id,
-                        work_item_id=work_item_id,
-                    )
-                except (HTTPException, RdCollaborationRepositoryError) as exc:
-                    fault = classify_dispatch_fault(exc)
-                    if fault.outcome == "deferred":
-                        capacity_deferred.append(work_item_id)
-                        continue
-                    if fault.outcome == "retryable":
-                        record_retry(work_item, fault)
-                        continue
+            if next_cursor is not None:
+                cursor_state["runs"][run_id] = _encode_cursor(next_cursor)
+            cursor_state["last_run_id"] = run_id
+            candidate_pages.append((run_id, page))
+
+    for run_id, page in candidate_pages:
+        for work_item in page:
+            if work_item.get("status") not in {"ready", "rework_required"}:
+                continue
+            if not _is_ai_owned(store, work_item):
+                continue
+            work_item_id = str(work_item["id"])
+            risk_level = str(work_item.get("risk_level") or "medium").lower()
+            if risk_level in _HUMAN_REVIEW_RISK_LEVELS:
+                if not high_risk_dispatch_is_approved(
+                    store,
+                    collaboration_run_id=run_id,
+                    work_item_id=work_item_id,
+                ):
                     try:
-                        escalate_dispatch_fault_for_human(
+                        require_human_approval_for_high_risk_dispatch(
                             store,
                             collaboration_run_id=run_id,
                             work_item_id=work_item_id,
-                            fault=fault,
                         )
-                    except HTTPException as escalation_exc:
-                        escalation_fault = classify_dispatch_fault(escalation_exc)
-                        if escalation_fault.outcome == "deferred":
+                    except HTTPException as exc:
+                        fault = classify_dispatch_fault(exc)
+                        if fault.outcome == "deferred":
                             capacity_deferred.append(work_item_id)
                         else:
-                            record_retry(work_item, escalation_fault)
+                            record_retry(work_item, fault)
                         continue
-                    escalated.append(work_item_id)
+                    human_review_required.append(work_item_id)
                     continue
-                dispatched.append(work_item_id)
-            if examined >= limit or next_cursor is None or next_cursor == cursor:
-                break
-            cursor = next_cursor
+            try:
+                dispatch_ai_task_for_work_item(
+                    store,
+                    collaboration_run_id=run_id,
+                    work_item_id=work_item_id,
+                )
+            except (HTTPException, RdCollaborationRepositoryError) as exc:
+                fault = classify_dispatch_fault(exc)
+                if fault.outcome == "deferred":
+                    capacity_deferred.append(work_item_id)
+                    continue
+                if fault.outcome == "retryable":
+                    record_retry(work_item, fault)
+                    continue
+                try:
+                    escalate_dispatch_fault_for_human(
+                        store,
+                        collaboration_run_id=run_id,
+                        work_item_id=work_item_id,
+                        fault=fault,
+                    )
+                except HTTPException as escalation_exc:
+                    escalation_fault = classify_dispatch_fault(escalation_exc)
+                    if escalation_fault.outcome == "deferred":
+                        capacity_deferred.append(work_item_id)
+                    else:
+                        record_retry(work_item, escalation_fault)
+                    continue
+                escalated.append(work_item_id)
+                continue
+            dispatched.append(work_item_id)
     return {
         "capacity_deferred_work_item_ids": capacity_deferred,
         "dispatched_work_item_ids": dispatched,
