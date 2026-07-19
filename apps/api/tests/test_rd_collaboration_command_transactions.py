@@ -174,13 +174,15 @@ def test_transaction_exposes_every_task3_command_bundle() -> None:
 
 
 def test_dispatch_bundle_contract_and_transaction_forward_governance_records() -> None:
-    governance_parameters = {
+    forwarded_parameters = {
         "agent_budget_ledger",
         "agent_loop_iterations",
         "agent_loop_run",
         "context_manifest",
+        "runner_safety_approval_request",
+        "runner_safety_decision",
     }
-    assert governance_parameters.issubset(
+    assert forwarded_parameters.issubset(
         inspect.signature(RdCollaborationRepository.dispatch_work_item_execution_bundle).parameters
     )
     captured: dict[str, Any] = {}
@@ -202,6 +204,8 @@ def test_dispatch_bundle_contract_and_transaction_forward_governance_records() -
         "agent_loop_iterations": [{"id": "iteration-1"}],
         "agent_loop_run": {"id": "loop-1"},
         "context_manifest": {"id": "manifest-1"},
+        "runner_safety_approval_request": {"id": "approval-request-1"},
+        "runner_safety_decision": {"id": "decision-1"},
     }
     result = transaction.dispatch_work_item_execution_bundle(
         work_item_id="work-item-1",
@@ -217,7 +221,7 @@ def test_dispatch_bundle_contract_and_transaction_forward_governance_records() -
 
     assert result == {"forwarded": True}
     assert captured["cursor"] is cursor
-    assert all(captured[name] is records[name] for name in governance_parameters)
+    assert all(captured[name] is records[name] for name in forwarded_parameters)
 
 
 def test_assessment_snapshot_and_start_roll_back_with_command(

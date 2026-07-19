@@ -1531,6 +1531,8 @@ class RdCollaborationTransaction:
         attempt: dict[str, Any],
         event: dict[str, Any],
         audit_events: list[dict[str, Any]],
+        runner_safety_approval_request: dict[str, Any] | None = None,
+        runner_safety_decision: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return self._repository._dispatch_work_item_execution_bundle_cursor(
             self.cursor,
@@ -1546,6 +1548,8 @@ class RdCollaborationTransaction:
             attempt=attempt,
             event=event,
             audit_events=audit_events,
+            runner_safety_approval_request=runner_safety_approval_request,
+            runner_safety_decision=runner_safety_decision,
         )
 
     def save_rd_run_seat_record(self, record: dict[str, Any]) -> dict[str, Any]:

@@ -158,6 +158,13 @@ def runner_safety_decision_options() -> list[dict[str, Any]]:
     ]
 
 
+def runner_safety_decision_recommendation(approval_request_id: str) -> dict[str, str]:
+    return {
+        "action": "authorize_blocked_operations_or_cancel",
+        "approval_request_id": approval_request_id,
+    }
+
+
 def _load_runner_safety_approval_request(store: Any, record_id: str) -> dict[str, Any] | None:
     repository = getattr(store, "repository", None)
     get_request = getattr(repository, "get_ai_executor_approval_request", None)
@@ -369,10 +376,7 @@ def _runner_safety_approval_records(
         "options_json": options,
         "options_hash": _canonical_hash(options),
         "evidence_json": [safe_evidence],
-        "recommendation_json": {
-            "action": "authorize_blocked_operations_or_cancel",
-            "approval_request_id": approval_request_id,
-        },
+        "recommendation_json": runner_safety_decision_recommendation(approval_request_id),
         "decision_actor_selector": selector,
         "answer_actor_selector": {},
         "answer_schema": {},

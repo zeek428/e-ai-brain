@@ -359,6 +359,8 @@ class RdCollaborationRepository(Protocol):
         attempt: dict[str, Any],
         event: dict[str, Any],
         audit_events: list[dict[str, Any]],
+        runner_safety_approval_request: dict[str, Any] | None = None,
+        runner_safety_decision: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
     def fence_work_item_runner_result(
         self,

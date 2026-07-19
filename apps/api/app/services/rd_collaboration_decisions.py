@@ -16,6 +16,7 @@ from app.services.ai_executor_runner_safety import RUNNER_SAFETY_POLICY_VERSION
 from app.services.rd_dispatch_fault_decision import (
     runner_safety_decision_id,
     runner_safety_decision_options,
+    runner_safety_decision_recommendation,
 )
 
 
@@ -351,6 +352,8 @@ def _resolve_memory_runner_safety_approval(
         or decision.get("subject_id") != identity["work_item_id"]
         or decision.get("options_json") != expected_options
         or decision.get("options_hash") != _canonical_hash(expected_options)
+        or decision.get("recommendation_json")
+        != runner_safety_decision_recommendation(approval_request_id)
         or frozen_evidence != expected_evidence
         or request_snapshot.get("source") != "rd_collaboration_work_item"
         or request_snapshot.get("approval_request_id") != approval_request_id

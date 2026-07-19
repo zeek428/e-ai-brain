@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # Aggregate modules intentionally share one serialization/transaction vocabulary.
 # ruff: noqa: F401
+import re
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import nullcontext
 from copy import deepcopy
@@ -34,6 +35,10 @@ class RdCollaborationWorkWriteMixin:
         "integration_test",
         "version_integration",
     }
+    _RUNNER_SAFETY_APPROVAL_ID_PATTERN = re.compile(
+        r"^rd-runner-safety:(?P<work_item_id>[^\s:]+):attempt:(?P<attempt_no>[1-9]\d*)"
+        r"(?::renewal:(?P<renewal_no>[1-9]\d*))?$"
+    )
 
     def record_rd_ready_for_release_evidence_bundle(
         self,
@@ -769,6 +774,168 @@ class RdCollaborationWorkWriteMixin:
             lambda cursor: self._save_rd_work_item_record_cursor(cursor, record)
         )
 
+    @staticmethod
+    def _runner_safety_dispatch_proof_error() -> RdCollaborationRepositoryError:
+        return RdCollaborationRepositoryError(
+            "RD_DECISION_REQUIRED",
+            "runner safety dispatch is not bound to canonical approval evidence",
+        )
+
+    def _validate_runner_safety_dispatch_cursor(
+        self,
+        cursor: Any,
+        *,
+        work_item_id: str,
+        attempt: dict[str, Any],
+        runner_task: dict[str, Any],
+        runner_safety_approval_request: dict[str, Any] | None,
+        runner_safety_decision: dict[str, Any] | None,
+    ) -> None:
+        request_config = runner_task.get("request_config") or {}
+        claimed_approval = request_config.get("ai_executor_approval")
+        safety_snapshot = request_config.get("ai_executor_safety") or {}
+        safety_approval = safety_snapshot.get("approval") or {}
+        claimed_ids = {
+            str(approval.get("approval_request_id") or "").strip()
+            for approval in (claimed_approval, safety_approval)
+            if isinstance(approval, dict) and str(approval.get("approval_request_id") or "").strip()
+        }
+        reserved_ids = {
+            approval_request_id
+            for approval_request_id in claimed_ids
+            if self._RUNNER_SAFETY_APPROVAL_ID_PATTERN.fullmatch(approval_request_id)
+        }
+        provenance_supplied = (
+            runner_safety_approval_request is not None or runner_safety_decision is not None
+        )
+        if not reserved_ids:
+            if provenance_supplied:
+                raise self._runner_safety_dispatch_proof_error()
+            return
+        if (
+            len(reserved_ids) != 1
+            or claimed_ids != reserved_ids
+            or not isinstance(claimed_approval, dict)
+            or not isinstance(runner_safety_approval_request, dict)
+            or not isinstance(runner_safety_decision, dict)
+        ):
+            raise self._runner_safety_dispatch_proof_error()
+        approval_request_id = next(iter(reserved_ids))
+        identity_match = self._RUNNER_SAFETY_APPROVAL_ID_PATTERN.fullmatch(approval_request_id)
+        if identity_match is None:
+            raise self._runner_safety_dispatch_proof_error()
+        attempt_no = int(identity_match.group("attempt_no"))
+        renewal_no = int(identity_match.group("renewal_no") or 0)
+        if (
+            identity_match.group("work_item_id") != work_item_id
+            or int(attempt.get("attempt_no") or 0) != attempt_no
+            or attempt.get("work_item_id") != work_item_id
+        ):
+            raise self._runner_safety_dispatch_proof_error()
+        identity_suffix = f":renewal:{renewal_no}" if renewal_no > 0 else ""
+        decision_id = f"runner-safety-approval:{work_item_id}:attempt:{attempt_no}{identity_suffix}"
+        # Keep the same aggregate lock order as decision resolution:
+        # work item -> decision -> approval request.
+        cursor.execute(
+            "SELECT * FROM decision_requests WHERE id = %s FOR UPDATE",
+            (decision_id,),
+        )
+        canonical_decision = _row_dict(cursor, cursor.fetchone())
+        cursor.execute(
+            "SELECT * FROM ai_executor_approval_requests WHERE id = %s FOR UPDATE",
+            (approval_request_id,),
+        )
+        canonical_request = _row_dict(cursor, cursor.fetchone())
+        if (
+            canonical_decision is None
+            or canonical_request is None
+            or canonical_decision != runner_safety_decision
+            or canonical_request != runner_safety_approval_request
+        ):
+            raise self._runner_safety_dispatch_proof_error()
+        blocked_operations = list(canonical_request.get("blocked_operations") or [])
+        expected_request_snapshot = {
+            "approval_request_id": approval_request_id,
+            "attempt_no": attempt_no,
+            "blocked_operations": blocked_operations,
+            "policy_version": self._RUNNER_SAFETY_POLICY_VERSION,
+            "source": "rd_collaboration_work_item",
+            "work_item_id": work_item_id,
+        }
+        expected_evidence = {
+            "approval_request_id": approval_request_id,
+            "attempt_no": attempt_no,
+            "blocked_operations": blocked_operations,
+            "kind": "runner_safety_approval",
+            "policy_version": self._RUNNER_SAFETY_POLICY_VERSION,
+        }
+        if renewal_no > 0:
+            expected_request_snapshot["renewal_no"] = renewal_no
+            expected_evidence["renewal_no"] = renewal_no
+        expected_options = [
+            {
+                "code": "authorize_blocked_operations",
+                "input_schema": {},
+                "outcome": "approve",
+                "subject_transition": "resume",
+            },
+            {
+                "code": "cancel_work_item",
+                "input_schema": {},
+                "outcome": "reject",
+                "requires_comment": True,
+                "subject_transition": "cancelled",
+            },
+        ]
+        expected_recommendation = {
+            "action": "authorize_blocked_operations_or_cancel",
+            "approval_request_id": approval_request_id,
+        }
+        approval = canonical_request.get("approval") or {}
+        expires_at = canonical_request.get("expires_at")
+        approved_at = canonical_request.get("approved_at")
+        expected_approval = {
+            "approval_id": f"{approval_request_id}:approval",
+            "approval_request_id": approval_request_id,
+            "approved": True,
+            "approved_at": approved_at.isoformat() if approved_at is not None else None,
+            "approved_by": canonical_request.get("approved_by"),
+            "approved_operations": blocked_operations,
+            "expires_at": expires_at.isoformat() if expires_at is not None else None,
+            "mode": "platform_human_approval",
+            "policy_version": self._RUNNER_SAFETY_POLICY_VERSION,
+        }
+        # ``now()`` is pinned to transaction start and can therefore remain
+        # pre-expiry after this transaction waited on either provenance lock.
+        cursor.execute("SELECT %s > clock_timestamp()", (expires_at,))
+        approval_is_current = bool(cursor.fetchone()[0]) if expires_at is not None else False
+        if (
+            not blocked_operations
+            or canonical_request.get("status") != "approved"
+            or canonical_request.get("approval_request") != expected_request_snapshot
+            or canonical_request.get("executor_type") != runner_task.get("executor_type")
+            or canonical_request.get("runner_id") != runner_task.get("runner_id")
+            or approval != expected_approval
+            or claimed_approval != expected_approval
+            or not approval_is_current
+            or canonical_decision.get("id") != decision_id
+            or canonical_decision.get("decision_type") != "runner_safety_approval"
+            or canonical_decision.get("subject_type") != "rd_work_item"
+            or canonical_decision.get("subject_id") != work_item_id
+            or canonical_decision.get("status") != "approved"
+            or canonical_decision.get("selected_option_code") != "authorize_blocked_operations"
+            or canonical_decision.get("options_json") != expected_options
+            or canonical_decision.get("options_hash") != _canonical_hash(expected_options)
+            or canonical_decision.get("evidence_json") != [expected_evidence]
+            or canonical_decision.get("recommendation_json") != expected_recommendation
+            or safety_snapshot.get("approval_required") is not True
+            or safety_snapshot.get("blocked_operations") != blocked_operations
+            or safety_snapshot.get("execution_allowed") is not True
+            or safety_snapshot.get("policy_version") != self._RUNNER_SAFETY_POLICY_VERSION
+            or safety_snapshot.get("status") != "approved"
+        ):
+            raise self._runner_safety_dispatch_proof_error()
+
     def dispatch_work_item_execution_bundle(
         self,
         *,
@@ -784,6 +951,8 @@ class RdCollaborationWorkWriteMixin:
         attempt: dict[str, Any],
         event: dict[str, Any],
         audit_events: list[dict[str, Any]],
+        runner_safety_approval_request: dict[str, Any] | None = None,
+        runner_safety_decision: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Bind task, Runner and attempt to one ready work item atomically.
 
@@ -807,6 +976,8 @@ class RdCollaborationWorkWriteMixin:
                 attempt=attempt,
                 event=event,
                 audit_events=audit_events,
+                runner_safety_approval_request=runner_safety_approval_request,
+                runner_safety_decision=runner_safety_decision,
             )
         )
 
@@ -826,6 +997,8 @@ class RdCollaborationWorkWriteMixin:
         attempt: dict[str, Any],
         event: dict[str, Any],
         audit_events: list[dict[str, Any]],
+        runner_safety_approval_request: dict[str, Any] | None = None,
+        runner_safety_decision: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         cursor.execute("SELECT * FROM rd_work_items WHERE id = %s FOR UPDATE", (work_item_id,))
         work_item = _row_dict(cursor, cursor.fetchone())
@@ -859,6 +1032,14 @@ class RdCollaborationWorkWriteMixin:
                 work_item_id=work_item_id,
                 attempt_id=attempt.get("id"),
             )
+        self._validate_runner_safety_dispatch_cursor(
+            cursor,
+            work_item_id=work_item_id,
+            attempt=attempt,
+            runner_task=runner_task,
+            runner_safety_approval_request=runner_safety_approval_request,
+            runner_safety_decision=runner_safety_decision,
+        )
         task_repository = getattr(self, "_task_read_repository", None)
         upsert_tasks = getattr(task_repository, "upsert_ai_tasks", None)
         upsert_requirements = getattr(task_repository, "_upsert_requirements", None)
@@ -2434,6 +2615,10 @@ class RdCollaborationWorkWriteMixin:
                 "subject_transition": "cancelled",
             },
         ]
+        expected_recommendation = {
+            "action": "authorize_blocked_operations_or_cancel",
+            "approval_request_id": approval_request_id,
+        }
         if (
             approval_request is None
             or approval_request.get("status") != "pending"
@@ -2441,6 +2626,7 @@ class RdCollaborationWorkWriteMixin:
             or decision.get("id") != expected_decision_id
             or decision.get("options_json") != expected_options
             or decision.get("options_hash") != _canonical_hash(expected_options)
+            or decision.get("recommendation_json") != expected_recommendation
             or frozen_evidence.get("kind") != "runner_safety_approval"
             or frozen_evidence.get("approval_request_id") != approval_request_id
             or frozen_evidence.get("blocked_operations") != blocked_operations

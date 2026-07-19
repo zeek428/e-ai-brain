@@ -28,6 +28,7 @@ from app.services.rd_dispatch_fault_decision import (
     current_runner_safety_approval_request,
     runner_safety_decision_id,
     runner_safety_decision_options,
+    runner_safety_decision_recommendation,
 )
 from app.services.rd_requirement_entry_adapters import require_v2_task_work_item_entrypoint
 from app.services.rd_task_executor_policies import (
@@ -77,7 +78,7 @@ def _work_item_execution_records(
     return read_memory_dict(current_store, collection_name)
 
 
-def _approved_runner_safety_snapshot(
+def _approved_runner_safety_provenance(
     current_store: Any,
     *,
     approval_request_id: str,
@@ -162,15 +163,19 @@ def _approved_runner_safety_snapshot(
         or decision.get("options_json") != expected_options
         or decision.get("options_hash") != expected_options_hash
         or decision.get("evidence_json") != [expected_evidence]
-        or (decision.get("recommendation_json") or {}).get("approval_request_id")
-        != approval_request_id
+        or decision.get("recommendation_json")
+        != runner_safety_decision_recommendation(approval_request_id)
         or approval.get("approval_request_id") != approval_request_id
         or approval.get("approved") is not True
         or approval.get("approved_operations") != blocked_operations
         or approval.get("policy_version") != RUNNER_SAFETY_POLICY_VERSION
     ):
         return None
-    return deepcopy(approval)
+    return {
+        "approval": deepcopy(approval),
+        "approval_request": deepcopy(record),
+        "decision": deepcopy(decision),
+    }
 
 
 def _discard_uncommitted_work_item_task(
@@ -545,12 +550,15 @@ def dispatch_ai_task_for_work_item(
         work_item_id=work_item_id,
         attempt_no=attempt_no,
     )
-    approved_runner_safety = _approved_runner_safety_snapshot(
+    runner_safety_provenance = _approved_runner_safety_provenance(
         current_store,
         approval_request_id=approval_request_id,
         attempt_no=attempt_no,
         renewal_no=renewal_no,
         work_item_id=work_item_id,
+    )
+    approved_runner_safety = (
+        dict(runner_safety_provenance["approval"]) if runner_safety_provenance is not None else None
     )
     now = datetime.now(UTC).isoformat()
     attempt = {
@@ -745,6 +753,16 @@ def dispatch_ai_task_for_work_item(
                     )
                     if isinstance(event, dict)
                 ],
+                runner_safety_approval_request=(
+                    dict(runner_safety_provenance["approval_request"])
+                    if runner_safety_provenance is not None
+                    else None
+                ),
+                runner_safety_decision=(
+                    dict(runner_safety_provenance["decision"])
+                    if runner_safety_provenance is not None
+                    else None
+                ),
             )
         except RdCollaborationRepositoryError as exc:
             if exc.code == "RD_SEAT_CAPACITY_EXHAUSTED":
