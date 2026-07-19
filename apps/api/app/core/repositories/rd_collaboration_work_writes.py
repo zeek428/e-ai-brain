@@ -25,44 +25,11 @@ from app.core.repositories.rd_collaboration_shared import (
     _response_hash,
     _row_dict,
 )
+from app.services.ai_executor_runner_safety import runner_task_safety_snapshot
 
 
 class RdCollaborationWorkWriteMixin:
     _RUNNER_SAFETY_POLICY_VERSION = "runner_safety_v1"
-    _RUNNER_SAFETY_NO_APPROVAL_SNAPSHOT = {
-        "approval": {
-            "approved": False,
-            "approval_id": None,
-            "approval_request_id": None,
-            "approved_at": None,
-            "approved_by": None,
-            "approved_operations": [],
-            "expires_at": None,
-            "invalid_reasons": [],
-            "missing_fields": [
-                "approval_id",
-                "approved",
-                "approved_at",
-                "approved_by",
-                "approved_operations",
-                "expires_at",
-                "mode",
-                "policy_version",
-            ],
-            "missing_operations": [],
-            "mode": "platform_human_approval_required",
-            "policy_version": None,
-        },
-        "approval_required": False,
-        "blocked_operations": [],
-        "enforcement": "server_preflight_and_runner_guard",
-        "execution_allowed": True,
-        "findings": [],
-        "policy_version": _RUNNER_SAFETY_POLICY_VERSION,
-        "required_action": None,
-        "risk_level": "low",
-        "status": "not_required",
-    }
     _INTEGRATION_WORK_ITEM_TYPES = {
         "automated_testing",
         "integration",
@@ -848,6 +815,18 @@ class RdCollaborationWorkWriteMixin:
         safety_snapshot = request_config.get("ai_executor_safety") or {}
         if not isinstance(safety_snapshot, dict):
             raise self._runner_safety_dispatch_proof_error()
+        instruction = runner_task.get("instruction")
+        if not isinstance(instruction, str):
+            raise self._runner_safety_dispatch_proof_error()
+        canonical_safety_snapshot = runner_task_safety_snapshot(
+            instruction=instruction,
+            request_config=request_config,
+        )
+        if not self._strict_runner_safety_value_matches(
+            safety_snapshot,
+            canonical_safety_snapshot,
+        ):
+            raise self._runner_safety_dispatch_proof_error()
         safety_approval = safety_snapshot.get("approval")
         claimed_ids = {
             str(approval.get("approval_request_id") or "").strip()
@@ -864,10 +843,7 @@ class RdCollaborationWorkWriteMixin:
         )
         canonical_no_approval_execution = (
             "ai_executor_approval" not in request_config
-            and self._strict_runner_safety_value_matches(
-                safety_snapshot,
-                self._RUNNER_SAFETY_NO_APPROVAL_SNAPSHOT,
-            )
+            and canonical_safety_snapshot["approval_required"] is False
         )
         if canonical_no_approval_execution:
             if provenance_supplied:
@@ -910,8 +886,14 @@ class RdCollaborationWorkWriteMixin:
         if (
             canonical_decision is None
             or canonical_request is None
-            or canonical_decision != runner_safety_decision
-            or canonical_request != runner_safety_approval_request
+            or not self._strict_runner_safety_value_matches(
+                canonical_decision,
+                runner_safety_decision,
+            )
+            or not self._strict_runner_safety_value_matches(
+                canonical_request,
+                runner_safety_approval_request,
+            )
         ):
             raise self._runner_safety_dispatch_proof_error()
         blocked_operations = list(canonical_request.get("blocked_operations") or [])
@@ -979,12 +961,18 @@ class RdCollaborationWorkWriteMixin:
         if (
             not blocked_operations
             or canonical_request.get("status") != "approved"
-            or canonical_request.get("approval_request") != expected_request_snapshot
+            or not self._strict_runner_safety_value_matches(
+                canonical_request.get("approval_request"),
+                expected_request_snapshot,
+            )
             or canonical_request.get("executor_type") != runner_task.get("executor_type")
             or canonical_request.get("runner_id") != runner_task.get("runner_id")
-            or approval != expected_approval
-            or claimed_approval != expected_approval
-            or safety_approval != expected_safety_approval
+            or not self._strict_runner_safety_value_matches(approval, expected_approval)
+            or not self._strict_runner_safety_value_matches(claimed_approval, expected_approval)
+            or not self._strict_runner_safety_value_matches(
+                safety_approval,
+                expected_safety_approval,
+            )
             or not approval_is_current
             or canonical_decision.get("id") != decision_id
             or canonical_decision.get("decision_type") != "runner_safety_approval"
@@ -992,12 +980,24 @@ class RdCollaborationWorkWriteMixin:
             or canonical_decision.get("subject_id") != work_item_id
             or canonical_decision.get("status") != "approved"
             or canonical_decision.get("selected_option_code") != "authorize_blocked_operations"
-            or canonical_decision.get("options_json") != expected_options
+            or not self._strict_runner_safety_value_matches(
+                canonical_decision.get("options_json"),
+                expected_options,
+            )
             or canonical_decision.get("options_hash") != _canonical_hash(expected_options)
-            or canonical_decision.get("evidence_json") != [expected_evidence]
-            or canonical_decision.get("recommendation_json") != expected_recommendation
+            or not self._strict_runner_safety_value_matches(
+                canonical_decision.get("evidence_json"),
+                [expected_evidence],
+            )
+            or not self._strict_runner_safety_value_matches(
+                canonical_decision.get("recommendation_json"),
+                expected_recommendation,
+            )
             or safety_snapshot.get("approval_required") is not True
-            or safety_snapshot.get("blocked_operations") != blocked_operations
+            or not self._strict_runner_safety_value_matches(
+                safety_snapshot.get("blocked_operations"),
+                blocked_operations,
+            )
             or safety_snapshot.get("execution_allowed") is not True
             or safety_snapshot.get("policy_version") != self._RUNNER_SAFETY_POLICY_VERSION
             or safety_snapshot.get("status") != "approved"

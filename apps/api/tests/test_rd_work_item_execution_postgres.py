@@ -1054,6 +1054,63 @@ def test_postgres_dispatch_bundle_directly_rejects_canonical_blocked_safety_snap
     _assert_no_dispatch_bundle_artifacts(repository, work_item_id=ids["work_item_id"])
 
 
+def test_postgres_dispatch_bundle_rejects_low_risk_snapshot_grafted_onto_high_risk_instruction(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="runner-safety-grafted-low-risk-snapshot",
+    )
+    original_dispatch, bundle = _capture_postgres_dispatch_bundle(
+        repository,
+        monkeypatch,
+        ids=ids,
+    )
+    runner_task = {**bundle["runner_task"], "instruction": "Run git push"}
+    assert runner_task["request_config"]["ai_executor_safety"]["risk_level"] == "low"
+
+    with pytest.raises(RdCollaborationRepositoryError) as exc_info:
+        original_dispatch(**{**bundle, "runner_task": runner_task})
+
+    assert exc_info.value.code == "RD_DECISION_REQUIRED"
+    assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "ready"
+    _assert_no_dispatch_bundle_artifacts(repository, work_item_id=ids["work_item_id"])
+
+
+def test_postgres_dispatch_bundle_rejects_type_coerced_nested_approval_proof(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids, _decision, _approval_request_id = _approve_runner_safety_gate(
+        repository,
+        monkeypatch,
+        prefix="runner-safety-type-coerced-nested-proof",
+    )
+    original_dispatch, bundle = _capture_postgres_dispatch_bundle(
+        repository,
+        monkeypatch,
+        ids=ids,
+    )
+    approval_request = dict(bundle["runner_safety_approval_request"])
+    approval_request["approval"] = {
+        **approval_request["approval"],
+        "approved": 1,
+    }
+
+    with pytest.raises(RdCollaborationRepositoryError) as exc_info:
+        original_dispatch(
+            **{
+                **bundle,
+                "runner_safety_approval_request": approval_request,
+            }
+        )
+
+    assert exc_info.value.code == "RD_DECISION_REQUIRED"
+    assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "ready"
+    _assert_no_dispatch_bundle_artifacts(repository, work_item_id=ids["work_item_id"])
+
+
 @pytest.mark.parametrize(
     ("field", "malformed_value"),
     [
