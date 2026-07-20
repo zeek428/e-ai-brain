@@ -38,7 +38,10 @@ type ScheduledJobManagementTabsProps = {
   onRerun: (run: ScheduledJobRunRecord) => void;
   onRunListChange: (query: ScheduledJobRunListQuery) => void;
   onRunJob: (job: ScheduledJobRecord) => void;
+  onShowAllRuns: () => void;
   onTabChange: (tab: ScheduledJobPageTab) => void;
+  onViewRunRecords: (job: ScheduledJobRecord) => void;
+  runFilterJobName?: string;
   pluginActionById: Map<string, PluginActionRecord>;
   pluginConnectionById: Map<string, PluginConnectionRecord>;
   runListMeta: ScheduledJobRemoteTableMeta;
@@ -69,13 +72,16 @@ export function ScheduledJobManagementTabs({
   onRerun,
   onRunListChange,
   onRunJob,
+  onShowAllRuns,
   onTabChange,
+  onViewRunRecords,
   pluginActionById,
   pluginConnectionById,
   runListMeta,
   runObservability,
   runningJobId,
   runs,
+  runFilterJobName,
   scheduleTypeLabelMap,
 }: ScheduledJobManagementTabsProps) {
   return (
@@ -102,6 +108,7 @@ export function ScheduledJobManagementTabs({
               onRemoteChange={onJobListChange}
               onReload={onReload}
               onRunJob={onRunJob}
+              onViewRunRecords={onViewRunRecords}
               pluginActionById={pluginActionById}
               pluginConnectionById={pluginConnectionById}
               runningJobId={runningJobId}
@@ -121,7 +128,9 @@ export function ScheduledJobManagementTabs({
               onRemoteChange={onRunListChange}
               onReload={onReload}
               onRerun={onRerun}
+              onShowAllRuns={onShowAllRuns}
               remote={runListMeta}
+              runFilterJobName={runFilterJobName}
               runningJobId={runningJobId}
               runs={runs}
             />

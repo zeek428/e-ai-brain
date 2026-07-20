@@ -92,11 +92,14 @@ export default function ScheduledJobsPage() {
     products,
     reload,
     runObservability,
+    runFilterJobId,
     runListMeta,
     runs,
     onJobListChange,
     onRunListChange,
+    showAllRuns,
     showRunImmediately,
+    showRunsForJob,
     skills,
   } = useScheduledJobWorkspaceData();
   const [productRepositories, setProductRepositories] = useState<ProductGitRepositoryOption[]>([]);
@@ -306,6 +309,13 @@ export default function ScheduledJobsPage() {
     },
     [openRunDetail, reload],
   );
+  const viewJobRunRecords = useCallback((job: ScheduledJobRecord) => {
+    showRunsForJob(job.id);
+    setActiveTab('runs');
+  }, [showRunsForJob]);
+  const runFilterJobName = runFilterJobId
+    ? jobById.get(runFilterJobId)?.name ?? runFilterJobId
+    : undefined;
 
   useEffect(() => {
     if (normalizedSelectedPluginConnectionIds.length === 0) {
@@ -1341,7 +1351,10 @@ export default function ScheduledJobsPage() {
         }}
         onRunListChange={onRunListChange}
         onRunJob={triggerJob}
+        onShowAllRuns={showAllRuns}
         onTabChange={setActiveTab}
+        onViewRunRecords={viewJobRunRecords}
+        runFilterJobName={runFilterJobName}
       />
 
       <ScheduledJobFormModal

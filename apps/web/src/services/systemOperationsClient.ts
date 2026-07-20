@@ -184,6 +184,9 @@ export type ScheduledJobRecord = {
   interval_seconds?: number | null;
   job_type: string;
   knowledge_document_ids?: string[];
+  last_failure_at?: string | null;
+  last_run_at?: string | null;
+  last_success_at?: string | null;
   model_gateway_config_id?: string | null;
   name: string;
   next_run_at?: string | null;

@@ -1017,6 +1017,7 @@ def run_scheduled_job_response(
     *,
     current_store: Any,
     job_id: str,
+    scheduled_for: str | None = None,
     source_run_id: str | None,
     trigger_type: str,
     user: dict[str, Any],
@@ -1092,7 +1093,7 @@ def run_scheduled_job_response(
         "result_summary": (
             queued_native_scan_result_summary(current_store, job=job) if use_async_worker else {}
         ),
-        "scheduled_for": now,
+        "scheduled_for": scheduled_for or now,
         "scheduled_job_id": job_id,
         "source_run_id": source_run.get("id") if source_run else None,
         "started_at": None if use_async_worker else now,

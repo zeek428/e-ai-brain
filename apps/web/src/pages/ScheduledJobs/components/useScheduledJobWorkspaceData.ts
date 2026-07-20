@@ -166,6 +166,30 @@ export function useScheduledJobWorkspaceData() {
     }));
   }, []);
 
+  const showRunsForJob = useCallback((scheduledJobId: string) => {
+    setRunListQuery((current) => ({
+      ...current,
+      page: 1,
+      scheduledJobId,
+      sortField: 'started_at',
+      sortOrder: 'descend',
+    }));
+    setRuns([]);
+    setRunListMeta((current) => ({ ...current, page: 1, total: 0 }));
+  }, []);
+
+  const showAllRuns = useCallback(() => {
+    setRunListQuery((current) => ({
+      ...current,
+      page: 1,
+      scheduledJobId: undefined,
+      sortField: 'started_at',
+      sortOrder: 'descend',
+    }));
+    setRuns([]);
+    setRunListMeta((current) => ({ ...current, page: 1, total: 0 }));
+  }, []);
+
   const showRunImmediately = useCallback((run: ScheduledJobRunRecord) => {
     const alreadyVisible = runs.some((item) => item.id === run.id);
     const nextPageSize = runListQuery.pageSize ?? 10;
@@ -207,11 +231,14 @@ export function useScheduledJobWorkspaceData() {
     products,
     reload,
     runObservability,
+    runFilterJobId: runListQuery.scheduledJobId,
     runListMeta,
     runs,
     onJobListChange: handleJobListChange,
     onRunListChange: handleRunListChange,
+    showAllRuns,
     showRunImmediately,
+    showRunsForJob,
     skills,
   };
 }

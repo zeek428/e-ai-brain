@@ -210,6 +210,11 @@ export const helpGroups: HelpGroup[] = [
             src: '/help/screenshots/help-scheduled-jobs.png',
           },
           {
+            alt: '定时作业运行记录入口截图',
+            caption: '作业配置列表展示上次执行时间，点击行内“运行记录”可按当前作业筛选运行历史。',
+            src: '/help/screenshots/help-scheduled-job-run-entry.png',
+          },
+          {
             alt: '定时作业运行结果详情刷新截图',
             caption: '运行结果详情标题栏可刷新当前运行状态、日志和结果动作写入记录。',
             src: '/help/screenshots/help-scheduled-job-run-detail.png',
@@ -221,7 +226,7 @@ export const helpGroups: HelpGroup[] = [
           {
             heading: '常用操作',
             body: [
-              '在作业列表查看启停状态、下次运行时间、最近运行结果和产品归属。',
+              '在作业列表查看启停状态、上次执行时间、下次运行时间和产品归属；点击“运行记录”可直接筛选该作业的运行历史。',
               '手动触发后页面会切到运行记录，并置顶展示新运行记录。',
               '打开运行结果详情后，可在标题栏点击“刷新”获取运行中的最新状态、日志和结果动作写入记录。',
               '邮件通知类动作依赖系统设置中的邮件发送配置。',

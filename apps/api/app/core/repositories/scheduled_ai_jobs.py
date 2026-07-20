@@ -319,6 +319,62 @@ class ScheduledAiJobReadRepository:
                 )
                 return [self._job_from_row(row) for row in cursor.fetchall()]
 
+    def list_due_scheduled_jobs(
+        self,
+        *,
+        due_at: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT {SCHEDULED_JOB_SELECT}
+                    FROM scheduled_jobs
+                    WHERE enabled = true
+                      AND status = 'active'
+                      AND schedule_type <> 'manual'
+                      AND next_run_at IS NOT NULL
+                      AND next_run_at <= %s::timestamptz
+                    ORDER BY next_run_at ASC, id ASC
+                    LIMIT %s
+                    """,
+                    (due_at, limit),
+                )
+                return [self._job_from_row(row) for row in cursor.fetchall()]
+
+    def claim_due_scheduled_job(
+        self,
+        *,
+        expected_next_run_at: str,
+        job_id: str,
+        next_run_at: str,
+        updated_at: str,
+    ) -> dict[str, Any] | None:
+        """Claim a due job by advancing its schedule exactly once.
+
+        The equality predicate makes concurrent embedded workers safe: only the
+        worker that observes the current scheduled timestamp can dispatch it.
+        """
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    UPDATE scheduled_jobs
+                    SET next_run_at = %s::timestamptz,
+                        updated_at = %s::timestamptz
+                    WHERE id = %s
+                      AND enabled = true
+                      AND status = 'active'
+                      AND schedule_type <> 'manual'
+                      AND next_run_at = %s::timestamptz
+                    RETURNING {SCHEDULED_JOB_SELECT}
+                    """,
+                    (next_run_at, updated_at, job_id, expected_next_run_at),
+                )
+                row = cursor.fetchone()
+                return self._job_from_row(row) if row else None
+
     def count_scheduled_jobs(
         self,
         *,

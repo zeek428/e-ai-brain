@@ -26,8 +26,10 @@ type ScheduledJobRunTableProps = {
   onRemoteChange: (query: ScheduledJobRunListQuery) => void;
   onReload: () => void;
   onRerun: (run: ScheduledJobRunRecord) => void;
+  onShowAllRuns: () => void;
   remote: ScheduledJobRemoteTableMeta;
   runningJobId?: string;
+  runFilterJobName?: string;
   runs: ScheduledJobRunRecord[];
 };
 
@@ -64,13 +66,21 @@ export function ScheduledJobRunTable({
   onRemoteChange,
   onReload,
   onRerun,
+  onShowAllRuns,
   remote,
   runningJobId,
+  runFilterJobName,
   runs,
 }: ScheduledJobRunTableProps) {
   return (
     <>
       <ScheduledJobRunObservabilityOverview loading={loading} observability={observability} />
+      {runFilterJobName ? (
+        <Space align="center" style={{ marginBottom: 12 }}>
+          <Typography.Text type="secondary">当前作业：{runFilterJobName}</Typography.Text>
+          <Button onClick={onShowAllRuns} type="link">查看全部</Button>
+        </Space>
+      ) : null}
       {loading ? (
         <Space aria-label="运行记录加载中" aria-live="polite" size={8} style={{ marginBottom: 12 }}>
           <Spin size="small" />

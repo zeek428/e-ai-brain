@@ -15,6 +15,7 @@ import app.services.scheduled_job_ai_processing as scheduled_job_ai_processing_s
 import app.services.scheduled_job_config as scheduled_job_config
 import app.services.scheduled_job_data_connections as scheduled_job_data_connections_service
 import app.services.scheduled_job_result_actions as scheduled_job_result_actions_service
+import app.services.scheduled_job_scheduler as scheduled_job_scheduler
 import app.services.scheduled_job_user_feedback as scheduled_job_user_feedback_service
 import app.services.scheduled_jobs as scheduled_jobs_service
 from app.core.repositories.scheduled_ai_jobs import ScheduledAiJobReadRepository
@@ -1281,7 +1282,7 @@ def test_cron_scheduled_job_next_run_uses_future_occurrence_in_timezone():
     assert next_run == "2026-07-13T01:00:00+00:00"
 
 
-def test_scheduled_job_list_advances_stale_next_run_to_future():
+def test_scheduled_job_list_keeps_stale_next_run_for_the_scheduler():
     current_store = SimpleNamespace(
         scheduled_jobs={
             "scheduled_job_stale": {
@@ -1304,7 +1305,6 @@ def test_scheduled_job_list_advances_stale_next_run_to_future():
         },
     )
 
-    before_list = datetime.now(UTC)
     payload = scheduled_jobs_service.list_scheduled_jobs_response(
         current_store=current_store,
         enabled=True,
@@ -1315,11 +1315,55 @@ def test_scheduled_job_list_advances_stale_next_run_to_future():
         user=ADMIN_SERVICE_USER,
     )
 
-    refreshed_next_run = datetime.fromisoformat(payload["items"][0]["next_run_at"])
-    assert refreshed_next_run > before_list
+    assert payload["items"][0]["next_run_at"] == "2026-06-24T00:00:00+00:00"
     assert (
         current_store.scheduled_jobs["scheduled_job_stale"]["next_run_at"]
-        == payload["items"][0]["next_run_at"]
+        == "2026-06-24T00:00:00+00:00"
+    )
+
+
+def test_scheduled_job_worker_claims_due_job_once_and_records_scheduler_trigger():
+    current_store = MemoryStore()
+    current_store.scheduled_jobs["scheduled_job_weekly"] = {
+        "config_json": {},
+        "cron_expression": "0 9 * * MON",
+        "enabled": True,
+        "execution_mode": "deterministic",
+        "id": "scheduled_job_weekly",
+        "job_type": "plugin_action_invoke",
+        "name": "每周客服洞察",
+        "next_run_at": "2026-07-20T01:00:00+00:00",
+        "schedule_type": "cron",
+        "status": "active",
+        "timezone": "Asia/Shanghai",
+    }
+    dispatched: list[dict[str, object]] = []
+
+    dispatched_count = scheduled_job_scheduler.run_due_scheduled_jobs_once(
+        current_store,
+        limit=10,
+        now=datetime(2026, 7, 20, 1, 5, tzinfo=UTC),
+        run_job=lambda **kwargs: dispatched.append(kwargs) or {},
+        worker_id="scheduler-test",
+    )
+
+    assert dispatched_count == 1
+    assert dispatched[0]["job_id"] == "scheduled_job_weekly"
+    assert dispatched[0]["scheduled_for"] == "2026-07-20T01:00:00+00:00"
+    assert dispatched[0]["trigger_type"] == "scheduler"
+    assert dispatched[0]["user"]["id"] == "scheduler-test"
+    assert (
+        current_store.scheduled_jobs["scheduled_job_weekly"]["next_run_at"]
+        == "2026-07-27T01:00:00+00:00"
+    )
+    assert (
+        scheduled_job_scheduler.run_due_scheduled_jobs_once(
+            current_store,
+            limit=10,
+            now=datetime(2026, 7, 20, 1, 5, tzinfo=UTC),
+            run_job=lambda **_kwargs: {},
+        )
+        == 0
     )
 
 

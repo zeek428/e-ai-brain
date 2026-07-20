@@ -2,6 +2,7 @@ import {
   CopyOutlined,
   DeleteOutlined,
   EditOutlined,
+  EyeOutlined,
   PlayCircleOutlined,
   PlusOutlined,
   ReloadOutlined,
@@ -43,6 +44,7 @@ type ScheduledJobConfigTableProps = {
   onRemoteChange: (query: ScheduledJobListQuery) => void;
   onReload: () => void;
   onRunJob: (job: ScheduledJobRecord) => void;
+  onViewRunRecords: (job: ScheduledJobRecord) => void;
   pluginActionById: Map<string, PluginActionRecord>;
   pluginConnectionById: Map<string, PluginConnectionRecord>;
   runningJobId?: string;
@@ -99,6 +101,7 @@ export function ScheduledJobConfigTable({
   onRemoteChange,
   onReload,
   onRunJob,
+  onViewRunRecords,
   pluginActionById,
   pluginConnectionById,
   runningJobId,
@@ -189,6 +192,13 @@ export function ScheduledJobConfigTable({
           },
         },
         {
+          dataIndex: 'last_run_at',
+          sorter: true,
+          title: '上次执行',
+          width: 180,
+          render: (_, row) => ellipsisText(formatDisplayDateTime(row.last_run_at)),
+        },
+        {
           dataIndex: 'next_run_at',
           sorter: true,
           title: '下次运行',
@@ -211,9 +221,17 @@ export function ScheduledJobConfigTable({
           key: 'actions',
           title: '操作',
           valueType: 'option',
-          width: 330,
+          width: 390,
           render: (_, row) => (
             <Space className="management-row-actions" size={0}>
+              <Button
+                aria-label={`查看作业运行记录 ${row.name}`}
+                icon={<EyeOutlined />}
+                onClick={() => onViewRunRecords(row)}
+                type="link"
+              >
+                运行记录
+              </Button>
               <Button
                 aria-label={`编辑作业 ${row.name}`}
                 icon={<EditOutlined />}
@@ -283,7 +301,7 @@ export function ScheduledJobConfigTable({
         total: remote.total,
       }}
       rowKey="id"
-      scroll={{ x: 1540 }}
+      scroll={{ x: 1720 }}
       search={false}
       tableLayout="fixed"
       toolBarRender={() => [

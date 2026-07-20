@@ -1604,6 +1604,48 @@ describe('ScheduledJobsPage', () => {
     expect(screen.queryByText('作业 ID')).not.toBeInTheDocument();
   });
 
+  it('shows the last execution time and opens the selected job run records', async () => {
+    const { runListCalls } = installScheduledJobsFetchMock({
+      jobs: [
+        {
+          cron_expression: '0 9 * * MON',
+          enabled: true,
+          id: 'scheduled_job_weekly_feedback',
+          job_type: 'user_feedback_insight_extract',
+          last_run_at: '2026-07-20T01:00:00Z',
+          name: '每周用户反馈洞察抽取',
+          next_run_at: '2026-07-27T01:00:00Z',
+          schedule_type: 'cron',
+          status: 'active',
+        },
+      ],
+      runs: [
+        {
+          id: 'scheduled_job_run_weekly_feedback',
+          scheduled_job_id: 'scheduled_job_weekly_feedback',
+          scheduled_job_name: '每周用户反馈洞察抽取',
+          started_at: '2026-07-20T01:00:00Z',
+          status: 'succeeded',
+          trigger_type: 'scheduler',
+        },
+      ],
+    });
+
+    render(<ScheduledJobsPage />);
+
+    expect(await screen.findByText('2026-07-20 09:00')).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole('button', { name: '查看作业运行记录 每周用户反馈洞察抽取' }),
+    );
+
+    expect(await screen.findByText('当前作业：每周用户反馈洞察抽取')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(runListCalls).toContain(
+        '/api/system/scheduled-job-runs?scheduled_job_id=scheduled_job_weekly_feedback&page=1&page_size=10&sort_by=started_at&sort_order=desc',
+      );
+    });
+  });
+
   it('uses selectable references instead of requiring raw ids in the create dialog', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     installScheduledJobsFetchMock();

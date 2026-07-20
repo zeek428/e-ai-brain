@@ -129,6 +129,19 @@ class Settings:
         self.execution_worker_poll_interval_seconds = float(
             os.getenv("EXECUTION_WORKER_POLL_INTERVAL_SECONDS", "5.0"),
         )
+        default_scheduled_job_worker_enabled = (
+            "false" if self.app_env.lower() in TEST_APP_ENVIRONMENTS else "true"
+        )
+        self.scheduled_job_worker_enabled = _env_bool(
+            "SCHEDULED_JOB_WORKER_ENABLED",
+            default_scheduled_job_worker_enabled,
+        )
+        self.scheduled_job_worker_poll_interval_seconds = float(
+            os.getenv("SCHEDULED_JOB_WORKER_POLL_INTERVAL_SECONDS", "5.0"),
+        )
+        self.scheduled_job_worker_batch_size = int(
+            os.getenv("SCHEDULED_JOB_WORKER_BATCH_SIZE", "10"),
+        )
         self.model_gateway_base_url = os.getenv("MODEL_GATEWAY_BASE_URL", "")
         self.model_gateway_api_key = os.getenv("MODEL_GATEWAY_API_KEY", "")
         self.model_gateway_default_chat_model = os.getenv(

@@ -13,10 +13,7 @@ from app.services.scheduled_job_access import (
 )
 from app.services.scheduled_job_catalog import SCHEDULED_JOB_TYPES
 from app.services.scheduled_job_common import ensure_enum
-from app.services.scheduled_job_config import (
-    refresh_stale_scheduled_job_next_runs,
-    scheduled_job_with_multi_refs,
-)
+from app.services.scheduled_job_config import scheduled_job_with_multi_refs
 from app.services.scheduled_job_constants import (
     SCHEDULED_JOB_RUN_SORT_FIELDS,
     SCHEDULED_JOB_RUN_STATUSES,
@@ -123,19 +120,16 @@ def list_scheduled_jobs_response(
         and callable(getattr(repository, "list_scheduled_jobs_page", None))
     ):
         total = repository.count_scheduled_jobs(**query_filters)
-        items = refresh_stale_scheduled_job_next_runs(
-            current_store,
-            jobs=[
-                scheduled_job_with_multi_refs(job)
-                for job in repository.list_scheduled_jobs_page(
-                    **query_filters,
-                    limit=resolved_page_size,
-                    offset=(resolved_page - 1) * resolved_page_size,
-                    sort_by=resolved_sort_by,
-                    sort_order=sort_order,
-                )
-            ],
-        )
+        items = [
+            scheduled_job_with_multi_refs(job)
+            for job in repository.list_scheduled_jobs_page(
+                **query_filters,
+                limit=resolved_page_size,
+                offset=(resolved_page - 1) * resolved_page_size,
+                sort_by=resolved_sort_by,
+                sort_order=sort_order,
+            )
+        ]
         return add_list_observability(
             {
                 "items": items,
@@ -157,7 +151,6 @@ def list_scheduled_jobs_response(
         job_type=job_type,
         status=status,
     )
-    refresh_stale_scheduled_job_next_runs(current_store)
     normalized_keyword = str(keyword or "").strip().lower()
     normalized_name = str(name or "").strip().lower()
     items = []

@@ -1960,6 +1960,32 @@ class PostgresSnapshotRepository:
             status=status,
         )
 
+    def list_due_scheduled_jobs(
+        self,
+        *,
+        due_at: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        return self._scheduled_ai_job_read_repository.list_due_scheduled_jobs(
+            due_at=due_at,
+            limit=limit,
+        )
+
+    def claim_due_scheduled_job(
+        self,
+        *,
+        expected_next_run_at: str,
+        job_id: str,
+        next_run_at: str,
+        updated_at: str,
+    ) -> dict[str, Any] | None:
+        return self._scheduled_ai_job_read_repository.claim_due_scheduled_job(
+            expected_next_run_at=expected_next_run_at,
+            job_id=job_id,
+            next_run_at=next_run_at,
+            updated_at=updated_at,
+        )
+
     def count_scheduled_jobs(
         self,
         *,

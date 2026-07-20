@@ -79,6 +79,10 @@ from app.services.knowledge_import_worker import (
     start_knowledge_import_worker,
     stop_knowledge_import_worker,
 )
+from app.services.scheduled_job_scheduler import (
+    start_scheduled_job_worker,
+    stop_scheduled_job_worker,
+)
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -183,6 +187,7 @@ def build_authorization_repository() -> (
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     start_knowledge_import_worker(application, settings)
+    start_scheduled_job_worker(application, settings)
     if settings.execution_worker_embedded_enabled:
         start_deployment_sync_worker(application)
     try:
@@ -190,6 +195,7 @@ async def lifespan(application: FastAPI):
     finally:
         if settings.execution_worker_embedded_enabled:
             stop_deployment_sync_worker(application)
+        stop_scheduled_job_worker(application)
         stop_knowledge_import_worker(application)
 
 
