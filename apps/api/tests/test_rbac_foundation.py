@@ -202,8 +202,11 @@ def test_rd_collaboration_menu_resource_and_admin_grant_are_seeded():
     assert "'/delivery/rd-collaboration'" in sql
     assert "'[\"delivery.rd_collaboration.read\"]'::jsonb" in sql
     assert "('admin', 'delivery.rd_collaboration')" in sql
-    persistence_source = Path("app/core/persistence.py").read_text(encoding="utf-8")
-    assert '"122_rd_collaboration_menu.sql"' in persistence_source
+    entrypoint_source = (
+        Path(__file__).resolve().parents[3] / "infra" / "docker" / "api-entrypoint.sh"
+    ).read_text(encoding="utf-8")
+    assert 'for path in sorted(migration_dir.glob("*.sql")):' in entrypoint_source
+    assert "122_rd_collaboration_menu.sql" not in entrypoint_source
 
 
 def test_rbac_menu_move_migration_moves_rd_tasks_under_delivery():

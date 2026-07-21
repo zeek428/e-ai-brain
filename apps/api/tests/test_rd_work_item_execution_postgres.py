@@ -1011,10 +1011,11 @@ def test_postgres_dispatch_rolls_back_task_runner_attempt_event_and_audit_togeth
     monkeypatch.setattr(repository, "next_id", capture_task_id)
     monkeypatch.setattr(repository, "upsert_ai_executor_tasks", fail_runner_insert)
 
+    store = PostgresRuntimeStore(repository)
     dispatch_error: Exception | None = None
     try:
         dispatch_ai_task_for_work_item(
-            PostgresRuntimeStore(repository),
+            store,
             collaboration_run_id=ids["run_id"],
             work_item_id=ids["work_item_id"],
         )
@@ -1050,6 +1051,8 @@ def test_postgres_dispatch_rolls_back_task_runner_attempt_event_and_audit_togeth
     ] == []
     assert isinstance(dispatch_error, RuntimeError)
     assert str(dispatch_error) == "inject runner insert failure"
+    assert store.ai_executor_tasks == {}
+    assert store.audit_events == []
 
 
 def test_postgres_autonomous_dispatch_persists_explicit_audit_bundle_without_reading_store_audits(
@@ -1093,6 +1096,32 @@ def test_postgres_autonomous_dispatch_persists_explicit_audit_bundle_without_rea
         "execution_context_manifest.created",
         "rd_work_item.ai_task_dispatched",
     } <= audit_types
+
+
+def test_postgres_dispatch_keeps_worker_scratch_empty_after_success(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-postgres-scratch-clean",
+        autonomy_mode="autonomous_loop",
+    )
+    store = PostgresRuntimeStore(repository)
+
+    dispatched = dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id=ids["run_id"],
+        work_item_id=ids["work_item_id"],
+    )
+
+    assert store.ai_executor_tasks == {}
+    assert store.audit_events == []
+    assert repository.list_ai_executor_tasks(ai_task_id=dispatched["task"]["id"])
+    assert repository.list_audit_events(
+        event_type="rd_work_item.ai_task_dispatched",
+        subject_type="rd_work_item",
+        subject_id=ids["work_item_id"],
+    )
 
 
 def test_postgres_safety_rejected_dispatch_retry_leaves_no_preparation_records(
@@ -2551,6 +2580,109 @@ def test_concurrent_postgres_dispatch_reuses_one_active_task_attempt_and_runner(
         )
         == 1
     )
+
+
+def test_postgres_dispatch_preserves_parallel_requirement_task_links_and_fields(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-shared-requirement",
+        autonomy_mode="autonomous_loop",
+        seat_capacity=2,
+    )
+    second_work_item_id = "work-item-shared-requirement-second-work-item"
+    repository.save_rd_work_item_record(
+        {
+            "id": second_work_item_id,
+            "collaboration_run_id": ids["run_id"],
+            "requirement_id": ids["requirement_id"],
+            "plan_version": 1,
+            "work_item_type": "implementation",
+            "title": "parallel sibling dispatch",
+            "objective": "retain both requirement task links",
+            "owner_seat_id": ids["owner_seat_id"],
+            "reviewer_seat_id": "work-item-shared-requirement-reviewer",
+            "status": "ready",
+            "idempotency_key": second_work_item_id,
+        }
+    )
+    original_dispatch_bundle = repository.dispatch_work_item_execution_bundle
+    captured_bundles: dict[str, dict[str, Any]] = {}
+
+    def capture_bundle(**kwargs: Any) -> dict[str, Any]:
+        captured_bundles[str(kwargs["work_item_id"])] = kwargs
+        return {
+            "attempt": kwargs["attempt"],
+            "runner_task": kwargs["runner_task"],
+            "task": kwargs["task"],
+            "work_item": {"id": kwargs["work_item_id"], "status": "running"},
+        }
+
+    monkeypatch.setattr(repository, "dispatch_work_item_execution_bundle", capture_bundle)
+    for work_item_id in (ids["work_item_id"], second_work_item_id):
+        dispatch_ai_task_for_work_item(
+            PostgresRuntimeStore(repository),
+            collaboration_run_id=ids["run_id"],
+            work_item_id=work_item_id,
+        )
+
+    with repository._connect() as connection:
+        connection.execute(
+            "UPDATE requirements SET title = %s WHERE id = %s",
+            ("edited while two dispatches were prepared", ids["requirement_id"]),
+        )
+        connection.commit()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(
+            executor.map(
+                lambda bundle: original_dispatch_bundle(**bundle),
+                captured_bundles.values(),
+            )
+        )
+
+    requirement = repository.load_requirements()["requirements"][ids["requirement_id"]]
+    assert requirement["title"] == "edited while two dispatches were prepared"
+    assert set(requirement["task_ids"]) == {
+        result["task"]["id"]
+        for result in results
+    }
+
+
+def test_postgres_requirement_patch_after_dispatch_keeps_new_task_link(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-requirement-patch-race",
+        autonomy_mode="autonomous_loop",
+    )
+    initial_requirement = repository.load_requirements()["requirements"][ids["requirement_id"]]
+    initial_requirement["task_ids"] = ["existing-first-task", "existing-second-task"]
+    initial_requirement["updated_at"] = datetime.now(UTC).isoformat()
+    repository.save_requirement_record(initial_requirement)
+    stale_requirement = repository.load_requirements()["requirements"][ids["requirement_id"]]
+    stale_requirement["title"] = "edited after dispatch began"
+    stale_requirement["updated_at"] = datetime.now(UTC).isoformat()
+    dispatch_bundle, captured_bundle = _capture_postgres_dispatch_bundle(
+        repository,
+        monkeypatch,
+        ids=ids,
+    )
+
+    dispatched = dispatch_bundle(**captured_bundle)
+    repository.save_requirement_record(stale_requirement)
+
+    requirement = repository.load_requirements()["requirements"][ids["requirement_id"]]
+    assert requirement["title"] == "edited after dispatch began"
+    assert requirement["task_ids"] == [
+        "existing-first-task",
+        "existing-second-task",
+        dispatched["task"]["id"],
+    ]
 
 
 def test_postgres_final_dispatch_fences_bundle_reserved_before_parent_suspension(

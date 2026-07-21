@@ -883,7 +883,20 @@ class RequirementReadRepository:
                   assignee = EXCLUDED.assignee,
                   approval_comment = EXCLUDED.approval_comment,
                   rejection_reason = EXCLUDED.rejection_reason,
-                  task_ids = EXCLUDED.task_ids,
+                  task_ids = (
+                    SELECT COALESCE(
+                      jsonb_agg(value ORDER BY first_position),
+                      '[]'::jsonb
+                    )
+                    FROM (
+                      SELECT value, MIN(position) AS first_position
+                      FROM jsonb_array_elements_text(
+                        COALESCE(requirements.task_ids, '[]'::jsonb)
+                        || COALESCE(EXCLUDED.task_ids, '[]'::jsonb)
+                      ) WITH ORDINALITY AS task_link(value, position)
+                      GROUP BY value
+                    ) AS deduplicated_task_links
+                  ),
                   assessment_revision = EXCLUDED.assessment_revision,
                   source_collaboration_run_id = EXCLUDED.source_collaboration_run_id,
                   supersedes_requirement_id = EXCLUDED.supersedes_requirement_id,

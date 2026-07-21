@@ -918,10 +918,11 @@ def test_assessment_persistence_contract_has_versioned_commands_and_requirement_
     assert "uk_requirement_assessment_start_request" in body
     assert "'assessment'" in body
 
-    persistence = (
-        Path(__file__).resolve().parents[1] / "app" / "core" / "persistence.py"
+    entrypoint = (
+        Path(__file__).resolve().parents[3] / "infra" / "docker" / "api-entrypoint.sh"
     ).read_text(encoding="utf-8")
-    assert '"111_requirement_assessment_orchestration.sql"' in persistence
+    assert 'for path in sorted(migration_dir.glob("*.sql")):' in entrypoint
+    assert "111_requirement_assessment_orchestration.sql" not in entrypoint
 
 
 def test_assessment_start_request_forbids_strategy_id():

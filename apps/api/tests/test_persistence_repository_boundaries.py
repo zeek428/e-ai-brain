@@ -1,6 +1,8 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from app.core.persistence import PersistentMemoryStore, PostgresSnapshotRepository
 from app.core.repositories.assistant_chat import AssistantChatReadRepository
 from app.core.repositories.audit import AuditReadRepository
@@ -192,9 +194,8 @@ def test_postgres_scheduled_job_run_list_delegates_run_ids_filter(monkeypatch):
     ]
 
 
-def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkeypatch):
+def test_postgres_schema_compatibility_only_applies_concurrent_dispatch_indexes(monkeypatch):
     repository = PostgresSnapshotRepository("postgresql://unused")
-    applied_migrations: list[str] = []
     concurrent_migrations: list[tuple[str, str]] = []
 
     class FakeCursor:
@@ -220,11 +221,6 @@ def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkey
     monkeypatch.setattr(repository, "_connect", lambda **_kwargs: FakeConnection())
     monkeypatch.setattr(
         repository,
-        "_apply_additive_migration",
-        lambda cursor, filename: applied_migrations.append(filename),
-    )
-    monkeypatch.setattr(
-        repository,
         "_ensure_concurrent_index_migration",
         lambda connection, filename, index_name: concurrent_migrations.append(
             (filename, index_name)
@@ -234,48 +230,6 @@ def test_postgres_schema_compatibility_applies_recent_additive_migrations(monkey
 
     repository._ensure_schema_compatibility()
 
-    assert "028_assistant_message_references.sql" in applied_migrations
-    assert "036_integration_plugins.sql" in applied_migrations
-    assert "038_plugin_connection_request_config.sql" in applied_migrations
-    assert "039_task_center_operational_menus.sql" in applied_migrations
-    assert "044_scheduled_job_run_source.sql" in applied_migrations
-    assert "045_scheduled_job_collector_types.sql" in applied_migrations
-    assert "046_code_inspection_plugin_source.sql" in applied_migrations
-    assert "047_plugin_connection_last_test_summary.sql" in applied_migrations
-    assert "048_plugin_connection_test_history.sql" in applied_migrations
-    assert "050_code_inspection_remediation_tasks.sql" in applied_migrations
-    assert "053_menu_management.sql" in applied_migrations
-    assert "054_assistant_action_drafts.sql" in applied_migrations
-    assert "058_assistant_action_draft_expiry.sql" in applied_migrations
-    assert "059_assistant_rd_task_drafts.sql" in applied_migrations
-    assert "063_assistant_chat_runs.sql" in applied_migrations
-    assert "069_execution_trace_read_model.sql" in applied_migrations
-    assert "070_code_inspection_suppression_approval.sql" in applied_migrations
-    assert "073_code_inspection_risk_acceptance_expiry.sql" in applied_migrations
-    assert "074_internal_data_source_plugin.sql" in applied_migrations
-    assert "075_internal_data_source_detail_permission.sql" in applied_migrations
-    assert "076_assistant_action_naming.sql" in applied_migrations
-    assert "077_ai_agent_packages.sql" in applied_migrations
-    assert "078_ai_executor_approval_requests.sql" in applied_migrations
-    assert "116_rd_trusted_delivery_evidence.sql" in applied_migrations
-    assert "117_rd_external_callback_facts.sql" in applied_migrations
-    assert "115_rd_work_item_execution_fences.sql" in applied_migrations
-    assert "079_plugin_invocation_log_nullable_config_refs.sql" in applied_migrations
-    assert "083_viewer_menu_task_boundary.sql" in applied_migrations
-    assert "084_viewer_assistant_menu_boundary.sql" in applied_migrations
-    assert "085_viewer_product_read_menu.sql" in applied_migrations
-    assert "086_dingtalk_oauth_ephemeral_states.sql" in applied_migrations
-    assert "087_user_profile_contact.sql" in applied_migrations
-    assert "088_dingtalk_corp_name.sql" in applied_migrations
-    assert "089_user_password_login_state.sql" in applied_migrations
-    assert "090_role_boundary_cleanup.sql" in applied_migrations
-    assert "093_bug_fix_task_type.sql" in applied_migrations
-    assert "100_operational_deployment_menu.sql" in applied_migrations
-    assert "101_deployment_strategies.sql" in applied_migrations
-    assert "102_autonomous_delivery_governance.sql" in applied_migrations
-    assert "109_requirement_driven_rd_collaboration.sql" in applied_migrations
-    assert "112_rd_requirement_entry_adapters.sql" in applied_migrations
-    assert "114_rd_work_item_execution_states.sql" in applied_migrations
     assert concurrent_migrations == [
         ("125_rd_dispatch_due_index.sql", "idx_rd_work_items_dispatch_due"),
         ("126_rd_dispatch_page_index.sql", "idx_rd_work_items_dispatch_due_page"),
@@ -305,6 +259,8 @@ def test_concurrent_index_compatibility_path_serializes_and_skips_valid_index() 
             calls.append((statement, params))
             if "pg_try_advisory_lock" in statement:
                 return FakeResult((True,))
+            if "to_regclass" in statement:
+                return FakeResult(("rd_collaboration_runs",))
             if "indisvalid" in statement:
                 return FakeResult((True,))
             return FakeResult()
@@ -317,7 +273,8 @@ def test_concurrent_index_compatibility_path_serializes_and_skips_valid_index() 
 
     assert "pg_try_advisory_lock" in calls[0][0]
     assert calls[0][1] == ("schema-index:rd-dispatch-scaling",)
-    assert "indisvalid" in calls[1][0]
+    assert "to_regclass" in calls[1][0]
+    assert "indisvalid" in calls[2][0]
     assert "pg_advisory_unlock" in calls[-1][0]
     assert calls[-1][1] == ("schema-index:rd-dispatch-scaling",)
     assert not any("CREATE INDEX" in statement for statement, _ in calls)
@@ -346,6 +303,60 @@ def test_concurrent_index_compatibility_path_does_not_wait_for_another_startup()
 
     assert len(calls) == 1
     assert "pg_try_advisory_lock" in calls[0]
+
+
+def test_concurrent_index_compatibility_defers_until_entrypoint_creates_its_table() -> None:
+    repository = PostgresSnapshotRepository("postgresql://unused")
+    calls: list[str] = []
+
+    class FakeResult:
+        def __init__(self, row: tuple[object, ...] | None = None) -> None:
+            self.row = row
+
+        def fetchone(self):
+            return self.row
+
+    class FakeConnection:
+        autocommit = True
+
+        def execute(self, statement: str, _params=None):
+            calls.append(statement)
+            if "pg_try_advisory_lock" in statement:
+                return FakeResult((True,))
+            if "to_regclass" in statement:
+                return FakeResult(None)
+            return FakeResult()
+
+    repository._ensure_concurrent_index_migration(
+        FakeConnection(),
+        "125_rd_dispatch_due_index.sql",
+        "idx_rd_work_items_dispatch_due",
+    )
+
+    assert any("to_regclass" in statement for statement in calls)
+    assert not any("indisvalid" in statement or "CREATE INDEX" in statement for statement in calls)
+    assert "pg_advisory_unlock" in calls[-1]
+
+
+def test_schema_compatibility_rejects_missing_migration_files() -> None:
+    repository = PostgresSnapshotRepository("postgresql://unused")
+
+    class FakeResult:
+        def fetchone(self):
+            return (True,)
+
+    class FakeConnection:
+        autocommit = True
+
+        def execute(self, _statement: str, _params=None):
+            return FakeResult()
+
+    with pytest.raises(RuntimeError, match="missing migration file"):
+        repository._ensure_concurrent_index_migration(
+            FakeConnection(),
+            "999_missing_migration.sql",
+            "idx_missing_migration",
+        )
 
 
 def test_postgres_execution_governance_delegates_to_domain_repository(monkeypatch):

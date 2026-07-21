@@ -52,400 +52,13 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
         return self._pool.connection(autocommit=autocommit)
 
     def _ensure_schema_compatibility(self) -> None:
-        """Patch safe additive schema gaps for existing local Postgres volumes."""
+        """Keep runtime compatibility limited to non-transactional dispatch indexes.
+
+        Ordinary additive migrations are owned by the API entrypoint.  They
+        must not be replayed by every API or Worker process, because that
+        would make startup order a second schema migration control plane.
+        """
         with self._connect(autocommit=True) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    ALTER TABLE IF EXISTS requirements
-                      ADD COLUMN IF NOT EXISTS assignee text
-                    """
-                )
-                cursor.execute(
-                    """
-                    ALTER TABLE IF EXISTS requirements
-                      ADD COLUMN IF NOT EXISTS source text DEFAULT 'business_department'
-                    """
-                )
-                cursor.execute(
-                    """
-                    UPDATE requirements
-                    SET source = 'business_department'
-                    WHERE source IS NULL
-                    """
-                )
-                cursor.execute(
-                    """
-                    ALTER TABLE IF EXISTS requirements
-                      ALTER COLUMN source SET DEFAULT 'business_department',
-                      ALTER COLUMN source SET NOT NULL
-                    """
-                )
-                cursor.execute(
-                    """
-                    DO $$
-                    BEGIN
-                      IF to_regclass('public.requirements') IS NOT NULL THEN
-                        CREATE INDEX IF NOT EXISTS idx_requirements_assignee
-                          ON requirements (assignee);
-                        CREATE INDEX IF NOT EXISTS idx_requirements_source_created
-                          ON requirements (source, created_at DESC);
-                      END IF;
-                    END $$;
-                    """
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "028_assistant_message_references.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "036_integration_plugins.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "038_plugin_connection_request_config.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "039_task_center_operational_menus.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "037_knowledge_management_assets.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "040_scheduled_job_knowledge_references.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "041_code_inspection_governance.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "042_code_inspection_committer_dimension.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "043_official_devops_plugins.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "044_scheduled_job_run_source.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "045_scheduled_job_collector_types.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "046_code_inspection_plugin_source.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "047_plugin_connection_last_test_summary.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "048_plugin_connection_test_history.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "049_ai_executor_runners.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "050_code_inspection_remediation_tasks.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "051_ai_executor_runner_controls.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "052_move_rd_tasks_menu.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "053_menu_management.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "054_assistant_action_drafts.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "055_code_inspection_native_scan.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "056_code_inspection_scan_snapshot.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "057_assistant_analysis_drafts.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "058_assistant_action_draft_expiry.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "059_assistant_rd_task_drafts.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "060_scheduled_job_run_permission.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "061_assistant_metrics_and_role_quick_tasks.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "062_assistant_action_draft_idempotency.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "063_assistant_chat_runs.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "064_assistant_action_reference_configs.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "065_assistant_operability_improvements.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "066_rd_task_executor_policies.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "067_execution_trace_diagnostics.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "068_assistant_draft_workbench.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "069_execution_trace_read_model.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "070_code_inspection_suppression_approval.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "071_ai_executor_task_dead_letter.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "072_code_inspection_incremental_snapshot.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "073_code_inspection_risk_acceptance_expiry.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "074_internal_data_source_plugin.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "075_internal_data_source_detail_permission.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "076_assistant_action_naming.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "077_ai_agent_packages.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "078_ai_executor_approval_requests.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "079_plugin_invocation_log_nullable_config_refs.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "080_system_settings.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "081_dingtalk_mcp_plugins.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "082_dingtalk_login_external_identities.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "083_viewer_menu_task_boundary.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "084_viewer_assistant_menu_boundary.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "085_viewer_product_read_menu.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "086_dingtalk_oauth_ephemeral_states.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "087_user_profile_contact.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "088_dingtalk_corp_name.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "089_user_password_login_state.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "090_role_boundary_cleanup.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "091_knowledge_hybrid_search_indexes.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "092_auth_login_challenges.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "093_bug_fix_task_type.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "094_rd_task_executor_policy_code_change_review_mode.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "095_system_health_center.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "096_platform_operations_quality_loop.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "097_system_alert_rules_and_admin_report.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "098_system_alert_notifications.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "099_deployment_requests.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "100_operational_deployment_menu.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "101_deployment_strategies.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "102_autonomous_delivery_governance.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "103_deployment_safety_enforcement.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "104_execution_resource_menu.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "105_knowledge_multimodal_governance.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "106_trusted_execution_attestations.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "107_trusted_delivery_records.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "109_requirement_driven_rd_collaboration.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "110_unified_rd_execution_policy.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "111_requirement_assessment_orchestration.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "112_rd_requirement_entry_adapters.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "113_rd_version_scope_provenance.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "114_rd_work_item_execution_states.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "115_rd_work_item_execution_fences.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "116_rd_trusted_delivery_evidence.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "117_rd_external_callback_facts.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "118_rd_role_experience_governance.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "119_rd_role_experience_governance_fences.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "120_rd_policy_controlled_deployment.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "122_rd_collaboration_menu.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "123_rd_dispatch_retry_controls.sql",
-                )
-                self._apply_additive_migration(
-                    cursor,
-                    "124_rd_dispatch_fair_cursor.sql",
-                )
             for filename, index_name in (
                 ("125_rd_dispatch_due_index.sql", "idx_rd_work_items_dispatch_due"),
                 ("126_rd_dispatch_page_index.sql", "idx_rd_work_items_dispatch_due_page"),
@@ -460,14 +73,6 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
     def next_id(self, prefix: str) -> str:
         return self._system_state_repository.next_id(prefix)
 
-    def _apply_additive_migration(self, cursor: Any, filename: str) -> None:
-        migration_path = Path(__file__).resolve().parents[1] / "db" / "migrations" / filename
-        if not migration_path.exists():
-            return
-        sql = migration_path.read_text(encoding="utf-8").strip()
-        if sql:
-            cursor.execute(sql)
-
     def _ensure_concurrent_index_migration(
         self,
         connection: Any,
@@ -479,6 +84,9 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
             raise RuntimeError("concurrent index migrations require an autocommit connection")
         if not index_name.replace("_", "").isalnum():
             raise RuntimeError(f"unsafe compatibility index name: {index_name}")
+        migration_path = Path(__file__).resolve().parents[1] / "db" / "migrations" / filename
+        if not migration_path.exists():
+            raise RuntimeError(f"missing migration file: {filename}")
         migration_lock_key = "schema-index:rd-dispatch-scaling"
         acquired = connection.execute(
             "SELECT pg_try_advisory_lock(hashtextextended(%s, 0))",
@@ -487,6 +95,24 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
         if acquired is None or not bool(acquired[0]):
             return
         try:
+            index_table = {
+                "idx_rd_work_items_dispatch_due": "rd_work_items",
+                "idx_rd_work_items_dispatch_due_page": "rd_work_items",
+                "idx_rd_collaboration_runs_status_id": "rd_collaboration_runs",
+                "idx_rd_work_item_dependencies_successor": "rd_work_item_dependencies",
+            }.get(index_name)
+            if index_table is None:
+                raise RuntimeError(f"unsupported compatibility index: {index_name}")
+            table_exists = connection.execute(
+                "SELECT to_regclass(%s)",
+                (f"public.{index_table}",),
+            ).fetchone()
+            if table_exists is None or table_exists[0] is None:
+                # A Worker can start after the API container starts but before
+                # its entrypoint has committed the ordinary schema ledger.
+                # Defer to the API's later compatibility pass instead of
+                # issuing concurrent DDL against an absent table.
+                return
             existing = connection.execute(
                 """
                 SELECT index_state.indisvalid AND index_state.indisready
@@ -506,11 +132,6 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
                 connection.execute(
                     f'DROP INDEX CONCURRENTLY IF EXISTS public."{index_name}"'
                 )
-            migration_path = (
-                Path(__file__).resolve().parents[1] / "db" / "migrations" / filename
-            )
-            if not migration_path.exists():
-                return
             migration_sql = migration_path.read_text(encoding="utf-8").strip()
             expected_prefix = "CREATE INDEX IF NOT EXISTS"
             if not migration_sql.startswith(expected_prefix):

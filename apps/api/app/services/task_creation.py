@@ -16,6 +16,7 @@ from app.services.task_contexts import (
     release_readiness_context,
 )
 from app.services.task_persistence_helpers import (
+    build_audit_event,
     record_audit_event,
     save_requirement_and_ai_task_records,
     uses_repository_context,
@@ -246,7 +247,10 @@ def create_ai_task_for_work_item(
     if getattr(write_store, "repository", None) is None:
         write_store.ai_tasks[task_id] = task
         write_store.requirements[requirement["id"]] = requirement
-    audit_event = record_audit_event(
+    audit_event_factory = (
+        build_audit_event if uses_repository_context(write_store) else record_audit_event
+    )
+    audit_event = audit_event_factory(
         write_store,
         event_type="rd_work_item.ai_task_created",
         actor_id="system",

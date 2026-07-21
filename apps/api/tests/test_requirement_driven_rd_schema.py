@@ -66,18 +66,20 @@ def _assert_fk_restrict(
 
 
 def test_requirement_driven_collaboration_migration_is_registered():
-    persistence_source = (
-        Path(__file__).resolve().parents[1] / "app" / "core" / "persistence.py"
+    entrypoint_source = (
+        Path(__file__).resolve().parents[3] / "infra" / "docker" / "api-entrypoint.sh"
     ).read_text(encoding="utf-8")
 
-    assert MIGRATION_NAME in persistence_source
+    assert 'for path in sorted(migration_dir.glob("*.sql")):' in entrypoint_source
+    assert MIGRATION_NAME not in entrypoint_source
 
 
 def test_scope_provenance_migration_persists_replacement_selection_for_restart():
-    persistence_source = (
-        Path(__file__).resolve().parents[1] / "app" / "core" / "persistence.py"
+    entrypoint_source = (
+        Path(__file__).resolve().parents[3] / "infra" / "docker" / "api-entrypoint.sh"
     ).read_text(encoding="utf-8")
-    assert "113_rd_version_scope_provenance.sql" in persistence_source
+    assert 'for path in sorted(migration_dir.glob("*.sql")):' in entrypoint_source
+    assert "113_rd_version_scope_provenance.sql" not in entrypoint_source
 
     sql = (MIGRATIONS_DIR / "113_rd_version_scope_provenance.sql").read_text(encoding="utf-8")
     body = _table_body(sql, "rd_product_version_requirement_provenance")
@@ -99,10 +101,11 @@ def test_scope_provenance_migration_persists_replacement_selection_for_restart()
 
 
 def test_work_item_execution_migration_is_bootstrapped_with_rework_and_requirement_scope():
-    persistence_source = (
-        Path(__file__).resolve().parents[1] / "app" / "core" / "persistence.py"
+    entrypoint_source = (
+        Path(__file__).resolve().parents[3] / "infra" / "docker" / "api-entrypoint.sh"
     ).read_text(encoding="utf-8")
-    assert "114_rd_work_item_execution_states.sql" in persistence_source
+    assert 'for path in sorted(migration_dir.glob("*.sql")):' in entrypoint_source
+    assert "114_rd_work_item_execution_states.sql" not in entrypoint_source
 
     sql = (MIGRATIONS_DIR / "114_rd_work_item_execution_states.sql").read_text(encoding="utf-8")
     normalized = _normalized(sql)

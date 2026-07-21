@@ -140,6 +140,32 @@ def record_audit_event(
             payload=payload,
         )
     audit_events = _memory_list(current_store, "audit_events")
+    event = build_audit_event(
+        current_store,
+        event_type=event_type,
+        actor_id=actor_id,
+        ai_task_id=ai_task_id,
+        subject_type=subject_type,
+        subject_id=subject_id,
+        payload=payload,
+        sequence=len(audit_events) + 1,
+    )
+    audit_events.append(event)
+    return event
+
+
+def build_audit_event(
+    current_store: Any,
+    *,
+    event_type: str,
+    actor_id: str,
+    ai_task_id: str | None = None,
+    subject_type: str | None = None,
+    subject_id: str | None = None,
+    payload: dict[str, Any] | None = None,
+    sequence: int | None = None,
+) -> dict[str, Any]:
+    """Build an audit event for a caller-owned durable write bundle."""
     event = {
         "id": current_store.new_id("audit"),
         "event_type": event_type,
@@ -148,10 +174,10 @@ def record_audit_event(
         "subject_type": subject_type,
         "subject_id": subject_id,
         "payload": payload or {},
-        "sequence": len(audit_events) + 1,
         "created_at": datetime.now(UTC).isoformat(),
     }
-    audit_events.append(event)
+    if sequence is not None:
+        event["sequence"] = sequence
     return event
 
 

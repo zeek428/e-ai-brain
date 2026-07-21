@@ -45,6 +45,7 @@ from app.services.task_contexts import public_product_context
 from app.services.task_creation import _collaboration_record, create_ai_task_for_work_item
 from app.services.task_graph_runtime import start_graph_run
 from app.services.task_persistence_helpers import (
+    build_audit_event,
     record_audit_event,
     save_task_start_records,
     save_task_state_records,
@@ -652,9 +653,10 @@ def dispatch_ai_task_for_work_item(
         "rd_work_item_id": work_item_id,
         "rd_execution_policy_snapshot": frozen_execution_snapshot,
     }
-    _work_item_execution_records(current_store, "ai_executor_tasks")[runner_task["id"]] = (
-        runner_task
-    )
+    if repository is None:
+        _work_item_execution_records(current_store, "ai_executor_tasks")[runner_task["id"]] = (
+            runner_task
+        )
 
     executor_snapshot = {
         "executor_policy_id": policy["id"],
@@ -692,7 +694,8 @@ def dispatch_ai_task_for_work_item(
             "version": int(work_item.get("version") or 1) + 1,
         }
     )
-    audit_event = record_audit_event(
+    audit_event_factory = build_audit_event if repository is not None else record_audit_event
+    audit_event = audit_event_factory(
         current_store,
         event_type="rd_work_item.ai_task_dispatched",
         actor_id="system",

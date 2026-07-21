@@ -765,10 +765,11 @@ def test_migration_123_adds_durable_dispatch_retry_controls(
     assert len(indexes) == 1
     assert "next_dispatch_at" in indexes[0][1]
     assert "status" in indexes[0][1]
-    persistence_source = (
-        Path(__file__).resolve().parents[1] / "app" / "core" / "persistence.py"
+    entrypoint_source = (
+        Path(__file__).resolve().parents[3] / "infra" / "docker" / "api-entrypoint.sh"
     ).read_text(encoding="utf-8")
-    assert '"123_rd_dispatch_retry_controls.sql"' in persistence_source
+    assert 'for path in sorted(migration_dir.glob("*.sql")):' in entrypoint_source
+    assert "123_rd_dispatch_retry_controls.sql" not in entrypoint_source
 
 
 def test_migration_123_repeat_does_not_replace_constraints_or_wait_for_table_lock(
@@ -946,10 +947,11 @@ def test_migration_124_adds_durable_dispatch_cursor_and_page_index(
     assert len(indexes) == 1
     assert "COALESCE(next_dispatch_at" in indexes[0][1]
     assert "CASE" in indexes[0][1]
-    persistence_source = (
-        Path(__file__).resolve().parents[1] / "app" / "core" / "persistence.py"
+    entrypoint_source = (
+        Path(__file__).resolve().parents[3] / "infra" / "docker" / "api-entrypoint.sh"
     ).read_text(encoding="utf-8")
-    assert '"124_rd_dispatch_fair_cursor.sql"' in persistence_source
+    assert 'for path in sorted(migration_dir.glob("*.sql")):' in entrypoint_source
+    assert "124_rd_dispatch_fair_cursor.sql" not in entrypoint_source
 
 
 def test_migration_109_normalizes_rows_from_previous_operation_constraint(

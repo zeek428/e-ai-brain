@@ -1296,7 +1296,6 @@ class RdCollaborationWorkWriteMixin:
         )
         task_repository = getattr(self, "_task_read_repository", None)
         upsert_tasks = getattr(task_repository, "upsert_ai_tasks", None)
-        upsert_requirements = getattr(task_repository, "_upsert_requirements", None)
         upsert_runner_tasks = getattr(self, "upsert_ai_executor_tasks", None)
         if not callable(upsert_tasks) or not callable(upsert_runner_tasks):
             raise RuntimeError("task execution persistence callbacks are not configured")
@@ -1331,10 +1330,36 @@ class RdCollaborationWorkWriteMixin:
         ):
             raise RuntimeError("execution governance persistence callbacks are not configured")
         upsert_tasks(cursor, {task["id"]: task})
-        if requirement is not None:
-            if not callable(upsert_requirements):
-                raise RuntimeError("requirement execution persistence callback is not configured")
-            upsert_requirements(cursor, {requirement["id"]: requirement})
+        requirement_id = str(work_item.get("requirement_id") or "")
+        if (
+            not requirement_id
+            or requirement is None
+            or str(requirement.get("id") or "") != requirement_id
+            or str(task.get("requirement_id") or "") != requirement_id
+        ):
+            raise RdCollaborationRepositoryError(
+                "RD_WORK_ITEM_STATE_INVALID",
+                "work item task no longer references its canonical requirement",
+            )
+        cursor.execute("SELECT id FROM requirements WHERE id = %s FOR UPDATE", (requirement_id,))
+        if cursor.fetchone() is None:
+            raise RdCollaborationRepositoryError(
+                "RD_WORK_ITEM_STATE_INVALID",
+                "work item requirement is unavailable for dispatch",
+            )
+        cursor.execute(
+            """
+            UPDATE requirements
+            SET task_ids = CASE
+                  WHEN COALESCE(task_ids, '[]'::jsonb) @> jsonb_build_array(%s::text)
+                    THEN COALESCE(task_ids, '[]'::jsonb)
+                  ELSE COALESCE(task_ids, '[]'::jsonb) || jsonb_build_array(%s::text)
+                END,
+                updated_at = now()
+            WHERE id = %s
+            """,
+            (task["id"], task["id"], requirement_id),
+        )
         upsert_manifests(cursor, {context_manifest["id"]: context_manifest})
         if agent_budget_ledger is not None:
             cursor.execute(

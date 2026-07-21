@@ -886,16 +886,23 @@ def test_ai_executor_official_default_docs_match_model_gateway_template():
     assert "`executor_type=codex`" not in integration_plugin_line
 
 
-def test_postgres_repository_patches_additive_schema_gaps_for_existing_volumes():
+def test_postgres_repository_only_owns_explicit_runtime_schema_compatibility():
     source = Path("app/core/persistence.py").read_text()
 
     assert "_ensure_schema_compatibility" in source
     assert "ensure_schema_compatibility: bool = False" in source
-    assert "ADD COLUMN IF NOT EXISTS assignee text" in source
-    assert "idx_requirements_assignee" in source
+    assert "ADD COLUMN IF NOT EXISTS assignee text" not in source
+    assert "idx_requirements_assignee" not in source
+    assert '"125_rd_dispatch_due_index.sql"' in source
 
     main_source = Path("app/main.py").read_text()
     assert "ensure_schema_compatibility=not _is_test_env()" in main_source
+
+    entrypoint_source = (
+        Path(__file__).resolve().parents[3] / "infra" / "docker" / "api-entrypoint.sh"
+    ).read_text()
+    assert 'for path in sorted(migration_dir.glob("*.sql")):' in entrypoint_source
+    assert "app_schema_migrations" in entrypoint_source
 
 
 def test_all_structured_tables_define_created_and_updated_timestamps():

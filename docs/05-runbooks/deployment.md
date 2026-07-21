@@ -65,14 +65,14 @@ docker compose up -d --build
 
 全新 PostgreSQL volume 初始化时，Compose 只挂载 `postgres_data:/var/lib/postgresql/data`，不得把 `apps/api/app/db/migrations` 挂载到 `/docker-entrypoint-initdb.d`；`infra/docker/postgres-pgvector.Dockerfile` 也只打包 pgvector，不打包应用 SQL。请勿通过 PostgreSQL initdb 手工恢复应用迁移挂载。
 
-`infra/docker/api.Dockerfile` 将 `apps/api/app` 打包到 `/app/app`，`infra/docker/api-entrypoint.sh` 从 `/app/app/db/migrations` 执行普通 additive SQL。这是全新和存量 volume 的唯一普通应用迁移控制面，并显式跳过以下迁移：
+`infra/docker/api.Dockerfile` 将 `apps/api/app` 打包到 `/app/app`，`infra/docker/api-entrypoint.sh` 从 `/app/app/db/migrations` 执行普通 additive SQL。这是全新和存量 volume 的唯一普通应用迁移控制面：入口先持有覆盖整个扫描的阻塞 PostgreSQL advisory lock，再将每个普通 SQL 与对应 `app_schema_migrations` 的文件名、SHA-256 校验和和应用时间作为独立原子事务提交；同一文件只执行一次，已登记文件内容不一致时 API 必须失败启动并新增迁移解决，不能修改历史文件。它显式跳过以下迁移：
 
 - `121_requirement_driven_rd_cutover.sql`：破坏性切换 cleanup，只能在维护围栏进入 `cutover_locked`、Schema v2 和新应用健康证据满足后，通过 `scripts/rd_collaboration_cutover.py cleanup --execute` 显式执行；不得依赖重启 API 容器触发。
 - `125_rd_dispatch_due_index.sql`、`126_rd_dispatch_page_index.sql`、`127_rd_active_run_dispatch_index.sql`、`128_rd_dependency_successor_index.sql`：大表派发索引，不在入口脚本的逐文件 SQL 循环中执行。
 
-正常非测试 API 初始化会由 repository schema-compatibility 路径接管 125-128：在 autocommit 连接上尝试同一个 PostgreSQL advisory lock；取得锁的实例逐个检查索引是否 `valid` 且 `ready`，无效索引使用 concurrent drop 后，以 `CREATE INDEX CONCURRENTLY` 创建；未取得锁的并发实例立即继续启动，不等待持锁实例。该路径在后续 API 启动时会再次检查，因此跳过不表示迁移完成。发布观察中应确认 API 日志没有 compatibility index 错误，并在 PostgreSQL 验证四个索引均有效、可用；如果 concurrent DDL 失败，不得改用会长期阻塞业务写入的普通 `CREATE INDEX` 临时绕过。
+正常非测试 API 初始化会由 repository schema-compatibility 路径接管 125-128：在 autocommit 连接上尝试同一个 PostgreSQL advisory lock；取得锁的实例逐个检查索引是否 `valid` 且 `ready`，无效索引使用 concurrent drop 后，以 `CREATE INDEX CONCURRENTLY` 创建；未取得锁的并发实例立即继续启动，不等待持锁实例。如果执行 Worker 早于 API 入口完成普通账本而启动、目标表尚不存在，该实例安全跳过，由后续 API 初始化检查补齐。该路径在后续 API 启动时会再次检查，因此跳过不表示迁移完成。发布观察中应确认 API 日志没有 compatibility index 错误，并在 PostgreSQL 验证四个索引均有效、可用；如果 concurrent DDL 失败，不得改用会长期阻塞业务写入的普通 `CREATE INDEX` 临时绕过。
 
-边界回归证据由 `apps/api/tests/test_docker_migration_boundary.py` 和 `apps/api/tests/test_api_entrypoint.py` 提供：前者验证 Compose/PostgreSQL image 不能把应用迁移交给 initdb，且 API image 已打包 entrypoint 默认路径；后者验证普通 SQL 仍执行、121/125-128 仍跳过。发布前运行：
+边界回归证据由 `apps/api/tests/test_docker_migration_boundary.py` 和 `apps/api/tests/test_api_entrypoint.py` 提供：前者验证 Compose/PostgreSQL image 不能把应用迁移交给 initdb，且 API image 已打包 entrypoint 默认路径；后者验证普通 SQL 通过账本和 advisory lock 执行、121/125-128 仍跳过。发布前运行：
 
 ```bash
 cd apps/api
@@ -206,7 +206,7 @@ docker compose down
 - [ ] PostgreSQL 初始化包含 pgvector 扩展。
 - [ ] Redis 可连接。
 - [ ] API 日志无启动错误。
-- [ ] Compose/PostgreSQL image 未暴露应用 initdb 迁移入口，API image/entrypoint 边界回归通过；普通 API 启动未执行 `121_requirement_driven_rd_cutover.sql`，且四个派发索引 125-128 已由 repository compatibility 路径确认为 valid/ready；并发启动未因索引 advisory lock 相互等待。
+- [ ] Compose/PostgreSQL image 未暴露应用 initdb 迁移入口，API image/entrypoint 边界回归通过；普通迁移账本 `app_schema_migrations` 已登记且无校验和不一致，普通 API 启动未执行 `121_requirement_driven_rd_cutover.sql`，且四个派发索引 125-128 已由 repository compatibility 路径确认为 valid/ready；并发启动未因索引 advisory lock 相互等待。
 - [ ] `./scripts/release_smoke.sh` 通过，核心页面真实浏览器 smoke 无空白页、无控制台错误。
 - [ ] 本地代码运行态使用真实管理员 `FULL_CHAIN_USERNAME`/`FULL_CHAIN_PASSWORD` 执行 `./scripts/full_chain_regression.py --api-base-url http://localhost:8000` 通过，确认真实全链路业务写入、代码巡检和 full-chain 聚合正常；日常快速治理回归可补充执行 `./scripts/full_chain_regression.py --suite all-targeted --api-base-url http://localhost:8000`，其中包含确定性 AI 助手问答 smoke，但不能替代完整主链路验收。
 - [ ] 模型网关配置可查询，API Key 只返回 configured 标记，不返回明文或密钥片段。

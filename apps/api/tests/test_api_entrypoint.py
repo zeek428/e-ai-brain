@@ -38,15 +38,44 @@ class OperationalError(Exception):
 
 
 class _Cursor:
+    def __init__(self):
+        self._row = None
+
     def __enter__(self):
         return self
 
     def __exit__(self, *_args):
         return False
 
-    def execute(self, sql):
-        with open(os.environ["ENTRYPOINT_SQL_LOG"], "a", encoding="utf-8") as stream:
-            stream.write(sql.strip() + "\\n")
+    def execute(self, sql, params=None):
+        normalized = sql.strip()
+        self._row = None
+        if normalized.startswith("SELECT checksum FROM app_schema_migrations"):
+            filename = params[0]
+            ledger_path = os.environ["ENTRYPOINT_LEDGER"]
+            if os.path.exists(ledger_path):
+                with open(ledger_path, encoding="utf-8") as stream:
+                    for line in stream:
+                        stored_filename, checksum = line.rstrip("\\n").split(":", 1)
+                        if stored_filename == filename:
+                            self._row = (checksum,)
+                            return
+        elif normalized.startswith("INSERT INTO app_schema_migrations"):
+            with open(os.environ["ENTRYPOINT_LEDGER"], "a", encoding="utf-8") as stream:
+                stream.write(f"{params[0]}:{params[1]}\\n")
+        if normalized.startswith("SELECT 'ordinary"):
+            with open(os.environ["ENTRYPOINT_SQL_LOG"], "a", encoding="utf-8") as stream:
+                stream.write(normalized + "\\n")
+        if (
+            "app_schema_migrations" in normalized
+            or "pg_advisory_lock" in normalized
+            or "pg_advisory_unlock" in normalized
+        ):
+            with open(os.environ["ENTRYPOINT_CONTROL_LOG"], "a", encoding="utf-8") as stream:
+                stream.write(normalized + "\\n")
+
+    def fetchone(self):
+        return self._row
 
 
 class _Connection:
@@ -59,20 +88,28 @@ class _Connection:
     def cursor(self):
         return _Cursor()
 
+    def commit(self):
+        with open(os.environ["ENTRYPOINT_CONTROL_LOG"], "a", encoding="utf-8") as stream:
+            stream.write("COMMIT\\n")
+
 
 def connect(_database_url, *, autocommit):
-    assert autocommit is True
+    assert autocommit is False
     return _Connection()
 """.strip(),
         encoding="utf-8",
     )
     sql_log = tmp_path / "executed.sql"
+    control_log = tmp_path / "control.sql"
+    ledger = tmp_path / "migration-ledger.txt"
     entrypoint = Path(__file__).parents[3] / "infra" / "docker" / "api-entrypoint.sh"
     environment = {
         **os.environ,
         "API_MIGRATION_DIR": str(migration_dir),
         "DATABASE_URL": "postgresql://entrypoint-test",
         "ENTRYPOINT_SQL_LOG": str(sql_log),
+        "ENTRYPOINT_CONTROL_LOG": str(control_log),
+        "ENTRYPOINT_LEDGER": str(ledger),
         "PYTHONPATH": str(module_dir),
     }
 
@@ -81,5 +118,31 @@ def connect(_database_url, *, autocommit):
         check=True,
         env=environment,
     )
+    subprocess.run(
+        ["/bin/sh", str(entrypoint), "/usr/bin/true"],
+        check=True,
+        env=environment,
+    )
 
     assert sql_log.read_text(encoding="utf-8").splitlines() == expected_sql
+    assert len(ledger.read_text(encoding="utf-8").splitlines()) == len(expected_sql)
+    controls = control_log.read_text(encoding="utf-8")
+    assert "CREATE TABLE IF NOT EXISTS app_schema_migrations" in controls
+    assert "pg_advisory_lock" in controls
+    assert "INSERT INTO app_schema_migrations" in controls
+    # The ledger table is committed once on each startup.  Every newly applied
+    # migration then commits its SQL together with its individual ledger row,
+    # while the session advisory lock remains held across the whole scan.
+    assert controls.count("COMMIT") == len(expected_sql) + 2
+
+    (migration_dir / "120_before.sql").write_text("SELECT 'changed';", encoding="utf-8")
+    mismatch = subprocess.run(
+        ["/bin/sh", str(entrypoint), "/usr/bin/true"],
+        check=False,
+        capture_output=True,
+        env=environment,
+        text=True,
+    )
+
+    assert mismatch.returncode != 0
+    assert "migration checksum mismatch: 120_before.sql" in mismatch.stderr
