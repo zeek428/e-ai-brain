@@ -340,7 +340,7 @@ def test_coding_runner_success_always_enters_independent_verification() -> None:
     assert store.rd_work_item_attempts[dispatch["attempt"]["id"]]["status"] == "failed"
 
 
-def test_quality_verifier_provenance_uses_current_retry_attempt() -> None:
+def test_legacy_quality_verifier_without_attempt_provenance_uses_coding_retry_attempt() -> None:
     store = _ai_work_item_store()
     store.ai_executor_runners.update(
         {
@@ -395,6 +395,16 @@ def test_quality_verifier_provenance_uses_current_retry_attempt() -> None:
     )
     assert retry["attempt"]["attempt_no"] == 2
     assert verifier_task["input_payload"]["rd_work_item_attempt_id"] == retry["attempt"]["id"]
+
+    # Simulate the historical task/provenance combination from the
+    # pre-provenance Runner package.  Its parent task still carries the first
+    # attempt, so the projection must derive the retry attempt through the
+    # immutable coding-runner linkage on the quality-gate snapshot instead of
+    # fencing this failure as stale.
+    store.ai_tasks[retry["task"]["id"]]["input_json"]["rd_collaboration"]["attempt_id"] = (
+        first["attempt"]["id"]
+    )
+    verifier_task["input_payload"].pop("rd_work_item_attempt_id")
 
     verifier_task.update(
         {

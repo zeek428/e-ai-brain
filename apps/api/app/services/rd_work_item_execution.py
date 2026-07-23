@@ -125,6 +125,71 @@ def _attempt_for_runner(
     return _record(current_store, "rd_work_item_attempts", attempt_id)
 
 
+def _attempt_for_quality_gate_runner(
+    current_store: Any,
+    *,
+    task: dict[str, Any],
+    quality_gate_run: dict[str, Any],
+    runner_task_id: str,
+) -> dict[str, Any] | None:
+    """Resolve a verifier's attempt, including pre-provenance gate tasks.
+
+    New verifier tasks carry the immutable work-item attempt directly.  Older
+    Runner packages did not, but every quality-gate snapshot still points to
+    the coding Runner task that created it.  Use that coding task only when
+    the verifier omits direct provenance; an explicit verifier association is
+    always authoritative.
+    """
+    verifier_task = _runner_task(
+        current_store,
+        task=task,
+        runner_task_id=runner_task_id,
+    ) or {}
+    verifier_payload = (
+        verifier_task.get("input_payload")
+        if isinstance(verifier_task.get("input_payload"), dict)
+        else {}
+    )
+    verifier_attempt_id = str(
+        verifier_payload.get("rd_work_item_attempt_id") or ""
+    ).strip()
+    if verifier_attempt_id:
+        return _record(current_store, "rd_work_item_attempts", verifier_attempt_id)
+
+    policy_snapshot = (
+        quality_gate_run.get("policy_snapshot")
+        if isinstance(quality_gate_run.get("policy_snapshot"), dict)
+        else {}
+    )
+    coding_runner_task_id = str(
+        policy_snapshot.get("coding_runner_task_id")
+        or verifier_payload.get("coding_runner_task_id")
+        or ""
+    ).strip()
+    if coding_runner_task_id:
+        coding_task = _runner_task(
+            current_store,
+            task=task,
+            runner_task_id=coding_runner_task_id,
+        ) or {}
+        coding_payload = (
+            coding_task.get("input_payload")
+            if isinstance(coding_task.get("input_payload"), dict)
+            else {}
+        )
+        coding_attempt_id = str(
+            coding_payload.get("rd_work_item_attempt_id") or ""
+        ).strip()
+        if coding_attempt_id:
+            return _record(current_store, "rd_work_item_attempts", coding_attempt_id)
+
+    return _attempt_for_runner(
+        current_store,
+        task=task,
+        runner_task_id=runner_task_id,
+    )
+
+
 def _save_event(
     current_store: Any,
     *,
@@ -499,7 +564,12 @@ def project_work_item_quality_gate_result(
         return None
     assert task is not None
     item = _record(current_store, "rd_work_items", str(task["work_item_id"]))
-    attempt = _attempt_for_runner(current_store, task=task, runner_task_id=runner_task_id)
+    attempt = _attempt_for_quality_gate_runner(
+        current_store,
+        task=task,
+        quality_gate_run=quality_gate_run,
+        runner_task_id=runner_task_id,
+    )
     if item is None or attempt is None or attempt.get("work_item_id") != item.get("id"):
         raise api_error(
             409,
