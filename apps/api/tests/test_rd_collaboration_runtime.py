@@ -549,7 +549,7 @@ def test_persisted_plan_binds_work_items_to_frozen_role_seats() -> None:
     assert result["work_items"][0]["reviewer_seat_id"] == "seat-test"
 
 
-def test_start_route_returns_versioned_snapshot_contract_and_trace_id() -> None:
+def test_start_route_returns_versioned_snapshot_contract_and_trace_id(monkeypatch) -> None:
     client = TestClient(app)
     app.state.store.reset()
     login = client.post(
@@ -610,21 +610,40 @@ def test_start_route_returns_versioned_snapshot_contract_and_trace_id() -> None:
     assert response.json()["data"]["strategy_snapshot_kind"] == "version_resolved"
     assert response.json()["trace_id"]
     run_id = response.json()["data"]["id"]
+    generated_plan_calls: list[str] = []
+
+    def generate_plan(current_store, *, collaboration_run_id: str) -> dict:
+        assert current_store is app.state.store
+        generated_plan_calls.append(collaboration_run_id)
+        return {
+            "status": "planned",
+            **persist_work_item_plan(
+                current_store,
+                collaboration_run_id=collaboration_run_id,
+                proposal={
+                    "work_items": [
+                        {
+                            "id": "route-root",
+                            "owner_role_code": "developer",
+                            "reviewer_role_code": "tester",
+                        }
+                    ],
+                    "dependencies": [],
+                },
+                actor={"id": "user_admin", "roles": ["rd_owner"]},
+            ),
+        }
+
+    monkeypatch.setattr(
+        "app.api.routers.rd_collaboration.generate_and_persist_work_item_plan",
+        generate_plan,
+    )
     planned = client.post(
-        f"/api/delivery/rd-collaboration-runs/{run_id}/plan",
-        json={
-            "work_items": [
-                {
-                    "id": "route-root",
-                    "owner_role_code": "developer",
-                    "reviewer_role_code": "tester",
-                }
-            ],
-            "dependencies": [],
-        },
+        f"/api/delivery/rd-collaboration-runs/{run_id}/generate-plan",
         headers=headers,
     )
     assert planned.status_code == 200
+    assert generated_plan_calls == [run_id]
     work_item = planned.json()["data"]["work_items"][0]
     assert work_item["status"] == "ready"
     claimed = client.post(

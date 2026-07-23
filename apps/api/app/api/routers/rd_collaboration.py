@@ -19,6 +19,7 @@ from app.services.rd_collaboration_access import (
     require_work_item_scope,
 )
 from app.services.rd_collaboration_decisions import answer_decision_request, apply_decision
+from app.services.rd_collaboration_plan_generation import generate_and_persist_work_item_plan
 from app.services.rd_collaboration_planning import (
     persist_work_item_plan,
     restart_terminal_collaboration_run,
@@ -361,6 +362,23 @@ def validate_plan(
         collaboration_run_id=run_id,
         proposal=payload.model_dump(),
         actor=user,
+    )
+    return envelope(plan, get_trace_id(request))
+
+
+@router.post("/api/delivery/rd-collaboration-runs/{run_id}/generate-plan")
+def generate_plan(
+    run_id: str,
+    request: Request,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    """Generate a bounded LLM proposal, then persist only its validated DAG."""
+    _require(user, "delivery.rd_collaboration.plan")
+    current_store = store(request)
+    require_run_scope(current_store, user, run_id)
+    plan = generate_and_persist_work_item_plan(
+        current_store,
+        collaboration_run_id=run_id,
     )
     return envelope(plan, get_trace_id(request))
 

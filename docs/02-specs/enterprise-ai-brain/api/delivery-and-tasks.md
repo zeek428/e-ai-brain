@@ -201,6 +201,18 @@ POST /api/product-versions/{version_id}/collaboration-runs
 }
 ```
 
+#### 生成或提交工作项计划
+
+```http
+POST /api/delivery/rd-collaboration-runs/{run_id}/generate-plan
+POST /api/delivery/rd-collaboration-runs/{run_id}/plan
+POST /api/delivery/rd-collaboration-runs/{run_id}/replan
+```
+
+`generate-plan` 不接收客户端计划体。平台只把该运行已冻结的需求范围、策略快照、岗位席位和交付终点传给统一模型网关，要求返回受限 JSON DAG；随后仍由服务端校验需求不得逃逸范围、岗位必须来自冻结席位、审核人与负责人分离、依赖无环、实现项写入资源声明及策略/经验边界。模型不拥有状态迁移、权限、执行器选择、风险批准或远程推送权限。任一模型调用或确定性校验失败，运行继续保持 `planning`，不写入部分工作项，调用方修复后可安全重试。
+
+`plan` 与 `replan` 接收同一 `work_items/dependencies` Schema，供授权人员在模型建议不可用或需要明确修订时提交方案；它们走与 `generate-plan` 完全相同的持久化校验。三者均要求 `delivery.rd_collaboration.plan`、关联产品范围，且只允许未形成初始计划的 `planning` 运行。成功响应返回 `status=planned`、`plan_version`、持久化后的 `work_items/dependencies` 与 `trace_id`；再次规划必须经受控范围或运行代次流程，不能改写已冻结范围。定时作业定义、调度和运行历史不受该按需 API 影响。
+
 #### 受控调整协作范围
 
 ```http
