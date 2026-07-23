@@ -20,7 +20,7 @@ from app.services.operational_records import record_audit_event
 from app.services.quality_gates import start_pre_merge_quality_gate
 from app.services.rd_git_delivery import record_version_git_delivery_from_runner
 from app.services.rd_work_item_execution import is_rd_collaboration_task
-from app.services.task_output_summary import readable_task_output_summary
+from app.services.task_output_summary import readable_runner_task_output_summary
 from app.services.task_persistence_helpers import record_audit_event as record_task_audit_event
 
 _ARTIFACT_REVIEW_TASK_TYPES = {
@@ -165,7 +165,7 @@ def complete_rd_coding_runner_atomically(
         },
         "result": coding_runner_task.get("result_json") or {},
     }
-    output_summary = readable_task_output_summary(output_json)
+    output_summary = readable_runner_task_output_summary(coding_runner_task)
     if output_summary:
         output_json["summary"] = output_summary
     prepared = start_pre_merge_quality_gate(

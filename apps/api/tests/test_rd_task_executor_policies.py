@@ -439,6 +439,149 @@ def test_task_detail_extracts_readable_executor_output_summary():
     assert "tokens used" not in detail["output_summary"]
 
 
+def test_task_detail_prefers_final_codex_runner_log_over_truncated_preview():
+    headers = auth_headers()
+    app.state.store.reset()
+    task_id = "task_executor_truncated_preview"
+    app.state.store.ai_tasks[task_id] = {
+        "id": task_id,
+        "brain_app_id": "rd_brain",
+        "created_by": "user_admin",
+        "created_at": "2026-07-23T04:00:00+00:00",
+        "updated_at": "2026-07-23T04:00:00+00:00",
+        "status": "waiting_review",
+        "current_step": "executor_completed",
+        "task_type": "product_detail_design",
+        "title": "迭代版本总览设计",
+        "product_id": "product_119",
+        "version_id": None,
+        "requirement_id": None,
+        "input_json": {},
+        "product_context": {},
+        "review_ids": [],
+        "graph_run_ids": [],
+        "output_json": {
+            "summary": "\n".join(
+                [
+                    "ing",
+                    "delivery_boundary: ready_for_release",
+                    "```",
+                    "不完整的尾部输出",
+                ]
+            ),
+            "result": {
+                "output_preview": "\n".join(
+                    [
+                        "ing",
+                        "delivery_boundary: ready_for_release",
+                        "```",
+                        "不完整的尾部输出",
+                    ]
+                )
+                + "\n",
+            },
+        },
+    }
+    app.state.store.ai_executor_tasks["executor_task_final_design"] = {
+        "id": "executor_task_final_design",
+        "ai_task_id": task_id,
+        "status": "succeeded",
+        "finished_at": "2026-07-23T04:01:00+00:00",
+        "logs": [
+            {"message": "Starting codex"},
+            {"message": "\n".join(["tokens used", "192,139"])},
+            {
+                "message": (
+                    "\n".join(
+                        [
+                            "已完成产品详细设计。",
+                            "## interaction_and_data_mapping",
+                            "```yaml",
+                            "status: ready_for_engineering",
+                            "```",
+                            "| 页面区域 | 展示字段 |",
+                            "|---|---|",
+                            "| 协同总览 | 运行编号 |",
+                        ]
+                    )
+                ),
+            },
+            {"message": "codex exited with 0"},
+        ],
+    }
+
+    detail = client.get(f"/api/ai-tasks/{task_id}", headers=headers).json()["data"]
+
+    assert detail["output_summary"].startswith("已完成产品详细设计。")
+    assert "interaction_and_data_mapping" in detail["output_summary"]
+    assert not detail["output_summary"].startswith("ing")
+
+
+def test_pending_review_prefers_final_codex_runner_log_over_truncated_preview():
+    headers = auth_headers()
+    app.state.store.reset()
+    task_id = "task_executor_review_preview"
+    truncated_preview = "\n".join(
+        [
+            "ing",
+            "delivery_boundary: ready_for_release",
+            "```",
+            "不完整的尾部输出",
+        ]
+    )
+    app.state.store.ai_tasks[task_id] = {
+        "id": task_id,
+        "brain_app_id": "rd_brain",
+        "created_by": "user_admin",
+        "status": "waiting_review",
+        "current_step": "executor_completed",
+        "task_type": "product_detail_design",
+        "title": "迭代版本总览设计",
+        "product_id": "product_119",
+        "version_id": None,
+        "requirement_id": None,
+        "input_json": {},
+        "product_context": {},
+        "review_ids": ["review_executor_preview"],
+        "graph_run_ids": [],
+        "output_json": {
+            "summary": truncated_preview,
+            "result": {"output_preview": f"{truncated_preview}\n"},
+        },
+    }
+    app.state.store.human_reviews["review_executor_preview"] = {
+        "id": "review_executor_preview",
+        "ai_task_id": task_id,
+        "stage": "product_detail_design",
+        "status": "pending",
+        "version": 1,
+        "content": {
+            "summary": truncated_preview,
+            "result": {"output_preview": f"{truncated_preview}\n"},
+        },
+    }
+    app.state.store.ai_executor_tasks["executor_task_review_final"] = {
+        "id": "executor_task_review_final",
+        "ai_task_id": task_id,
+        "status": "succeeded",
+        "finished_at": "2026-07-23T04:01:00+00:00",
+        "logs": [
+            {"message": "Starting codex"},
+            {"message": "tokens used\n192,139"},
+            {"message": "已完成待确认的产品详细设计。\n## 设计结论"},
+            {"message": "codex exited with 0"},
+        ],
+    }
+
+    reviews = client.get(
+        f"/api/reviews/pending?ai_task_id={task_id}",
+        headers=headers,
+    ).json()["data"]["items"]
+
+    assert reviews[0]["content"]["summary"].startswith("已完成待确认的产品详细设计。")
+    assert not reviews[0]["content"]["summary"].startswith("ing")
+
+
 def test_unified_policy_instruction_carries_code_inspection_finding_context():
     headers = auth_headers()
     app.state.store.reset()

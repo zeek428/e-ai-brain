@@ -13,7 +13,10 @@ from app.services.quality_gates import latest_quality_gate_for_task
 from app.services.task_access import can_read_task, task_read_scope
 from app.services.task_contexts import public_product_context
 from app.services.task_graph_runtime import graph_runs_for_task
-from app.services.task_output_summary import readable_task_output_summary
+from app.services.task_output_summary import (
+    readable_runner_task_output_summary,
+    readable_task_output_summary,
+)
 from app.services.task_workflow_context import task_workflow_read_store
 
 PENDING_REVIEW_SORT_FIELDS = {
@@ -39,6 +42,85 @@ def pending_review_query_repository(current_store: Any) -> Any | None:
 def _read_memory_dict(current_store: Any, collection_name: str) -> dict[str, dict[str, Any]]:
     collection = getattr(current_store, collection_name, None)
     return collection if isinstance(collection, dict) else {}
+
+
+def _task_summary_uses_raw_runner_preview(task: dict[str, Any]) -> bool:
+    output = task.get("output_json")
+    if not isinstance(output, dict):
+        return False
+    summary = output.get("summary")
+    result = output.get("result")
+    if not isinstance(summary, str) or not summary.strip() or not isinstance(result, dict):
+        return False
+    preview_summary = readable_task_output_summary({"result": result})
+    return bool(preview_summary) and summary.strip() == preview_summary.strip()
+
+
+def _runner_log_summary_for_task(current_store: Any, task_id: str) -> str | None:
+    runner_tasks = [
+        item
+        for item in _read_memory_dict(current_store, "ai_executor_tasks").values()
+        if item.get("ai_task_id") == task_id
+    ]
+    if not runner_tasks:
+        repository = getattr(current_store, "repository", None)
+        list_runner_tasks = getattr(repository, "list_ai_executor_tasks", None)
+        if callable(list_runner_tasks):
+            runner_tasks = list_runner_tasks(ai_task_id=task_id)
+    runner_tasks.sort(
+        key=lambda item: (
+            item.get("finished_at") or "",
+            item.get("updated_at") or "",
+            item.get("created_at") or "",
+            item.get("id") or "",
+        ),
+    )
+    for runner_task in reversed(runner_tasks):
+        if runner_task.get("status") != "succeeded":
+            continue
+        if runner_task.get("task_kind") not in {None, "", "coding"}:
+            continue
+        summary = readable_runner_task_output_summary(runner_task)
+        if summary:
+            return summary
+    return None
+
+
+def _pending_reviews_with_recovered_summaries(
+    current_store: Any,
+    items: list[dict[str, Any]],
+    *,
+    read_store: Any,
+) -> list[dict[str, Any]]:
+    recovered_items: list[dict[str, Any]] = []
+    for review in items:
+        content = review.get("content")
+        task = read_store.ai_tasks.get(review.get("ai_task_id"))
+        if (
+            not isinstance(content, dict)
+            or task is None
+            or not _task_summary_uses_raw_runner_preview(task)
+        ):
+            recovered_items.append(review)
+            continue
+        content_summary = readable_task_output_summary(content)
+        task_summary = readable_task_output_summary(task.get("output_json"))
+        recovered_summary = _runner_log_summary_for_task(current_store, task["id"])
+        if (
+            not content_summary
+            or not task_summary
+            or content_summary.strip() != task_summary.strip()
+            or not recovered_summary
+        ):
+            recovered_items.append(review)
+            continue
+        recovered_items.append(
+            {
+                **review,
+                "content": {**content, "summary": recovered_summary},
+            }
+        )
+    return recovered_items
 
 
 def task_detail_projection(
@@ -72,7 +154,11 @@ def task_detail_projection(
     }
     output_json = task.get("output_json")
     detail["output"] = output_json
-    detail["output_summary"] = readable_task_output_summary(output_json)
+    detail["output_summary"] = (
+        _runner_log_summary_for_task(current_store, task["id"])
+        if _task_summary_uses_raw_runner_preview(task)
+        else None
+    ) or readable_task_output_summary(output_json)
     detail["current_step"] = task.get("current_step")
     detail["pending_review"] = current_store.snapshot(pending_review) if pending_review else None
     detail["reviews"] = current_store.snapshot({"items": reviews, "total": len(reviews)})
@@ -199,6 +285,11 @@ def pending_reviews_response(
                 sort_by=resolved_sort_by,
                 sort_order=sort_order,
             )
+            items = _pending_reviews_with_recovered_summaries(
+                current_store,
+                items,
+                read_store=task_workflow_read_store(current_store),
+            )
             return add_list_observability(
                 {
                     "items": items,
@@ -231,6 +322,11 @@ def pending_reviews_response(
         page_items = items[
             (resolved_page - 1) * resolved_page_size : resolved_page * resolved_page_size
         ]
+        page_items = _pending_reviews_with_recovered_summaries(
+            current_store,
+            page_items,
+            read_store=task_workflow_read_store(current_store),
+        )
         return add_list_observability(
             {
                 "items": page_items,
@@ -266,6 +362,11 @@ def pending_reviews_response(
     page_items = items[
         (resolved_page - 1) * resolved_page_size : resolved_page * resolved_page_size
     ]
+    page_items = _pending_reviews_with_recovered_summaries(
+        current_store,
+        page_items,
+        read_store=read_store,
+    )
     return add_list_observability(
         {
             "items": page_items,

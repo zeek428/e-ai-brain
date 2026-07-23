@@ -110,7 +110,7 @@ from app.services.rd_work_item_execution import (
     project_work_item_quality_gate_result,
 )
 from app.services.task_graph_runtime import latest_graph_run, transition_latest_graph_run
-from app.services.task_output_summary import readable_task_output_summary
+from app.services.task_output_summary import readable_runner_task_output_summary
 from app.services.task_persistence_helpers import (
     record_audit_event as record_task_audit_event,
 )
@@ -700,7 +700,7 @@ def _sync_runner_completion_to_ai_task(
             },
             "result": task.get("result_json") or {},
         }
-        output_summary = readable_task_output_summary(output_json)
+        output_summary = readable_runner_task_output_summary(task)
         if output_summary:
             output_json["summary"] = output_summary
         policy = _load_executor_policy_for_ai_task(current_store, ai_task)

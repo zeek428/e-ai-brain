@@ -9,6 +9,7 @@ _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _CODEX_TOKENS_RE = re.compile(
     r"(?im)^tokens used\s*\n\s*[\d,]+\s*$",
 )
+_CODEX_EXIT_RE = re.compile(r"(?im)^codex exited with\s+\d+\s*$")
 _SUMMARY_MARKERS = (
     "**整改状态",
     "整改状态：",
@@ -83,6 +84,45 @@ def _extract_output_preview_summary(output_preview: str) -> str | None:
     if text.startswith(("{", "[")) and "output_preview" in text:
         return None
     return _truncate_summary(text)
+
+
+def _final_codex_response_from_logs(logs: Any) -> str | None:
+    if not isinstance(logs, list):
+        return None
+    text = "\n".join(
+        str(item.get("message") or "")
+        for item in logs
+        if isinstance(item, dict) and str(item.get("message") or "").strip()
+    )
+    token_matches = list(_CODEX_TOKENS_RE.finditer(text))
+    if not token_matches:
+        return None
+    response = text[token_matches[-1].end() :]
+    response = _CODEX_EXIT_RE.sub("", response).strip()
+    return _extract_output_preview_summary(response) if response else None
+
+
+def readable_runner_task_output_summary(runner_task: Any) -> str | None:
+    task = _object_record(runner_task)
+    if task is None:
+        return None
+    result = _object_record(task.get("result_json")) or {}
+    for path in (
+        ("summary",),
+        ("output_summary",),
+        ("result", "summary"),
+        ("result", "output_summary"),
+        ("parsed_output", "summary"),
+        ("parsed_output", "output_summary"),
+        ("parsed_output", "result", "summary"),
+    ):
+        summary = _string_at_path(result, *path)
+        if summary:
+            return _truncate_summary(summary)
+    log_summary = _final_codex_response_from_logs(task.get("logs"))
+    if log_summary:
+        return log_summary
+    return readable_task_output_summary({"result": result})
 
 
 def readable_task_output_summary(output_json: Any) -> str | None:

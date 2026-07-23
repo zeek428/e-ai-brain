@@ -13,7 +13,8 @@ type SummaryLine =
   | { kind: 'codeBlock'; language?: string; text: string }
   | { kind: 'heading'; text: string }
   | { kind: 'paragraph'; text: string }
-  | { kind: 'status'; label: string; value: string };
+  | { kind: 'status'; label: string; value: string }
+  | { headers: string[]; kind: 'table'; rows: string[][] };
 
 function normalizeCompactSummary(value: string) {
   let text = value.replace(/\r\n/g, '\n').trim();
@@ -52,40 +53,77 @@ function parsePlainSummaryLine(line: string): SummaryLine {
   return { kind: 'paragraph', text: plainText };
 }
 
+function markdownTableCells(line: string) {
+  const normalized = line.trim();
+  if (!normalized.startsWith('|')) {
+    return undefined;
+  }
+  const body = normalized.replace(/^\|/, '').replace(/\|$/, '');
+  const cells = body.split('|').map((cell) => cell.trim());
+  return cells.length ? cells : undefined;
+}
+
+function isMarkdownTableDivider(line: string) {
+  const cells = markdownTableCells(line);
+  return Boolean(cells?.length && cells.every((cell) => /^:?-{3,}:?$/.test(cell)));
+}
+
 function parseSummaryLines(summary: string): SummaryLine[] {
   const lines: SummaryLine[] = [];
   let codeBlockLanguage: string | undefined;
   let codeBlockLines: string[] = [];
-
-  normalizeCompactSummary(summary)
+  const sourceLines = normalizeCompactSummary(summary)
     .split('\n')
-    .map((line) => line.trimEnd())
-    .forEach((line) => {
-      const fence = line.trim().match(/^```([a-zA-Z0-9_-]+)?$/);
-      if (fence && codeBlockLanguage !== undefined) {
-        lines.push({
-          kind: 'codeBlock',
-          language: codeBlockLanguage,
-          text: codeBlockLines.join('\n').trim(),
-        });
-        codeBlockLanguage = undefined;
-        codeBlockLines = [];
-        return;
-      }
-      if (codeBlockLanguage !== undefined) {
-        codeBlockLines.push(line);
-        return;
-      }
-      if (fence) {
-        codeBlockLanguage = fence[1] ?? '';
-        codeBlockLines = [];
-        return;
-      }
+    .map((line) => line.trimEnd());
 
-      if (line.trim()) {
-        lines.push(parsePlainSummaryLine(line));
+  let index = 0;
+  while (index < sourceLines.length) {
+    const line = sourceLines[index];
+    const fence = line.trim().match(/^```([a-zA-Z0-9_-]+)?$/);
+    if (fence && codeBlockLanguage !== undefined) {
+      lines.push({
+        kind: 'codeBlock',
+        language: codeBlockLanguage,
+        text: codeBlockLines.join('\n').trim(),
+      });
+      codeBlockLanguage = undefined;
+      codeBlockLines = [];
+      index += 1;
+      continue;
+    }
+    if (codeBlockLanguage !== undefined) {
+      codeBlockLines.push(line);
+      index += 1;
+      continue;
+    }
+    if (fence) {
+      codeBlockLanguage = fence[1] ?? '';
+      codeBlockLines = [];
+      index += 1;
+      continue;
+    }
+
+    const headers = markdownTableCells(line);
+    if (headers && isMarkdownTableDivider(sourceLines[index + 1] ?? '')) {
+      const rows: string[][] = [];
+      index += 2;
+      while (index < sourceLines.length) {
+        const cells = markdownTableCells(sourceLines[index]);
+        if (!cells) {
+          break;
+        }
+        rows.push(headers.map((_, cellIndex) => cells[cellIndex] ?? ''));
+        index += 1;
       }
-    });
+      lines.push({ kind: 'table', headers, rows });
+      continue;
+    }
+
+    if (line.trim()) {
+      lines.push(parsePlainSummaryLine(line));
+    }
+    index += 1;
+  }
 
   if (codeBlockLanguage !== undefined) {
     lines.push({
@@ -192,6 +230,32 @@ export function TaskOutputSummary({ compact = false, summary }: TaskOutputSummar
             <pre className="task-output-summary-code-block" key={`${line.kind}-${index}`}>
               <code>{line.text || line.language || '-'}</code>
             </pre>
+          );
+        }
+        if (line.kind === 'table') {
+          return (
+            <div className="task-output-summary-table-scroll" key={`${line.kind}-${index}`}>
+              <table className="task-output-summary-table">
+                <thead>
+                  <tr>
+                    {line.headers.map((header, headerIndex) => (
+                      <th key={`header-${headerIndex}`} scope="col">
+                        {renderInlineMarkdown(header)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {line.rows.map((row, rowIndex) => (
+                    <tr key={`row-${rowIndex}`}>
+                      {row.map((cell, cellIndex) => (
+                        <td key={`cell-${rowIndex}-${cellIndex}`}>{renderInlineMarkdown(cell)}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           );
         }
         return (

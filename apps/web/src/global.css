@@ -2635,6 +2635,33 @@ body {
   white-space: pre;
 }
 
+.task-output-summary-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.task-output-summary-table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.task-output-summary-table th,
+.task-output-summary-table td {
+  min-width: 120px;
+  padding: 8px 10px;
+  border: 1px solid #dbe4f0;
+  text-align: left;
+  vertical-align: top;
+}
+
+.task-output-summary-table th {
+  background: #f3f7fb;
+  color: #334155;
+  font-weight: 600;
+}
+
 .task-output-summary-card a {
   overflow-wrap: anywhere;
 }
