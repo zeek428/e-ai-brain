@@ -72,6 +72,7 @@ export function usePluginRunnerOperations({
     setEditingRunner(undefined);
     runnerForm.resetFields();
     runnerForm.setFieldsValue({
+      attestation_status: 'pending',
       claude_command: 'claude',
       codex_command: 'codex',
       deployment_capability: false,
@@ -87,6 +88,7 @@ export function usePluginRunnerOperations({
       protocol: 'runner_polling',
       status: 'active',
       target_os: 'linux',
+      trust_boundary_id: '',
       trust_domain: 'coding',
       workspace_roots: '/Users/zeek/source/e-ai-brain',
     });
@@ -99,6 +101,7 @@ export function usePluginRunnerOperations({
     const executorCommands = runnerExecutorCommandsFromMetadata(runner.metadata);
     const packageOptions = runnerPackageOptionsFromMetadata(runner.metadata);
     runnerForm.setFieldsValue({
+      attestation_status: runner.attestation_status ?? 'pending',
       claude_command: executorCommands.claude || 'claude',
       codex_command: executorCommands.codex || 'codex',
       deployment_capability: (runner.capabilities ?? []).includes('deployment'),
@@ -115,6 +118,7 @@ export function usePluginRunnerOperations({
       protocol: runner.protocol ?? 'runner_polling',
       status: runner.status,
       target_os: packageOptions.target_os,
+      trust_boundary_id: runner.trust_boundary_id ?? '',
       trust_domain: runner.trust_domain ?? 'coding',
       workspace_roots: arrayToLines(runner.workspace_roots),
     });

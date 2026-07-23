@@ -1,3 +1,4 @@
+import base64
 import json
 import sys
 import zipfile
@@ -7,6 +8,7 @@ from io import BytesIO
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from fastapi.testclient import TestClient
 
 import app.services.plugin_dingtalk_operations as plugin_dingtalk_operations
@@ -2283,6 +2285,59 @@ def test_ai_executor_runner_test_endpoint_reports_managed_and_runner_health():
     )
 
 
+def test_ai_executor_runner_registers_an_immutable_attestation_key_before_activation():
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    runner = client.post(
+        "/api/system/ai-executor-runners",
+        json={
+            "executor_types": ["codex"],
+            "name": "可信编码 Runner",
+            "protocol": "runner_polling",
+            "runner_token": "runner-secret",
+            "trust_boundary_id": "coding-boundary-a",
+            "trust_domain": "coding",
+            "workspace_roots": ["/Users/zeek/source/e-ai-brain"],
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    public_key = Ed25519PrivateKey.generate().public_key().public_bytes_raw()
+    encoded_public_key = base64.b64encode(public_key).decode("ascii")
+
+    registration = client.post(
+        f"/api/system/ai-executor-runners/{runner['id']}/attestation-key",
+        json={"attestation_public_key": encoded_public_key},
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+
+    assert registration.status_code == 200
+    registered = registration.json()["data"]
+    assert registered["attestation_public_key"] == encoded_public_key
+    assert registered["attestation_status"] == "pending"
+    assert registered["attestation_key_fingerprint"]
+
+    activated = client.patch(
+        f"/api/system/ai-executor-runners/{runner['id']}",
+        json={"attestation_status": "active"},
+        headers=admin_headers,
+    )
+
+    assert activated.status_code == 200
+    assert activated.json()["data"]["attestation_status"] == "active"
+
+    replacement_key = base64.b64encode(
+        Ed25519PrivateKey.generate().public_key().public_bytes_raw(),
+    ).decode("ascii")
+    replacement = client.post(
+        f"/api/system/ai-executor-runners/{runner['id']}/attestation-key",
+        json={"attestation_public_key": replacement_key},
+        headers={"X-Runner-Token": "runner-secret"},
+    )
+
+    assert replacement.status_code == 409
+    assert replacement.json()["detail"]["code"] == "AI_EXECUTOR_ATTESTATION_KEY_IMMUTABLE"
+
+
 def test_ai_executor_action_invokes_system_default_model_gateway_executor(monkeypatch):
     app.state.store.reset()
     admin_headers = auth_headers()
@@ -3305,6 +3360,7 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
             "manifest.json",
             "runner_agent.py",
             "runner_config.json",
+            "runner_requirements.txt",
             "skills/ai-brain-runner/SKILL.md",
             "systemd/ai-brain-runner.service",
         }.issubset(names)
@@ -3314,11 +3370,13 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
         readme_text = archive.read("README.md").decode("utf-8")
         runner_agent_text = archive.read("runner_agent.py").decode("utf-8")
+        runner_requirements_text = archive.read("runner_requirements.txt").decode("utf-8")
         start_stop_text = archive.read("START_STOP.md").decode("utf-8")
         skill_text = archive.read("skills/ai-brain-runner/SKILL.md").decode("utf-8")
 
     assert "START_STOP.md" in readme_text
     assert "runner_agent.py" in readme_text
+    assert "cryptography>=49.0.0" in runner_requirements_text
     assert "AI_BRAIN_RUNNER_PRINT_BACKGROUND_LOGS=true" in readme_text
     compile(runner_agent_text, "runner_agent.py", "exec")
     assert 'f"{API_ROOT}/ai-executor-tasks/claim"' in runner_agent_text
@@ -3642,6 +3700,14 @@ def test_ai_executor_runner_agent_executes_configured_command_with_stdin(
     assert complete_payload["result_json"]["exit_code"] == 0
     assert "runner-probe-started" in complete_payload["result_json"]["output_preview"]
     assert complete_payload["result_json"]["workspace_root"] == str(tmp_path)
+    proof = complete_payload["result_json"]["execution_attestation"]
+    assert proof["payload"] == {"runner_task_id": "runner_task_probe"}
+    Ed25519PublicKey.from_public_bytes(
+        base64.b64decode(namespace["_attestation_public_key"]()),
+    ).verify(
+        base64.b64decode(proof["signature"]),
+        namespace["_canonical_attestation_payload"](proof["payload"]),
+    )
     namespace["LOCAL_CONSOLE_LOGS"] = True
     namespace["_print_local_log"]("runner_task_probe", {"level": "info", "message": "visible"})
     captured = capsys.readouterr()

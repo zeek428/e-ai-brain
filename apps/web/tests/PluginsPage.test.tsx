@@ -2380,8 +2380,13 @@ describe('PluginsPage', () => {
     expect(within(dialog).getByText(
       '当前本地 Runner 安装包和任务队列闭环使用 Runner Polling；WebSocket/MCP 为预留协议。',
     )).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('信任边界 ID')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('可信证明状态')).toBeInTheDocument();
     fireEvent.change(within(dialog).getByLabelText('名称'), {
       target: { value: '本地 OpenClaw 执行器' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('信任边界 ID'), {
+      target: { value: 'coding-boundary-a' },
     });
     fireEvent.change(within(dialog).getByLabelText('Codex 命令'), {
       target: { value: 'codex --profile ai-brain' },
@@ -2424,6 +2429,7 @@ describe('PluginsPage', () => {
           }),
           name: '本地 OpenClaw 执行器',
           protocol: 'runner_polling',
+          trust_boundary_id: 'coding-boundary-a',
           trust_domain: 'deployment',
           workspace_roots: ['/Users/zeek/source/e-ai-brain'],
         }),
@@ -2442,6 +2448,7 @@ describe('PluginsPage', () => {
     expect(await screen.findByText('系统默认执行器')).toBeInTheDocument();
     expect(screen.getAllByText('model_gateway').length).toBeGreaterThan(0);
     expect(screen.getByText('managed')).toBeInTheDocument();
+    expect(screen.getByText('系统托管证明')).toBeInTheDocument();
     expect(screen.getByText('就绪 ready')).toBeInTheDocument();
     expect(screen.getByText('使用系统默认 AI 大模型执行，无需启动本地 Runner')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '测试执行器 系统默认执行器' })).toBeInTheDocument();

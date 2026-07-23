@@ -153,6 +153,7 @@ export function runnerPayload(values: AiExecutorRunnerFormValues): Partial<AiExe
     metadata.target_os = values.target_os;
   }
   return {
+    attestation_status: values.attestation_status ?? 'pending',
     capabilities: values.deployment_capability ? ['deployment'] : [],
     endpoint_url: values.endpoint_url,
     executor_types: values.executor_types,
@@ -163,6 +164,7 @@ export function runnerPayload(values: AiExecutorRunnerFormValues): Partial<AiExe
     protocol: values.protocol,
     ...(values.runner_token ? { runner_token: values.runner_token } : {}),
     status: values.status,
+    trust_boundary_id: values.trust_boundary_id?.trim() || undefined,
     trust_domain: values.deployment_capability ? 'deployment' : values.trust_domain ?? 'coding',
     workspace_roots: linesToArray(values.workspace_roots),
   };

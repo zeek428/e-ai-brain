@@ -42,6 +42,7 @@ export function PluginRunnerModal({
       <Form
         form={form}
         initialValues={{
+          attestation_status: 'pending',
           endpoint_url: 'runner://local',
           executor_types: ['codex', 'openclaw'],
           heartbeat_timeout_seconds: 120,
@@ -52,6 +53,7 @@ export function PluginRunnerModal({
           protocol: 'runner_polling',
           status: 'active',
           target_os: 'linux',
+          trust_boundary_id: '',
           trust_domain: 'coding',
         }}
         layout="vertical"

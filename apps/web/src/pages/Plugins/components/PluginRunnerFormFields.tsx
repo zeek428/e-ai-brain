@@ -70,6 +70,30 @@ export function PluginRunnerFormFields({ editingRunner }: { editingRunner: boole
           );
         }}
       </Form.Item>
+      <Typography.Text strong>可信证明</Typography.Text>
+      <Space wrap>
+        <Form.Item
+          extra="不同的编码、验证或部署 Runner 必须使用不同的信任边界。"
+          label="信任边界 ID"
+          name="trust_boundary_id"
+        >
+          <Input placeholder="例如：ai-brain-coding-boundary" style={{ width: 280 }} />
+        </Form.Item>
+        <Form.Item
+          extra="本地安装包首次启动会用 Runner Token 注册公钥；审核指纹后才可激活。"
+          label="可信证明状态"
+          name="attestation_status"
+        >
+          <Select
+            options={[
+              { label: '待激活（推荐）', value: 'pending' },
+              { label: '已激活', value: 'active' },
+              { label: '已撤销', value: 'revoked' },
+            ]}
+            style={{ width: 190 }}
+          />
+        </Form.Item>
+      </Space>
       <Typography.Text strong>执行器命令配置</Typography.Text>
       <Space wrap>
         <Form.Item label="Codex 命令" name="codex_command">

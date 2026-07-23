@@ -1,4 +1,5 @@
 export type AiExecutorRunnerFormValues = {
+  attestation_status?: 'active' | 'pending' | 'revoked';
   claude_command?: string;
   codex_command?: string;
   deployment_capability?: boolean;
@@ -16,6 +17,7 @@ export type AiExecutorRunnerFormValues = {
   runner_token?: string;
   status: string;
   target_os?: string;
+  trust_boundary_id?: string;
   trust_domain?: 'coding' | 'deployment' | 'verification';
   workspace_roots?: string;
 };

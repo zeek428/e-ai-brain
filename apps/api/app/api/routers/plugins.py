@@ -30,6 +30,7 @@ from app.services.ai_executor_runners import (
     list_ai_executor_task_logs_response,
     list_ai_executor_tasks_response,
     patch_ai_executor_runner_response,
+    register_ai_executor_runner_attestation_key_response,
     retry_ai_executor_task_response,
     rotate_ai_executor_runner_token_response,
     runner_heartbeat_response,
@@ -218,6 +219,10 @@ class AiExecutorRunnerPatchRequest(BaseModel):
 
 class AiExecutorRunnerHeartbeatRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AiExecutorRunnerAttestationKeyRequest(BaseModel):
+    attestation_public_key: str
 
 
 class AiExecutorRunnerTokenRotateRequest(BaseModel):
@@ -416,6 +421,23 @@ def ai_executor_runner_heartbeat(
         runner_heartbeat_response(
             current_store=store(request),
             metadata=payload.metadata,
+            request=request,
+            runner_id=runner_id,
+        ),
+        get_trace_id(request),
+    )
+
+
+@router.post("/api/system/ai-executor-runners/{runner_id}/attestation-key")
+def register_ai_executor_runner_attestation_key(
+    payload: AiExecutorRunnerAttestationKeyRequest,
+    request: Request,
+    runner_id: str,
+) -> dict[str, Any]:
+    return envelope(
+        register_ai_executor_runner_attestation_key_response(
+            attestation_public_key=payload.attestation_public_key,
+            current_store=store(request),
             request=request,
             runner_id=runner_id,
         ),

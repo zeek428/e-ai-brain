@@ -770,6 +770,9 @@ export type PluginInvocationLogRecord = {
 };
 
 export type AiExecutorRunnerRecord = {
+  attestation_key_fingerprint?: string | null;
+  attestation_public_key?: string | null;
+  attestation_status?: 'active' | 'pending' | 'revoked';
   capabilities?: string[];
   created_at?: string | null;
   endpoint_url?: string;
@@ -842,6 +845,7 @@ export type AiExecutorRunnerRecord = {
   token_configured?: boolean;
   token_rotated_at?: string | null;
   token_version?: number;
+  trust_boundary_id?: string | null;
   updated_at?: string | null;
   workspace_roots?: string[];
 };

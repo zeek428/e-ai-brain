@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import secrets
 from datetime import UTC, datetime
 from typing import Any
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import Request
 from psycopg import Error as PsycopgError
 
@@ -172,6 +174,31 @@ def _normalized_runner_capabilities(value: Any) -> list[str]:
 
 def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _normalized_attestation_public_key(value: str | None) -> str:
+    public_key = _ensure_non_blank(value, "attestation_public_key")
+    try:
+        key_bytes = base64.b64decode(public_key, validate=True)
+        Ed25519PublicKey.from_public_bytes(key_bytes)
+    except (TypeError, ValueError) as exc:
+        raise api_error(
+            400,
+            "VALIDATION_ERROR",
+            "attestation_public_key must be a base64-encoded Ed25519 public key",
+        ) from exc
+    return public_key
+
+
+def _ensure_active_attestation_is_ready(runner: dict[str, Any]) -> None:
+    if runner.get("attestation_status") != "active":
+        return
+    if not runner.get("attestation_public_key") or not runner.get("trust_boundary_id"):
+        raise api_error(
+            409,
+            "AI_EXECUTOR_ATTESTATION_NOT_READY",
+            "Active attestation requires a registered public key and trust boundary",
+        )
 
 
 def create_ai_executor_runner_install_package_response(
@@ -957,6 +984,7 @@ def create_ai_executor_runner_response(
             "workspace_roots",
         ),
     }
+    _ensure_active_attestation_is_ready(runner)
     audit_event = record_audit_event(
         current_store,
         event_type="ai_executor_runner.created",
@@ -1284,6 +1312,7 @@ def patch_ai_executor_runner_response(
         updates["metadata"] = dict(updates["metadata"] or {})
     updates = patch_runner_trust_fields(updates, runner=runner, ensure_enum=_ensure_enum)
     runner = {**runner, **updates, "updated_at": datetime.now(UTC).isoformat()}
+    _ensure_active_attestation_is_ready(runner)
     audit_event = record_audit_event(
         current_store,
         event_type="ai_executor_runner.updated",
@@ -1462,6 +1491,52 @@ def runner_heartbeat_response(
         "updated_at": now,
     }
     _persist_record(current_store, "save_ai_executor_runner_record", runner)
+    return _runner_public(runner)
+
+
+def register_ai_executor_runner_attestation_key_response(
+    *,
+    attestation_public_key: str,
+    current_store: Any,
+    request: Request,
+    runner_id: str,
+) -> dict[str, Any]:
+    runner = _authenticated_runner(current_store, request=request, runner_id=runner_id)
+    public_key = _normalized_attestation_public_key(attestation_public_key)
+    existing_key = str(runner.get("attestation_public_key") or "").strip()
+    if existing_key and existing_key != public_key:
+        raise api_error(
+            409,
+            "AI_EXECUTOR_ATTESTATION_KEY_IMMUTABLE",
+            "Runner attestation public key is already registered; "
+            "rotate it through administrator configuration",
+        )
+    if existing_key == public_key:
+        return _runner_public(runner)
+    now = datetime.now(UTC).isoformat()
+    runner = {
+        **runner,
+        "attestation_key_fingerprint": hashlib.sha256(public_key.encode("utf-8")).hexdigest(),
+        "attestation_public_key": public_key,
+        "updated_at": now,
+    }
+    audit_event = record_audit_event(
+        current_store,
+        event_type="ai_executor_runner.attestation_key_registered",
+        actor_id=runner_id,
+        subject_type="ai_executor_runner",
+        subject_id=runner_id,
+        payload={
+            "attestation_key_fingerprint": runner["attestation_key_fingerprint"],
+            "attestation_status": runner.get("attestation_status"),
+        },
+    )
+    _persist_record(
+        current_store,
+        "save_ai_executor_runner_record",
+        runner,
+        audit_event=audit_event,
+    )
     return _runner_public(runner)
 
 

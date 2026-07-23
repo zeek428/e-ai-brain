@@ -51,7 +51,7 @@ type PluginRunnerTableProps = {
 const SYSTEM_DEFAULT_AI_EXECUTOR_RUNNER_ID = 'ai_executor_runner_system_default';
 const SYSTEM_DEFAULT_AI_EXECUTOR_TYPE = 'model_gateway';
 const RUNNER_ACTION_COLUMN_WIDTH = 520;
-const RUNNER_TABLE_SCROLL_X = 2940;
+const RUNNER_TABLE_SCROLL_X = 3180;
 
 const aiExecutorTypeLabelByValue = new Map([
   [SYSTEM_DEFAULT_AI_EXECUTOR_TYPE, '系统默认模型'],
@@ -284,6 +284,29 @@ export function PluginRunnerTable({
             Array.isArray(value) && value.includes('deployment')
               ? <Tag color="blue">部署执行</Tag>
               : '-',
+        },
+        {
+          dataIndex: 'attestation_status',
+          title: '可信证明',
+          width: 250,
+          render: (_, row) => {
+            if (isSystemDefaultRunner(row)) {
+              return <Tag color="blue">系统托管证明</Tag>;
+            }
+            return (
+              <Space orientation="vertical" size={2}>
+                <Tag color={row.attestation_status === 'active' ? 'green' : row.attestation_status === 'revoked' ? 'red' : 'orange'}>
+                  {row.attestation_status === 'active' ? '已激活' : row.attestation_status === 'revoked' ? '已撤销' : '待激活'}
+                </Tag>
+                <Typography.Text ellipsis={{ tooltip: row.trust_boundary_id }} type="secondary">
+                  边界：{row.trust_boundary_id ?? '未配置'}
+                </Typography.Text>
+                <Typography.Text ellipsis={{ tooltip: row.attestation_key_fingerprint }} type="secondary">
+                  指纹：{row.attestation_key_fingerprint?.slice(0, 12) ?? '待 Runner 注册'}
+                </Typography.Text>
+              </Space>
+            );
+          },
         },
         {
           dataIndex: 'workspace_roots',

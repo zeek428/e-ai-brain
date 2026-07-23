@@ -223,6 +223,7 @@ def _runner_agent_python() -> str:
     return r"""#!/usr/bin/env python3
 from __future__ import annotations
 
+import base64
 import json
 import hashlib
 import ipaddress
@@ -240,6 +241,9 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 
 def _env(name: str, default: str = "") -> str:
@@ -392,6 +396,81 @@ def _api_root() -> str:
 
 
 API_ROOT = _api_root()
+ATTESTATION_KEY_PATH = _env(
+    "AI_BRAIN_ATTESTATION_KEY_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(CONFIG_PATH)), "attestation_key.json"),
+)
+_ATTESTATION_PRIVATE_KEY: Ed25519PrivateKey | None = None
+
+
+def _canonical_attestation_payload(payload: dict) -> bytes:
+    return json.dumps(
+        payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def _read_or_create_attestation_private_key() -> Ed25519PrivateKey:
+    global _ATTESTATION_PRIVATE_KEY
+    if _ATTESTATION_PRIVATE_KEY is not None:
+        return _ATTESTATION_PRIVATE_KEY
+    if os.path.exists(ATTESTATION_KEY_PATH):
+        with open(ATTESTATION_KEY_PATH, "r", encoding="utf-8") as key_file:
+            payload = json.load(key_file)
+        private_key = base64.b64decode(str(payload.get("private_key") or ""), validate=True)
+        _ATTESTATION_PRIVATE_KEY = Ed25519PrivateKey.from_private_bytes(private_key)
+        return _ATTESTATION_PRIVATE_KEY
+    private_key = Ed25519PrivateKey.generate()
+    raw_private_key = private_key.private_bytes(
+        serialization.Encoding.Raw,
+        serialization.PrivateFormat.Raw,
+        serialization.NoEncryption(),
+    )
+    key_directory = os.path.dirname(os.path.abspath(ATTESTATION_KEY_PATH))
+    os.makedirs(key_directory, exist_ok=True)
+    temporary_path = f"{ATTESTATION_KEY_PATH}.tmp-{os.getpid()}"
+    with open(temporary_path, "w", encoding="utf-8") as key_file:
+        json.dump({"private_key": base64.b64encode(raw_private_key).decode("ascii")}, key_file)
+    if os.name != "nt":
+        os.chmod(temporary_path, 0o600)
+    os.replace(temporary_path, ATTESTATION_KEY_PATH)
+    _ATTESTATION_PRIVATE_KEY = private_key
+    return private_key
+
+
+def _attestation_public_key() -> str:
+    public_key = _read_or_create_attestation_private_key().public_key().public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw,
+    )
+    return base64.b64encode(public_key).decode("ascii")
+
+
+def _execution_attestation(task_id: str) -> dict:
+    payload = {"runner_task_id": task_id}
+    signature = _read_or_create_attestation_private_key().sign(
+        _canonical_attestation_payload(payload),
+    )
+    return {
+        "payload": payload,
+        "signature": base64.b64encode(signature).decode("ascii"),
+    }
+
+
+def _register_attestation_key() -> None:
+    response = _request_json(
+        "POST",
+        f"{API_ROOT}/ai-executor-runners/{RUNNER_ID}/attestation-key",
+        {"attestation_public_key": _attestation_public_key()},
+    )
+    registered = response.get("data") if isinstance(response, dict) else None
+    if (
+        isinstance(registered, dict)
+        and registered.get("attestation_public_key") != _attestation_public_key()
+    ):
+        raise RuntimeError("Platform returned an unexpected runner attestation public key")
 
 
 def _endpoint_is_loopback() -> bool:
@@ -521,6 +600,8 @@ def _complete_task(
 ) -> None:
     if logs:
         _print_local_logs(task_id, logs)
+    signed_result = dict(result_json)
+    signed_result["execution_attestation"] = _execution_attestation(task_id)
     _request_json(
         "POST",
         f"{API_ROOT}/ai-executor-tasks/{task_id}/complete",
@@ -528,7 +609,7 @@ def _complete_task(
             "error_code": error_code,
             "error_message": error_message,
             "logs": logs or [],
-            "result_json": result_json,
+            "result_json": signed_result,
             "runner_id": RUNNER_ID,
             "status": status,
         },
@@ -2235,6 +2316,12 @@ def main() -> int:
     if not ENDPOINT.startswith("http://") and not ENDPOINT.startswith("https://"):
         print("AI_BRAIN_ENDPOINT must be an HTTP(S) API base URL", file=sys.stderr)
         return 2
+    try:
+        _register_attestation_key()
+    except Exception as exc:  # noqa: BLE001
+        # A runner without a registered signing key must not execute tasks.
+        print(f"Runner attestation key registration failed: {type(exc).__name__}", file=sys.stderr)
+        return 2
     print(f"AI Brain Runner {RUNNER_ID} started; polling {API_ROOT}")
     while True:
         try:
@@ -2380,6 +2467,10 @@ def _runner_manifest_json(runner: dict[str, Any], package_options: dict[str, str
     return json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
 
+def _runner_requirements_text() -> str:
+    return "cryptography>=49.0.0\n"
+
+
 def _runner_systemd_service() -> str:
     return """[Unit]
 Description=AI Brain Runner
@@ -2444,7 +2535,8 @@ def _runner_dockerfile() -> str:
     return """FROM python:3.12-slim
 WORKDIR /opt/ai-brain-runner
 COPY . /opt/ai-brain-runner
-RUN chmod +x runner_agent.py scripts/start-runner.sh || true
+RUN pip install --no-cache-dir -r runner_requirements.txt \\
+ && chmod +x runner_agent.py scripts/start-runner.sh || true
 CMD ["bash", "scripts/start-runner.sh"]
 """
 
@@ -2734,12 +2826,14 @@ def _runner_readme(runner: dict[str, Any], package_options: dict[str, str]) -> s
 
 ## 安装步骤
 
-1. 在远程机器安装需要的执行器 CLI，例如 Codex、Claude Code、Hermes 或 OpenClaw。
-2. 解压本安装包。
-3. 编辑 `ai-brain-runner.env`，把 `AI_BRAIN_RUNNER_TOKEN=<runner_token>`
+1. 准备 Python 3.11+，并在 Runner 使用的 Python 环境执行
+   `python3 -m pip install -r runner_requirements.txt`。
+2. 在远程机器安装需要的执行器 CLI，例如 Codex、Claude Code、Hermes 或 OpenClaw。
+3. 解压本安装包。
+4. 编辑 `ai-brain-runner.env`，把 `AI_BRAIN_RUNNER_TOKEN=<runner_token>`
    替换为创建或轮换 Runner 时返回的一次性 Token。
-4. {install_hint_by_os[target_os]}
-5. 回到 AI Brain 插件管理 / 执行器页面，确认健康状态变为 `online`。
+5. {install_hint_by_os[target_os]}
+6. 回到 AI Brain 插件管理 / 执行器页面，确认健康状态变为 `online`。
 
 安装包内置 `runner_agent.py`，可直接轮询 AI Brain、发送心跳、认领任务、
 调用本机执行器命令并回写日志和结果；不要求目标机器预装额外 Runner CLI。
@@ -2758,6 +2852,9 @@ Runner 默认仍会把任务日志同步到 AI Brain，但不在本机后台控�
 
 Runner 主动访问 AI Brain，不需要暴露远程机器端口。
 Token 只用于该 Runner，泄露后请立即在 AI Brain 中轮换。
+Runner 首次启动会在安装目录生成仅本机可读的 Ed25519 私钥，使用 Token 注册对应公钥，
+并对每次任务完成回写签名。平台保持 `待激活`，管理员核对信任边界和公钥指纹后再激活；
+不要复制、提交或共享 `attestation_key.json`。
 """
 
 
@@ -2869,6 +2966,7 @@ def build_ai_executor_runner_install_package(
         archive.writestr("manifest.json", _runner_manifest_json(runner, package_options))
         archive.writestr("runner_agent.py", _runner_agent_python())
         archive.writestr("runner_config.json", _runner_config_json(runner, package_options))
+        archive.writestr("runner_requirements.txt", _runner_requirements_text())
         archive.writestr("skills/ai-brain-runner/SKILL.md", _runner_skill_markdown(runner))
         for filename, content in _runner_install_assets(runner, package_options).items():
             archive.writestr(filename, content)
