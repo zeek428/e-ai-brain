@@ -3046,6 +3046,59 @@ def test_postgres_coding_completion_creates_gate_verifier_and_task_projection_to
     assert len([task for task in runner_tasks if task["task_kind"] == "quality_gate"]) == 1
 
 
+def test_postgres_failed_quality_gate_serializes_persisted_gate_timestamps(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-quality-gate-timestamps",
+        with_verifier=True,
+    )
+    dispatched = dispatch_ai_task_for_work_item(
+        PostgresRuntimeStore(repository),
+        collaboration_run_id=ids["run_id"],
+        work_item_id=ids["work_item_id"],
+    )
+    coding_runner = repository.list_ai_executor_tasks(ai_task_id=dispatched["task"]["id"])[0]
+    coding_runner.update(
+        {
+            "status": "succeeded",
+            "finished_at": "2026-07-23T04:00:00+00:00",
+            "result_json": {"summary": "implementation complete"},
+        }
+    )
+    _sync_runner_completion_to_ai_task(
+        PostgresRuntimeStore(repository),
+        task=coding_runner,
+        runner_id=coding_runner["runner_id"],
+    )
+
+    verifier = next(
+        task
+        for task in repository.list_ai_executor_tasks(ai_task_id=dispatched["task"]["id"])
+        if task["task_kind"] == "quality_gate"
+    )
+    verifier.update(
+        {
+            "error_code": "AI_EXECUTOR_WORKSPACE_NOT_ALLOWED",
+            "error_message": "verification workspace is rejected",
+            "status": "failed",
+        }
+    )
+    repository.save_ai_executor_task_record(verifier)
+
+    _sync_runner_completion_to_ai_task(
+        PostgresRuntimeStore(repository),
+        task=verifier,
+        runner_id=verifier["runner_id"],
+    )
+
+    assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "rework_required"
+    attempt = repository.get_rd_work_item_attempt(dispatched["attempt"]["id"])
+    assert attempt["status"] == "failed"
+    assert isinstance(attempt["result_json"]["quality_gate"]["finished_at"], str)
+
+
 def test_postgres_failed_coding_runner_atomically_reopens_work_item(
     repository: PostgresSnapshotRepository,
 ) -> None:

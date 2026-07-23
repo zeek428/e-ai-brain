@@ -7,6 +7,7 @@ late or duplicate Runner result cannot revive a cancelled or reworked lease.
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
@@ -188,6 +189,11 @@ def _attempt_for_quality_gate_runner(
         task=task,
         runner_task_id=runner_task_id,
     )
+
+
+def _json_snapshot(value: Any) -> Any:
+    """Freeze repository values into the JSON shape stored on an attempt."""
+    return json.loads(json.dumps(value, default=str))
 
 
 def _save_event(
@@ -563,6 +569,7 @@ def project_work_item_quality_gate_result(
     if not is_rd_collaboration_task(task):
         return None
     assert task is not None
+    quality_gate_run = _json_snapshot(quality_gate_run)
     item = _record(current_store, "rd_work_items", str(task["work_item_id"]))
     attempt = _attempt_for_quality_gate_runner(
         current_store,
