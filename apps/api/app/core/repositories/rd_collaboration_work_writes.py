@@ -2103,11 +2103,25 @@ class RdCollaborationWorkWriteMixin:
                 cursor.execute(
                     """
                     UPDATE rd_work_items
-                    SET status = %s, version = version + 1, updated_at = now()
+                    SET status = %s,
+                        lease_owner = CASE
+                            WHEN %s IN ('rework_required', 'completed', 'failed', 'cancelled')
+                                THEN NULL
+                            ELSE lease_owner
+                        END,
+                        lease_expires_at = CASE
+                            WHEN %s IN ('rework_required', 'completed', 'failed', 'cancelled')
+                                THEN NULL
+                            ELSE lease_expires_at
+                        END,
+                        version = version + 1,
+                        updated_at = now()
                     WHERE id = %s AND version = %s AND status = ANY(%s)
                     RETURNING *
                     """,
                     (
+                        next_status,
+                        next_status,
                         next_status,
                         work_item_id,
                         work_item["version"],

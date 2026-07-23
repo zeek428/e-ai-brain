@@ -331,6 +331,155 @@ def fence_stale_coding_runner_completion(
     return True
 
 
+def project_failed_coding_runner_result(
+    current_store: Any,
+    *,
+    ai_task: dict[str, Any],
+    runner_task: dict[str, Any],
+) -> bool:
+    """Atomically retain a coding Runner failure and reopen its work item.
+
+    A failed Runner execution is evidence for the current attempt, not a
+    terminal collaboration decision.  While the frozen attempt still owns the
+    running work item, preserve that evidence and transition the aggregate to
+    ``rework_required`` so the scheduler can create a distinct retry attempt.
+    Stale/cancelled attempts are deliberately left to the fencing path.
+    """
+    if not is_rd_collaboration_task(ai_task):
+        return False
+    if str(runner_task.get("task_kind") or "coding") != "coding":
+        return False
+    runner_status = str(runner_task.get("status") or "")
+    if runner_status not in {"failed", "timed_out", "dead_letter"}:
+        return False
+
+    item = _record(current_store, "rd_work_items", str(ai_task.get("work_item_id") or ""))
+    attempt = _attempt_for_runner(
+        current_store,
+        task=ai_task,
+        runner_task_id=str(runner_task.get("id") or ""),
+    )
+    if (
+        item is None
+        or attempt is None
+        or attempt.get("work_item_id") != item.get("id")
+        or attempt.get("status") != "running"
+        or item.get("status") != "running"
+    ):
+        return False
+
+    now = datetime.now(UTC).isoformat()
+    error_code = str(runner_task.get("error_code") or "AI_EXECUTOR_TASK_FAILED")
+    error_message = str(runner_task.get("error_message") or "AI executor task failed")
+    executor_snapshot = {
+        "executor_type": runner_task.get("executor_type"),
+        "runner_id": runner_task.get("runner_id"),
+        "runner_task_id": runner_task.get("id"),
+        "status": runner_status,
+        "workspace_root": runner_task.get("workspace_root"),
+    }
+    updated_task = {
+        **ai_task,
+        "current_step": "executor_failed",
+        "error_code": error_code,
+        "error_message": error_message,
+        "output_json": {
+            "executor": executor_snapshot,
+            "result": dict(runner_task.get("result_json") or {}),
+        },
+        "status": "failed",
+        "updated_at": now,
+    }
+    updated_attempt = {
+        **attempt,
+        "completed_at": now,
+        "failure_json": {
+            "error_code": error_code,
+            "error_message": error_message,
+            "runner_status": runner_status,
+            "runner_task_id": runner_task.get("id"),
+        },
+        "result_json": {
+            **dict(attempt.get("result_json") or {}),
+            "runner": {
+                **executor_snapshot,
+                "result": dict(runner_task.get("result_json") or {}),
+            },
+        },
+        "status": "failed",
+    }
+    item = {
+        **item,
+        "lease_owner": None,
+        "lease_expires_at": None,
+        "status": "rework_required",
+        "version": int(item.get("version") or 1) + 1,
+    }
+    event_key = (
+        f"work-item-runner-execution-failed:{item['id']}:{updated_attempt['id']}:{runner_task.get('id')}"
+    )
+    event_payload = {
+        "attempt_id": updated_attempt["id"],
+        "error_code": error_code,
+        "runner_status": runner_status,
+        "runner_task_id": runner_task.get("id"),
+    }
+    event = {
+        "id": current_store.new_id("rd_collaboration_event"),
+        "collaboration_run_id": ai_task["collaboration_run_id"],
+        "event_type": "work_item.runner_execution_failed",
+        "event_key": event_key,
+        "subject_type": "rd_work_item",
+        "subject_id": item["id"],
+        "payload_json": deepcopy(event_payload),
+        "occurred_at": now,
+    }
+    audit_event = record_audit_event(
+        current_store,
+        event_type="rd_work_item.runner_execution_failed",
+        actor_id=str(runner_task.get("runner_id") or "system"),
+        ai_task_id=ai_task["id"],
+        subject_type="rd_work_item",
+        subject_id=item["id"],
+        payload={"attempt_id": updated_attempt["id"], **event_payload},
+    )
+    repository = getattr(current_store, "repository", None)
+    save_bundle = getattr(repository, "save_work_item_attempt_bundle", None)
+    if callable(save_bundle):
+        persisted = save_bundle(
+            work_item_id=item["id"],
+            expected_statuses=["running"],
+            next_status="rework_required",
+            attempt=updated_attempt,
+            expected_version=int(item["version"]) - 1,
+            event=event,
+            task=updated_task,
+            audit_events=[audit_event],
+        )
+        item = dict(persisted["work_item"])
+        updated_attempt = dict(persisted["attempt"])
+        event = dict(persisted["event"] or event)
+        _records(current_store, "rd_work_items")[item["id"]] = item
+        _records(current_store, "rd_work_item_attempts")[updated_attempt["id"]] = updated_attempt
+        _records(current_store, "rd_collaboration_events")[event["id"]] = event
+        _records(current_store, "ai_tasks")[updated_task["id"]] = updated_task
+        return True
+
+    _records(current_store, "rd_work_items")[item["id"]] = item
+    _records(current_store, "rd_work_item_attempts")[updated_attempt["id"]] = updated_attempt
+    persisted_event = _save_event(
+        current_store,
+        event_key=event_key,
+        event_type="work_item.runner_execution_failed",
+        task=updated_task,
+        payload=event_payload,
+    )
+    _records(current_store, "rd_collaboration_events")[persisted_event["id"]] = persisted_event
+    _records(current_store, "ai_tasks")[updated_task["id"]] = updated_task
+    save_task_state_records(current_store, task=updated_task, audit_events=[audit_event])
+    return True
+
+
 def project_work_item_quality_gate_result(
     current_store: Any,
     *,

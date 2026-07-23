@@ -317,6 +317,91 @@ def test_coding_runner_success_always_enters_independent_verification() -> None:
     assert next(iter(store.quality_gate_runs.values()))["status"] == "running"
 
 
+def test_failed_coding_runner_requires_a_new_work_item_attempt() -> None:
+    store = _ai_work_item_store()
+    store.ai_executor_runners["runner-frozen"] = {
+        "id": "runner-frozen",
+        "status": "active",
+        "executor_types": ["codex"],
+        "workspace_roots": ["/tmp/work-item"],
+    }
+    dispatch = dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="work-1",
+    )
+    coding_task = store.ai_executor_tasks[dispatch["runner_task"]["id"]]
+    coding_task.update(
+        {
+            "error_code": "AI_EXECUTOR_COMMAND_NOT_ALLOWED",
+            "error_message": "Configured Codex command was not found",
+            "finished_at": "2026-07-23T03:00:00+00:00",
+            "status": "failed",
+        }
+    )
+
+    _sync_runner_completion_to_ai_task(store, task=coding_task, runner_id="runner-frozen")
+
+    work_item = store.rd_work_items["work-1"]
+    attempt = store.rd_work_item_attempts[dispatch["attempt"]["id"]]
+    ai_task = store.ai_tasks[dispatch["task"]["id"]]
+    assert work_item["status"] == "rework_required"
+    assert work_item["lease_owner"] is None
+    assert work_item["lease_expires_at"] is None
+    assert attempt["status"] == "failed"
+    assert attempt["failure_json"]["error_code"] == "AI_EXECUTOR_COMMAND_NOT_ALLOWED"
+    assert ai_task["current_step"] == "executor_failed"
+    assert ai_task["status"] == "failed"
+    assert any(
+        event["event_type"] == "work_item.runner_execution_failed"
+        for event in store.rd_collaboration_events.values()
+    )
+
+    retry = dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="work-1",
+    )
+
+    assert retry["attempt"]["attempt_no"] == 2
+
+
+def test_failed_coding_runner_reconciles_an_older_task_only_failure() -> None:
+    store = _ai_work_item_store()
+    store.ai_executor_runners["runner-frozen"] = {
+        "id": "runner-frozen",
+        "status": "active",
+        "executor_types": ["codex"],
+        "workspace_roots": ["/tmp/work-item"],
+    }
+    dispatch = dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="work-1",
+    )
+    store.ai_tasks[dispatch["task"]["id"]].update(
+        {
+            "current_step": "executor_failed",
+            "error_code": "AI_EXECUTOR_COMMAND_NOT_ALLOWED",
+            "status": "failed",
+        }
+    )
+    coding_task = store.ai_executor_tasks[dispatch["runner_task"]["id"]]
+    coding_task.update(
+        {
+            "error_code": "AI_EXECUTOR_COMMAND_NOT_ALLOWED",
+            "error_message": "Configured Codex command was not found",
+            "status": "failed",
+        }
+    )
+
+    _sync_runner_completion_to_ai_task(store, task=coding_task, runner_id="runner-frozen")
+
+    assert store.rd_work_items["work-1"]["status"] == "rework_required"
+    assert store.rd_work_item_attempts[dispatch["attempt"]["id"]]["status"] == "failed"
+    assert store.ai_tasks[dispatch["task"]["id"]]["status"] == "failed"
+
+
 def test_cancelled_attempt_fences_coding_completion_before_quality_gate() -> None:
     store = _ai_work_item_store()
     store.ai_executor_runners.update(

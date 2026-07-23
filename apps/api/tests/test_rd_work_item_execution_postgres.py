@@ -3046,6 +3046,101 @@ def test_postgres_coding_completion_creates_gate_verifier_and_task_projection_to
     assert len([task for task in runner_tasks if task["task_kind"] == "quality_gate"]) == 1
 
 
+def test_postgres_failed_coding_runner_atomically_reopens_work_item(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-runner-failure-projection",
+    )
+    dispatched = dispatch_ai_task_for_work_item(
+        PostgresRuntimeStore(repository),
+        collaboration_run_id=ids["run_id"],
+        work_item_id=ids["work_item_id"],
+    )
+    coding_runner = repository.list_ai_executor_tasks(ai_task_id=dispatched["task"]["id"])[0]
+    coding_runner.update(
+        {
+            "error_code": "AI_EXECUTOR_COMMAND_NOT_ALLOWED",
+            "error_message": "Configured Codex command was not found",
+            "finished_at": "2026-07-23T03:00:00+00:00",
+            "status": "failed",
+        }
+    )
+    repository.save_ai_executor_task_record(coding_runner)
+
+    _sync_runner_completion_to_ai_task(
+        PostgresRuntimeStore(repository),
+        task=coding_runner,
+        runner_id=coding_runner["runner_id"],
+    )
+
+    work_item = repository.get_rd_work_item(ids["work_item_id"])
+    attempt = repository.get_rd_work_item_attempt(dispatched["attempt"]["id"])
+    task = repository.load_ai_tasks()["ai_tasks"][dispatched["task"]["id"]]
+    assert work_item["status"] == "rework_required"
+    assert work_item["lease_owner"] is None
+    assert work_item["lease_expires_at"] is None
+    assert attempt["status"] == "failed"
+    assert attempt["failure_json"]["error_code"] == "AI_EXECUTOR_COMMAND_NOT_ALLOWED"
+    assert task["status"] == "failed"
+    assert task["current_step"] == "executor_failed"
+    assert [
+        event
+        for event in repository.list_rd_collaboration_events(ids["run_id"])
+        if event["event_type"] == "work_item.runner_execution_failed"
+    ]
+
+    retry = dispatch_ai_task_for_work_item(
+        PostgresRuntimeStore(repository),
+        collaboration_run_id=ids["run_id"],
+        work_item_id=ids["work_item_id"],
+    )
+    assert retry["attempt"]["attempt_no"] == 2
+
+
+def test_postgres_failed_coding_runner_reconciles_task_only_failure(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-runner-failure-reconcile",
+    )
+    dispatched = dispatch_ai_task_for_work_item(
+        PostgresRuntimeStore(repository),
+        collaboration_run_id=ids["run_id"],
+        work_item_id=ids["work_item_id"],
+    )
+    task = repository.load_ai_tasks()["ai_tasks"][dispatched["task"]["id"]]
+    task.update(
+        {
+            "current_step": "executor_failed",
+            "error_code": "AI_EXECUTOR_COMMAND_NOT_ALLOWED",
+            "status": "failed",
+        }
+    )
+    repository.save_ai_task_record(task)
+    coding_runner = repository.list_ai_executor_tasks(ai_task_id=task["id"])[0]
+    coding_runner.update(
+        {
+            "error_code": "AI_EXECUTOR_COMMAND_NOT_ALLOWED",
+            "error_message": "Configured Codex command was not found",
+            "finished_at": "2026-07-23T03:00:00+00:00",
+            "status": "failed",
+        }
+    )
+    repository.save_ai_executor_task_record(coding_runner)
+
+    _sync_runner_completion_to_ai_task(
+        PostgresRuntimeStore(repository),
+        task=coding_runner,
+        runner_id=coding_runner["runner_id"],
+    )
+
+    assert repository.get_rd_work_item(ids["work_item_id"])["status"] == "rework_required"
+    assert repository.get_rd_work_item_attempt(dispatched["attempt"]["id"])["status"] == "failed"
+
+
 def test_postgres_approved_work_items_advance_delivery_phases_transactionally(
     repository: PostgresSnapshotRepository,
 ) -> None:

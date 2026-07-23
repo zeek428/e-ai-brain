@@ -105,6 +105,7 @@ from app.services.quality_gates import (
 from app.services.rd_work_item_execution import (
     fence_stale_coding_runner_completion,
     is_rd_collaboration_task,
+    project_failed_coding_runner_result,
     project_work_item_quality_gate_result,
 )
 from app.services.task_graph_runtime import latest_graph_run, transition_latest_graph_run
@@ -513,6 +514,16 @@ def _sync_runner_completion_to_ai_task(
         coding_runner_task=task,
         runner_id=runner_id,
         resolve_executor_policy=_load_executor_policy_for_ai_task,
+    ):
+        return
+    # A terminal coding Runner failure is recoverable only while the linked
+    # attempt still owns a running work item.  Project it before the generic
+    # stale-result fence so an older task-only failure projection can be
+    # reconciled into the collaboration aggregate as well.
+    if project_failed_coding_runner_result(
+        current_store,
+        ai_task=ai_task,
+        runner_task=task,
     ):
         return
     if fence_stale_coding_runner_completion(

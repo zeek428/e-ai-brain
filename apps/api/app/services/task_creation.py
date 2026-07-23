@@ -172,7 +172,19 @@ def create_ai_task_for_work_item(
         None,
     )
     if existing is not None:
-        return {"task": write_store.snapshot(existing), "idempotent_replay": True}
+        requirement_id = str(work_item.get("requirement_id") or "").strip()
+        requirement = write_store.requirements.get(requirement_id)
+        if requirement is None:
+            raise api_error(
+                409,
+                "RD_WORK_ITEM_NOT_READY",
+                "Work item does not reference an active requirement",
+            )
+        return {
+            "task": write_store.snapshot(existing),
+            "requirement": write_store.snapshot(requirement),
+            "idempotent_replay": True,
+        }
 
     requirement_id = str(work_item.get("requirement_id") or "").strip()
     requirement = write_store.requirements.get(requirement_id)

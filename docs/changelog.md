@@ -17,6 +17,7 @@
 - 修复钉钉 AI 表格动作在连接未配置 Base ID 时字段不可输入的问题，支持动作级兜底输入并保留连接级自动带出。
 
 ### Changed
+- 修复研发协同编码 Runner 失败回写：当前有效 attempt 的 `failed/timed_out/dead_letter` 结果会与 AI 任务、attempt、协作事件和审计原子投影为 `rework_required`，同时释放工作项租约；重试会重建同一工作项的规范需求关联并只创建新的 attempt，避免任务已失败而工作项长期显示运行中或无法二次派发的状态分裂。未改变定时作业或部署行为。
 - Runner 对需求评估模型网关调用新增独立可配置的 210 秒客户端超时，覆盖平台模型网关默认最长 180 秒与持久化余量；其他心跳、领取、日志和完成请求仍保持短超时，避免长评估成功落库后被 Runner 误报为超时。
 - 修复 Docker fresh-volume 数据库迁移双控制面：PostgreSQL initdb 不再挂载或执行应用迁移，普通迁移统一由 API image/entrypoint 执行；入口以覆盖完整扫描的 advisory lock 与 `app_schema_migrations` 校验和账本，把每个普通 SQL 和对应登记记录独立原子、幂等执行，历史文件校验和变化会失败启动；121 保持受围栏显式 cleanup，125-128 保持运行时 concurrent compatibility，并新增 Compose/API image 边界回归。
 - 修复研发协同派发的需求关联并发覆盖：最终事务只锁定并原子去重追加 `requirements.task_ids`，不再回写准备阶段的完整需求快照；普通需求保存也合并持久化关联，按原有顺序保留既有任务并只追加新任务，避免随后 PATCH 覆盖或重排关联；PostgreSQL Worker 不再把未提交的 Runner 和审计草稿写入长生命周期内存。

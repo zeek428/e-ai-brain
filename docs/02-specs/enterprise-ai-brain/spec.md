@@ -1439,7 +1439,7 @@ queued → waiting_dependencies → ready → running → awaiting_review → ap
 running → blocked/awaiting_human
 blocked → ready/cancelled（资源、依赖或权限重新校验）
 awaiting_human → running/ready/rework_required/cancelled（一般决策按冻结目标；取消被拒绝/继续时因旧租约已撤销，重新校验后只到 ready）
-running/awaiting_review → rework_required（质量门禁或审核失败且同范围可返工）
+running/awaiting_review → rework_required（当前有效 attempt 的编码 Runner、质量门禁或审核失败且同范围可返工；原子保留失败证据并释放工作项租约）
 awaiting_review → rework_required → ready（保留原 attempt，下次领取创建新 attempt）
 任意非终态 → failed/cancelled
 
