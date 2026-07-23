@@ -60,6 +60,7 @@ def _seed_dispatchable_work_item(
     quality_gate_policy_id: str | None = None,
     seat_capacity: int = 1,
     with_verifier: bool = False,
+    work_item_type: str = "implementation",
 ) -> dict[str, str]:
     ids = _insert_product_version(repository, prefix=prefix, status="active")
     policy = _policy_record(ids, prefix=prefix)
@@ -219,7 +220,7 @@ def _seed_dispatchable_work_item(
             "collaboration_run_id": run_id,
             "requirement_id": requirement_id,
             "plan_version": 1,
-            "work_item_type": "implementation",
+            "work_item_type": work_item_type,
             "title": "atomic work-item dispatch",
             "objective": "verify work-item dispatch transaction",
             "owner_seat_id": owner_seat_id,
@@ -3044,6 +3045,45 @@ def test_postgres_coding_completion_creates_gate_verifier_and_task_projection_to
     assert persisted_task["current_step"] == "quality_gate_running"
     assert len(gates) == 1
     assert len([task for task in runner_tasks if task["task_kind"] == "quality_gate"]) == 1
+
+
+def test_postgres_design_runner_review_is_linked_in_task_read_model(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-design-review-link",
+        work_item_type="product_detail_design",
+    )
+
+    dispatched = dispatch_ai_task_for_work_item(
+        PostgresRuntimeStore(repository),
+        collaboration_run_id=ids["run_id"],
+        work_item_id=ids["work_item_id"],
+    )
+    coding_runner = repository.list_ai_executor_tasks(ai_task_id=dispatched["task"]["id"])[0]
+    coding_runner.update(
+        {
+            "status": "succeeded",
+            "finished_at": "2026-07-23T04:00:00+00:00",
+            "result_json": {"summary": "detailed design complete"},
+        }
+    )
+
+    _sync_runner_completion_to_ai_task(
+        PostgresRuntimeStore(repository),
+        task=coding_runner,
+        runner_id=coding_runner["runner_id"],
+    )
+
+    task = repository.load_ai_tasks()["ai_tasks"][dispatched["task"]["id"]]
+    reviews = [
+        review
+        for review in repository.load_workflow_runtime()["human_reviews"].values()
+        if review["ai_task_id"] == task["id"]
+    ]
+    assert task["status"] == "waiting_review"
+    assert task["review_ids"] == [reviews[0]["id"]]
 
 
 def test_postgres_failed_quality_gate_serializes_persisted_gate_timestamps(

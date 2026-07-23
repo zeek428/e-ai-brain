@@ -36,6 +36,7 @@ class TaskReadRepository:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 ai_tasks = self._load_ai_tasks(cursor)
+                self._hydrate_task_runtime_links(cursor, ai_tasks)
         return {"ai_tasks": ai_tasks}
 
     def save_ai_tasks(self, payload: dict[str, Any]) -> None:
@@ -842,6 +843,47 @@ class TaskReadRepository:
             }
             ai_tasks[row[0]] = task
         return ai_tasks
+
+    def _hydrate_task_runtime_links(
+        self,
+        cursor,
+        ai_tasks: dict[str, dict[str, Any]],
+    ) -> None:
+        """Derive workflow links from their database-owned source records."""
+        if not ai_tasks:
+            return
+
+        task_ids = list(ai_tasks)
+        cursor.execute(
+            """
+            SELECT ai_task_id, id
+            FROM human_reviews
+            WHERE ai_task_id = ANY(%s)
+            ORDER BY created_at, id
+            """,
+            (task_ids,),
+        )
+        for task_id, review_id in cursor.fetchall():
+            task = ai_tasks.get(task_id)
+            if task is not None:
+                task["review_ids"].append(review_id)
+
+        cursor.execute(
+            """
+            SELECT ai_task_id, id, checkpoint_id
+            FROM graph_runs
+            WHERE ai_task_id = ANY(%s)
+            ORDER BY started_at, id
+            """,
+            (task_ids,),
+        )
+        for task_id, graph_run_id, checkpoint_id in cursor.fetchall():
+            task = ai_tasks.get(task_id)
+            if task is None:
+                continue
+            task["graph_run_ids"].append(graph_run_id)
+            if checkpoint_id:
+                task["checkpoint_id"] = checkpoint_id
 
     def _load_graph_runs(self, cursor) -> dict[str, dict[str, Any]]:
         cursor.execute(
