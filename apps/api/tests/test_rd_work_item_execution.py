@@ -279,8 +279,9 @@ def test_failed_quality_gate_preserves_attempt_and_requires_a_new_attempt() -> N
     assert retry["attempt"]["attempt_no"] == 2
 
 
-def test_coding_runner_success_always_enters_independent_verification() -> None:
+def test_implementation_runner_success_always_enters_independent_verification() -> None:
     store = _ai_work_item_store()
+    store.rd_work_items["work-1"]["work_item_type"] = "implementation"
     store.ai_executor_runners.update(
         {
             "runner-frozen": {
@@ -340,8 +341,53 @@ def test_coding_runner_success_always_enters_independent_verification() -> None:
     assert store.rd_work_item_attempts[dispatch["attempt"]["id"]]["status"] == "failed"
 
 
+def test_product_detail_design_runner_success_waits_for_human_review() -> None:
+    store = _ai_work_item_store()
+    store.ai_executor_runners["runner-frozen"] = {
+        "id": "runner-frozen",
+        "status": "active",
+        "executor_types": ["codex"],
+        "workspace_roots": ["/tmp/work-item"],
+    }
+    dispatch = dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="work-1",
+    )
+    coding_task = store.ai_executor_tasks[dispatch["runner_task"]["id"]]
+    coding_task.update(
+        {
+            "status": "succeeded",
+            "finished_at": "2026-07-23T04:00:00+00:00",
+            "result_json": {"summary": "详细设计完成"},
+        }
+    )
+
+    _sync_runner_completion_to_ai_task(store, task=coding_task, runner_id="runner-frozen")
+
+    task = store.ai_tasks[dispatch["task"]["id"]]
+    assert task["status"] == "waiting_review"
+    assert store.quality_gate_runs == {}
+    review = next(iter(store.human_reviews.values()))
+    assert review["stage"] == "product_detail_design"
+    assert store.rd_work_items["work-1"]["status"] == "running"
+    assert store.rd_work_item_attempts[dispatch["attempt"]["id"]]["status"] == "running"
+
+    approved = approve_review_response(
+        current_store=store,
+        review_id=review["id"],
+        user={"id": "reviewer-1", "roles": ["admin"]},
+        version=1,
+    )
+
+    assert approved["task_status"] == "completed"
+    assert store.rd_work_items["work-1"]["status"] == "completed"
+    assert store.rd_work_item_attempts[dispatch["attempt"]["id"]]["status"] == "completed"
+
+
 def test_legacy_quality_verifier_without_attempt_provenance_uses_coding_retry_attempt() -> None:
     store = _ai_work_item_store()
+    store.rd_work_items["work-1"]["work_item_type"] = "implementation"
     store.ai_executor_runners.update(
         {
             "runner-frozen": {

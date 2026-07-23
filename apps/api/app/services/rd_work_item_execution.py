@@ -787,12 +787,34 @@ def approve_work_item_after_task_review(
         raise api_error(403, "FORBIDDEN", "Review actor must match the frozen independent reviewer")
     attempts = _work_item_attempts(current_store, item["id"])
     attempt = max(attempts, key=lambda entry: int(entry.get("attempt_no") or 0), default=None)
-    if attempt is None or attempt.get("status") != "completed" or item.get("status") != "reviewing":
+    artifact_review_pending = bool(
+        attempt is not None
+        and attempt.get("status") == "running"
+        and item.get("status") == "running"
+        and str(task.get("current_step") or "") == "executor_completed"
+    )
+    if (
+        attempt is None
+        or (
+            not artifact_review_pending
+            and (attempt.get("status") != "completed" or item.get("status") != "reviewing")
+        )
+    ):
         raise api_error(
             409,
             "RD_WORK_ITEM_NOT_READY",
             "Work item is not awaiting its independent review",
         )
+    if artifact_review_pending:
+        attempt = {
+            **attempt,
+            "completed_at": datetime.now(UTC).isoformat(),
+            "result_json": {
+                **dict(attempt.get("result_json") or {}),
+                "artifact_review": {"review_id": review_id, "status": "approved"},
+            },
+            "status": "completed",
+        }
     event_key = f"work-item-review-approved:{item['id']}:{attempt['id']}:{review_id}"
     existing_event = _existing_event(
         current_store,
@@ -839,7 +861,7 @@ def approve_work_item_after_task_review(
     if callable(save_bundle):
         persisted = save_bundle(
             work_item_id=item["id"],
-            expected_statuses=["reviewing"],
+            expected_statuses=["running" if artifact_review_pending else "reviewing"],
             next_status="completed",
             attempt=attempt,
             expected_version=int(item["version"]),

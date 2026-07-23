@@ -67,6 +67,7 @@ from app.services.ai_executor_runner_queue import (
 from app.services.ai_executor_runner_rd_completion import (
     complete_rd_coding_runner_atomically,
     move_ai_task_to_executor_review,
+    requires_pre_merge_quality_gate,
 )
 from app.services.ai_executor_runner_readiness import (
     runner_readiness_summary as _runner_readiness_summary,
@@ -703,11 +704,13 @@ def _sync_runner_completion_to_ai_task(
         if output_summary:
             output_json["summary"] = output_summary
         policy = _load_executor_policy_for_ai_task(current_store, ai_task)
-        if (
-            is_rd_collaboration_task(ai_task)
-            or _code_change_review_mode(policy) == "auto_commit"
-            or autonomy_enabled(policy)
-        ):
+        if is_rd_collaboration_task(ai_task):
+            requires_quality_gate = requires_pre_merge_quality_gate(ai_task)
+        else:
+            requires_quality_gate = (
+                _code_change_review_mode(policy) == "auto_commit" or autonomy_enabled(policy)
+            )
+        if requires_quality_gate:
             quality_gate_run, verifier_task = start_pre_merge_quality_gate(
                 current_store,
                 ai_task=ai_task,

@@ -23,6 +23,24 @@ from app.services.rd_work_item_execution import is_rd_collaboration_task
 from app.services.task_output_summary import readable_task_output_summary
 from app.services.task_persistence_helpers import record_audit_event as record_task_audit_event
 
+_ARTIFACT_REVIEW_TASK_TYPES = {
+    "code_review",
+    "post_release_analysis",
+    "product_detail_design",
+    "release_readiness",
+    "technical_solution",
+}
+
+
+def requires_pre_merge_quality_gate(ai_task: dict[str, Any]) -> bool:
+    """Return whether a collaboration task can produce a repository change.
+
+    Product and technical artifacts are confirmed through their frozen human
+    review.  Treat unknown task types as code-changing so a future task cannot
+    bypass the isolated verifier accidentally.
+    """
+    return str(ai_task.get("task_type") or "").strip() not in _ARTIFACT_REVIEW_TASK_TYPES
+
 
 def move_ai_task_to_executor_review(
     current_store: Any,
@@ -109,6 +127,7 @@ def complete_rd_coding_runner_atomically(
         not is_rd_collaboration_task(ai_task)
         or coding_runner_task.get("task_kind") not in {None, "", "coding"}
         or coding_runner_task.get("status") != "succeeded"
+        or not requires_pre_merge_quality_gate(ai_task)
     ):
         return False
     repository = getattr(current_store, "repository", None)
