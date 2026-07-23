@@ -3437,7 +3437,9 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
     assert "NO_PROXY=127.0.0.1,localhost,::1" in env_text
     assert "AI_BRAIN_EXECUTORS=codex,claude,hermes,openclaw" in env_text
     assert "AI_BRAIN_WORKSPACE_ROOTS=/data/repos/e-ai-brain,/data/repos/service-a" in env_text
-    assert config["executor_commands"]["codex"] == "codex exec"
+    assert config["executor_commands"]["codex"] == (
+        "codex exec --disable code_mode_host --ephemeral"
+    )
     assert config["package"] == {
         "arch": "amd64",
         "install_mode": "systemd",
@@ -3773,7 +3775,22 @@ def test_ai_executor_runner_agent_executes_configured_command_with_stdin(
 
     assert command_error is None
     assert command_args[0] == str(fake_codex)
-    assert command_args[1] == "exec"
+    assert command_args[1:] == ["exec", "--disable", "code_mode_host", "--ephemeral"]
+
+    namespace["EXECUTOR_COMMANDS"] = {
+        "codex": f'"{fake_codex}" exec',
+        "openclaw": command,
+    }
+    _command, command_args, command_error = namespace["_resolve_executor_command"]("codex")
+
+    assert command_error is None
+    assert command_args == [
+        str(fake_codex),
+        "exec",
+        "--disable",
+        "code_mode_host",
+        "--ephemeral",
+    ]
 
     stdin_capture.write_text("previous instruction", encoding="utf-8")
     requests.clear()

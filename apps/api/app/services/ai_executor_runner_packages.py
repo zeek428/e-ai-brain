@@ -36,13 +36,25 @@ def _normalize_runner_executor_command(executor_type: str, command: str) -> str:
         command_args = shlex.split(text)
     except ValueError:
         return text
-    if len(command_args) == 1 and os.path.basename(command_args[0]).lower() in {
+    if os.path.basename(command_args[0]).lower() not in {
         "codex",
         "codex.exe",
     }:
+        return text
+    if len(command_args) == 1:
         command_args.append("exec")
+    if len(command_args) < 2 or command_args[1] != "exec":
         return shlex.join(command_args)
-    return text
+    disables_code_mode_host = any(
+        option == "--disable" and index + 1 < len(command_args)
+        and command_args[index + 1] == "code_mode_host"
+        for index, option in enumerate(command_args)
+    )
+    if not disables_code_mode_host:
+        command_args.extend(["--disable", "code_mode_host"])
+    if "--ephemeral" not in command_args:
+        command_args.append("--ephemeral")
+    return shlex.join(command_args)
 
 
 def _normalized_package_option(value: str | None) -> str | None:
@@ -116,7 +128,11 @@ def runner_executor_commands(runner: dict[str, Any]) -> dict[str, str]:
         commands = {}
     defaults = {
         "claude": "claude",
-        "codex": "codex exec",
+        # Desktop Codex can otherwise attach to an interactive application
+        # conversation.  Runner tasks must execute only the frozen work-item
+        # instruction and must not persist a session that another task can
+        # resume accidentally.
+        "codex": "codex exec --disable code_mode_host --ephemeral",
         "hermes": "hermes",
         "openclaw": "openclaw",
     }
@@ -1264,11 +1280,25 @@ def _ensure_noninteractive_codex_command(
     executor_type: str,
     command_args: list[str],
 ) -> list[str]:
-    if executor_type != "codex" or len(command_args) != 1:
+    if executor_type != "codex" or not command_args:
         return command_args
     if _command_basename(command_args[0]) not in {"codex", "codex.exe"}:
         return command_args
-    return [command_args[0], "exec"]
+    normalized = list(command_args)
+    if len(normalized) == 1:
+        normalized.append("exec")
+    if len(normalized) < 2 or normalized[1] != "exec":
+        return normalized
+    disables_code_mode_host = any(
+        option == "--disable" and index + 1 < len(normalized)
+        and normalized[index + 1] == "code_mode_host"
+        for index, option in enumerate(normalized)
+    )
+    if not disables_code_mode_host:
+        normalized.extend(["--disable", "code_mode_host"])
+    if "--ephemeral" not in normalized:
+        normalized.append("--ephemeral")
+    return normalized
 
 
 def _resolve_executor_command(executor_type: str) -> tuple[str | None, list[str], str | None]:
