@@ -3431,6 +3431,7 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
     assert "AI_BRAIN_RUNNER_TOKEN=<runner_token>" in env_text
     assert "AI_BRAIN_RUNNER_PACKAGE_VERSION=v1" in env_text
     assert "AI_BRAIN_POLL_INTERVAL_SECONDS=5" in env_text
+    assert "AI_BRAIN_ASSESSMENT_GATEWAY_TIMEOUT_SECONDS=210" in env_text
     assert "AI_BRAIN_RUNNER_PRINT_BACKGROUND_LOGS=false" in env_text
     assert "AI_BRAIN_BYPASS_PROXY=auto" in env_text
     assert "NO_PROXY=127.0.0.1,localhost,::1" in env_text
@@ -3655,8 +3656,21 @@ def test_ai_executor_runner_agent_executes_configured_command_with_stdin(
 
     requests: list[dict[str, object]] = []
 
-    def fake_request_json(method: str, url: str, payload: dict | None = None) -> dict:
-        requests.append({"method": method, "payload": payload or {}, "url": url})
+    def fake_request_json(
+        method: str,
+        url: str,
+        payload: dict | None = None,
+        *,
+        timeout_seconds: int | None = None,
+    ) -> dict:
+        requests.append(
+            {
+                "method": method,
+                "payload": payload or {},
+                "timeout_seconds": timeout_seconds,
+                "url": url,
+            }
+        )
         if url.endswith("/logs"):
             return {"data": {"task": {"status": payload.get("status") if payload else None}}}
         if url.endswith("/complete"):
@@ -3690,6 +3704,7 @@ def test_ai_executor_runner_agent_executes_configured_command_with_stdin(
         {
             "method": "POST",
             "payload": {"runner_id": runner["id"]},
+            "timeout_seconds": 210,
             "url": (
                 f"{namespace['API_ROOT']}/ai-executor-tasks/"
                 "runner_task_assessment_gateway/execute-assessment-gateway"

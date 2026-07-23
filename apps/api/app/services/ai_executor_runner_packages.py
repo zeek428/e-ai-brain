@@ -150,6 +150,7 @@ def _runner_env_text(runner: dict[str, Any], package_options: dict[str, str]) ->
             f"AI_BRAIN_HEARTBEAT_TIMEOUT_SECONDS={heartbeat_timeout_seconds}",
             f"AI_BRAIN_MAX_CONCURRENT_TASKS={max_concurrent_tasks}",
             "AI_BRAIN_POLL_INTERVAL_SECONDS=5",
+            "AI_BRAIN_ASSESSMENT_GATEWAY_TIMEOUT_SECONDS=210",
             "AI_BRAIN_RUNNER_CONFIG=./runner_config.json",
             "AI_BRAIN_RUNNER_PRINT_BACKGROUND_LOGS=false",
             "AI_BRAIN_BYPASS_PROXY=auto",
@@ -262,6 +263,9 @@ RUNNER_TOKEN = _env("AI_BRAIN_RUNNER_TOKEN")
 ENDPOINT = _env("AI_BRAIN_ENDPOINT").rstrip("/")
 CONFIG_PATH = _env("AI_BRAIN_RUNNER_CONFIG", "./runner_config.json")
 POLL_INTERVAL_SECONDS = int(_env("AI_BRAIN_POLL_INTERVAL_SECONDS", "5") or "5")
+ASSESSMENT_GATEWAY_TIMEOUT_SECONDS = int(
+    _env("AI_BRAIN_ASSESSMENT_GATEWAY_TIMEOUT_SECONDS", "210") or "210"
+)
 BYPASS_PROXY = _env("AI_BRAIN_BYPASS_PROXY", "auto").lower()
 
 
@@ -505,12 +509,18 @@ def _open_request(request: urllib.request.Request, *, timeout: int):
     return urllib.request.urlopen(request, timeout=timeout)
 
 
-def _request_json(method: str, url: str, payload: dict | None = None) -> dict:
+def _request_json(
+    method: str,
+    url: str,
+    payload: dict | None = None,
+    *,
+    timeout_seconds: int = 30,
+) -> dict:
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(url, data=body, method=method)
     request.add_header("Content-Type", "application/json")
     request.add_header("X-Runner-Token", RUNNER_TOKEN)
-    with _open_request(request, timeout=30) as response:
+    with _open_request(request, timeout=timeout_seconds) as response:
         raw = response.read().decode("utf-8")
         return json.loads(raw or "{}")
 
@@ -2097,6 +2107,7 @@ def _run_assessment_gateway_task(task: dict) -> None:
         "POST",
         f"{API_ROOT}/ai-executor-tasks/{task_id}/execute-assessment-gateway",
         {"runner_id": RUNNER_ID},
+        timeout_seconds=ASSESSMENT_GATEWAY_TIMEOUT_SECONDS,
     )
 
 
