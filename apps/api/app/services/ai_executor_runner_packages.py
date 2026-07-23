@@ -2088,6 +2088,18 @@ def _task_has_approval(task: dict) -> bool:
     return safety.get("status") == "approved"
 
 
+def _run_assessment_gateway_task(task: dict) -> None:
+    # Assessment tasks are claimed by the Runner to preserve the frozen
+    # executor identity, but their model invocation and atomic completion are
+    # owned by the platform gateway. They must never reach a local executable.
+    task_id = str(task["id"])
+    _request_json(
+        "POST",
+        f"{API_ROOT}/ai-executor-tasks/{task_id}/execute-assessment-gateway",
+        {"runner_id": RUNNER_ID},
+    )
+
+
 def _run_task(task: dict) -> None:
     task_id = task["id"]
     executor_type = str(task.get("executor_type") or "")
@@ -2096,6 +2108,9 @@ def _run_task(task: dict) -> None:
     timeout_seconds = int(task.get("timeout_seconds") or 1800)
     if executor_type == "deployment":
         _run_deployment_task(task)
+        return
+    if task.get("task_kind") == "assessment":
+        _run_assessment_gateway_task(task)
         return
     if task.get("task_kind") == "quality_gate":
         _run_quality_gate_task(task)

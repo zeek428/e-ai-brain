@@ -3667,6 +3667,37 @@ def test_ai_executor_runner_agent_executes_configured_command_with_stdin(
 
     namespace["_request_json"] = fake_request_json
 
+    requests.clear()
+    namespace["_run_task"](
+        {
+            "executor_type": "openclaw",
+            "id": "runner_task_assessment_gateway",
+            "instruction": "这个指令不应由本地执行器执行",
+            "request_config": {"assessment_only": True},
+            "task_kind": "assessment",
+            "timeout_seconds": 5,
+            "workspace_root": str(tmp_path),
+        },
+    )
+    assessment_gateway_requests = [
+        item
+        for item in requests
+        if str(item["url"]).endswith(
+            "/ai-executor-tasks/runner_task_assessment_gateway/execute-assessment-gateway"
+        )
+    ]
+    assert assessment_gateway_requests == [
+        {
+            "method": "POST",
+            "payload": {"runner_id": runner["id"]},
+            "url": (
+                f"{namespace['API_ROOT']}/ai-executor-tasks/"
+                "runner_task_assessment_gateway/execute-assessment-gateway"
+            ),
+        }
+    ]
+    assert not [item for item in requests if str(item["url"]).endswith("/complete")]
+
     instruction = "请扫描仓库质量并输出摘要"
     namespace["_run_task"](
         {
