@@ -3792,6 +3792,11 @@ def test_ai_executor_runner_agent_executes_configured_command_with_stdin(
         "--ephemeral",
     ]
 
+    namespace["WORKSPACE_ROOTS"] = [str(tmp_path)]
+    worktree_path = tmp_path.parent / ".ai-brain-worktrees" / tmp_path.name / "runner-task"
+    assert namespace["_workspace_allowed"](str(worktree_path)) is True
+    assert namespace["_workspace_allowed"](str(tmp_path.parent / "unrelated-repository")) is False
+
     stdin_capture.write_text("previous instruction", encoding="utf-8")
     requests.clear()
     namespace["_run_task"](

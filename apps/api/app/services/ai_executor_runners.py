@@ -714,6 +714,43 @@ def _sync_runner_completion_to_ai_task(
                 coding_runner_task=task,
                 executor_policy=policy,
             )
+            if is_rd_collaboration_task(ai_task):
+                input_json = (
+                    ai_task.get("input_json")
+                    if isinstance(ai_task.get("input_json"), dict)
+                    else {}
+                )
+                collaboration = (
+                    input_json.get("rd_collaboration")
+                    if isinstance(input_json.get("rd_collaboration"), dict)
+                    else {}
+                )
+                attempt_id = str(
+                    (task.get("input_payload") or {}).get("rd_work_item_attempt_id")
+                    or collaboration.get("attempt_id")
+                    or ""
+                ).strip()
+                if attempt_id:
+                    verifier_task = {
+                        **verifier_task,
+                        "input_payload": {
+                            **dict(verifier_task.get("input_payload") or {}),
+                            "rd_collaboration_run_id": ai_task["collaboration_run_id"],
+                            "rd_work_item_attempt_id": attempt_id,
+                            "rd_work_item_id": ai_task["work_item_id"],
+                        },
+                        "request_config": {
+                            **dict(verifier_task.get("request_config") or {}),
+                            "rd_collaboration_run_id": ai_task["collaboration_run_id"],
+                            "rd_work_item_attempt_id": attempt_id,
+                            "rd_work_item_id": ai_task["work_item_id"],
+                        },
+                    }
+                    _persist_record(
+                        current_store,
+                        "save_ai_executor_task_record",
+                        verifier_task,
+                    )
             record_agent_coding_completed(
                 current_store,
                 coding_runner_task=task,

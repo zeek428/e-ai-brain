@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -1335,6 +1336,49 @@ def _knowledge_references_instruction_block(references: list[dict[str, Any]]) ->
     return "\n".join(lines)
 
 
+def _frozen_work_item_contract(task: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
+    """Return the immutable scope an R&D executor must receive verbatim."""
+    input_json = task.get("input_json") if isinstance(task.get("input_json"), dict) else {}
+    requirement = (
+        task.get("requirement_snapshot")
+        if isinstance(task.get("requirement_snapshot"), dict)
+        else {}
+    )
+    return {
+        "acceptance_criteria": [
+            str(item)
+            for item in input_json.get("acceptance_criteria") or []
+            if str(item).strip()
+        ],
+        "input_contract": deepcopy(input_json.get("work_item_input_contract") or {}),
+        "objective": str(task.get("title") or ""),
+        "output_contract": deepcopy(
+            input_json.get("work_item_output_contract") or policy.get("output_contract") or {}
+        ),
+        "requirement": {
+            key: deepcopy(requirement.get(key))
+            for key in ("content", "id", "title")
+            if requirement.get(key) is not None and requirement.get(key) != ""
+        },
+        "task": {
+            "id": str(task.get("id") or ""),
+            "task_type": str(task.get("task_type") or ""),
+            "title": str(task.get("title") or ""),
+        },
+    }
+
+
+def _frozen_work_item_contract_instruction_block(
+    task: dict[str, Any],
+    policy: dict[str, Any],
+) -> str:
+    contract = _frozen_work_item_contract(task, policy)
+    return (
+        "冻结工作项契约（仅在该范围内执行；输出必须满足 output_contract 和验收标准）：\n"
+        + json.dumps(contract, ensure_ascii=False, sort_keys=True)
+    )
+
+
 def _template_context(task: dict[str, Any], policy: dict[str, Any]) -> dict[str, str]:
     product_context = _task_product_context(task)
     input_json = _task_input(task)
@@ -1386,6 +1430,9 @@ def render_executor_instruction(
         return context.get(match.group(1), match.group(0))
 
     instruction = TOKEN_PATTERN.sub(replace, str(policy.get("instruction_template") or "")).strip()
+    contract_block = _frozen_work_item_contract_instruction_block(task, policy)
+    if contract_block:
+        instruction = f"{instruction}\n\n{contract_block}".strip()
     code_inspection_block = _code_inspection_instruction_block(task, policy)
     if code_inspection_block:
         instruction = f"{instruction}\n\n{code_inspection_block}".strip()
@@ -1450,15 +1497,17 @@ def prepare_rd_task_executor_task(
         )
     agent_loop_run = dict(agent_loop_bundle["run"]) if agent_loop_bundle else None
     agent_loop_iteration = dict(agent_loop_bundle["iterations"][0]) if agent_loop_bundle else None
+    frozen_work_item_contract = _frozen_work_item_contract(task, policy)
     input_payload = {
         "branch": branch,
         "bug": (task.get("input_json") or {}).get("bug") or {},
         "code_change_review_mode": policy.get("code_change_review_mode") or "manual_review",
         "code_inspection": _code_inspection_payload(task, policy),
         "context_manifest_id": context_manifest_id,
+        "frozen_work_item_contract": frozen_work_item_contract,
         "agent_loop_run_id": (agent_loop_run or {}).get("id"),
         "knowledge_references": knowledge_references,
-        "output_contract": policy.get("output_contract") or {},
+        "output_contract": frozen_work_item_contract["output_contract"],
         "product_context": task.get("product_context") or {},
         "repository_id": repository_id,
         "requirement_snapshot": task.get("requirement_snapshot") or {},
@@ -1472,10 +1521,11 @@ def prepare_rd_task_executor_task(
         "branch": branch,
         "code_change_review_mode": policy.get("code_change_review_mode") or "manual_review",
         "context_manifest_id": context_manifest_id,
+        "frozen_work_item_contract": frozen_work_item_contract,
         "agent_loop_run_id": (agent_loop_run or {}).get("id"),
         "autonomy_mode": policy.get("autonomy_mode") or "single_pass",
         "executor_policy_id": policy["id"],
-        "output_contract": policy.get("output_contract") or {},
+        "output_contract": frozen_work_item_contract["output_contract"],
         "repository_id": repository_id,
         "runtime_policy": {
             key: policy.get(key)

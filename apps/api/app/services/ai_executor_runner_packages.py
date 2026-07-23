@@ -561,6 +561,14 @@ def _workspace_allowed(workspace_root: str) -> bool:
     for root in roots:
         if workspace == root or workspace.startswith(root.rstrip("/") + "/"):
             return True
+        if WORKTREE_ISOLATION_ENABLED:
+            isolated_root = posixpath.join(
+                posixpath.dirname(root),
+                WORKTREE_PARENT_DIR_NAME,
+                posixpath.basename(root),
+            )
+            if workspace == isolated_root or workspace.startswith(isolated_root.rstrip("/") + "/"):
+                return True
     return False
 
 

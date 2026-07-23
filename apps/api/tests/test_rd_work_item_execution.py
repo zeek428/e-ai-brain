@@ -158,6 +158,13 @@ def test_internal_dispatch_uses_only_frozen_executor_and_creates_attempt() -> No
     assert dispatched["runner_task"]["executor_type"] == "codex"
     assert dispatched["attempt"]["executor_profile_id"] == "executor-codex"
     assert dispatched["attempt"]["ai_employee_id"] == "employee-dev"
+    frozen_contract = dispatched["runner_task"]["input_payload"]["frozen_work_item_contract"]
+    assert frozen_contract["input_contract"] == {"background": "需求背景"}
+    assert frozen_contract["output_contract"] == {"summary": "string"}
+    assert frozen_contract["acceptance_criteria"] == ["设计可审核"]
+    assert "冻结工作项契约" in dispatched["runner_task"]["instruction"]
+    assert '"background": "需求背景"' in dispatched["runner_task"]["instruction"]
+    assert '"summary": "string"' in dispatched["runner_task"]["instruction"]
     assert store.rd_work_items["work-1"]["status"] == "running"
 
 
@@ -315,6 +322,91 @@ def test_coding_runner_success_always_enters_independent_verification() -> None:
     assert store.ai_tasks[dispatch["task"]["id"]]["current_step"] == "quality_gate_running"
     assert len(store.quality_gate_runs) == 1
     assert next(iter(store.quality_gate_runs.values()))["status"] == "running"
+    verifier_task = next(
+        task for task in store.ai_executor_tasks.values() if task["task_kind"] == "quality_gate"
+    )
+    assert verifier_task["input_payload"]["rd_work_item_attempt_id"] == dispatch["attempt"]["id"]
+
+    verifier_task.update(
+        {
+            "error_code": "AI_EXECUTOR_WORKSPACE_NOT_ALLOWED",
+            "error_message": "Verifier worktree is outside the legacy whitelist",
+            "status": "failed",
+        }
+    )
+    _sync_runner_completion_to_ai_task(store, task=verifier_task, runner_id="runner-verifier")
+
+    assert store.rd_work_items["work-1"]["status"] == "rework_required"
+    assert store.rd_work_item_attempts[dispatch["attempt"]["id"]]["status"] == "failed"
+
+
+def test_quality_verifier_provenance_uses_current_retry_attempt() -> None:
+    store = _ai_work_item_store()
+    store.ai_executor_runners.update(
+        {
+            "runner-frozen": {
+                "id": "runner-frozen",
+                "status": "active",
+                "executor_types": ["codex"],
+                "workspace_roots": ["/tmp/work-item"],
+                "trust_boundary_id": "coding-boundary",
+                "trust_domain": "coding",
+                "attestation_status": "active",
+            },
+            "runner-verifier": {
+                "id": "runner-verifier",
+                "status": "active",
+                "executor_types": ["codex"],
+                "workspace_roots": ["/tmp/work-item"],
+                "trust_boundary_id": "verification-boundary",
+                "trust_domain": "verification",
+                "attestation_status": "active",
+            },
+        }
+    )
+    first = dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="work-1",
+    )
+    first_runner = store.ai_executor_tasks[first["runner_task"]["id"]]
+    first_runner.update(
+        {
+            "error_code": "AI_EXECUTOR_COMMAND_FAILED",
+            "error_message": "first attempt failed",
+            "status": "failed",
+        }
+    )
+    _sync_runner_completion_to_ai_task(store, task=first_runner, runner_id="runner-frozen")
+
+    retry = dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="work-1",
+    )
+    retry_runner = store.ai_executor_tasks[retry["runner_task"]["id"]]
+    retry_runner.update({"result_json": {"summary": "retry complete"}, "status": "succeeded"})
+    _sync_runner_completion_to_ai_task(store, task=retry_runner, runner_id="runner-frozen")
+
+    verifier_task = next(
+        task
+        for task in store.ai_executor_tasks.values()
+        if task["task_kind"] == "quality_gate" and task["status"] == "queued"
+    )
+    assert retry["attempt"]["attempt_no"] == 2
+    assert verifier_task["input_payload"]["rd_work_item_attempt_id"] == retry["attempt"]["id"]
+
+    verifier_task.update(
+        {
+            "error_code": "AI_EXECUTOR_WORKSPACE_NOT_ALLOWED",
+            "error_message": "verification worktree rejected",
+            "status": "failed",
+        }
+    )
+    _sync_runner_completion_to_ai_task(store, task=verifier_task, runner_id="runner-verifier")
+
+    assert store.rd_work_items["work-1"]["status"] == "rework_required"
+    assert store.rd_work_item_attempts[retry["attempt"]["id"]]["status"] == "failed"
 
 
 def test_failed_coding_runner_requires_a_new_work_item_attempt() -> None:

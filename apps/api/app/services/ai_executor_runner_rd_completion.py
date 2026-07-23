@@ -158,6 +158,21 @@ def complete_rd_coding_runner_atomically(
         return_bundle=True,
     )
     quality_gate_run, verifier_task, quality_gate_checks, quality_gate_audit = prepared
+    verifier_task = {
+        **verifier_task,
+        "input_payload": {
+            **dict(verifier_task.get("input_payload") or {}),
+            "rd_collaboration_run_id": run_id,
+            "rd_work_item_attempt_id": attempt_id,
+            "rd_work_item_id": work_item_id,
+        },
+        "request_config": {
+            **dict(verifier_task.get("request_config") or {}),
+            "rd_collaboration_run_id": run_id,
+            "rd_work_item_attempt_id": attempt_id,
+            "rd_work_item_id": work_item_id,
+        },
+    }
     now = datetime.now(UTC).isoformat()
     updated_task = {
         **ai_task,
