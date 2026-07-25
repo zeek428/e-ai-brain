@@ -123,8 +123,9 @@ export function PluginRunnerFormFields({ editingRunner }: { editingRunner: boole
                   labelRender={({ value }) =>
                     aiExecutorRunnerArchOptions.find((option) => option.value === value)?.label ?? String(value)
                   }
-                  options={aiExecutorRunnerArchOptions.filter((option) => option.value !== selectedArch)}
+                  options={aiExecutorRunnerArchOptions}
                   style={{ width: 250 }}
+                  virtual={false}
                 />
               </Form.Item>
             );
@@ -147,9 +148,18 @@ export function PluginRunnerFormFields({ editingRunner }: { editingRunner: boole
           rows={3}
         />
       </Form.Item>
-      <Form.Item label="Runner Token" name="runner_token">
-        <Input.Password placeholder={editingRunner ? '留空表示不修改 Token' : '留空自动生成'} />
-      </Form.Item>
+      {editingRunner ? (
+        <Form.Item label="Runner Token">
+          <Typography.Text type="secondary">
+            Token 不在编辑页展示。需要替换凭据时，请关闭本窗口，在列表中点击“轮换”，然后复制
+            {' '}<code>AI_BRAIN_RUNNER_TOKEN=...</code>{' '}到本机 Runner 的 <code>ai-brain-runner.env</code>。
+          </Typography.Text>
+        </Form.Item>
+      ) : (
+        <Form.Item label="Runner Token（可选）" name="runner_token">
+          <Input.Password placeholder="留空自动生成" />
+        </Form.Item>
+      )}
       <Form.Item label="Metadata JSON" name="metadata">
         <Input.TextArea rows={4} placeholder='{"codex_path":"/Applications/Codex.app/Contents/Resources/codex"}' />
       </Form.Item>

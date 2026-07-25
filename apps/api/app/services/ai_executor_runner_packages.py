@@ -236,6 +236,72 @@ def _runner_start_command_block() -> str:
 """
 
 
+def _runner_python_bootstrap_block() -> str:
+    return r"""PYTHON_BIN="${PYTHON:-python3}"
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+  echo "Python 3.11+ is required. Set PYTHON to the target Python executable." >&2
+  exit 2
+fi
+
+VENV_DIR="${AI_BRAIN_RUNNER_VENV:-$SCRIPT_DIR/.venv}"
+RUNNER_PYTHON="$VENV_DIR/bin/python"
+if [[ ! -x "$RUNNER_PYTHON" ]]; then
+  echo "Creating isolated Python environment: $VENV_DIR"
+  if ! "$PYTHON_BIN" -m venv "$VENV_DIR"; then
+    echo "Unable to create a virtual environment. Install the Python venv package and retry." >&2
+    exit 2
+  fi
+fi
+
+if ! "$RUNNER_PYTHON" -m pip --version >/dev/null 2>&1; then
+  echo "pip is unavailable in $VENV_DIR. Reinstall Python with ensurepip support and retry." >&2
+  exit 2
+fi
+
+if ! "$RUNNER_PYTHON" -c 'import cryptography' >/dev/null 2>&1; then
+  echo "Installing Runner Python dependencies..."
+  if ! "$RUNNER_PYTHON" -m pip install --disable-pip-version-check -r runner_requirements.txt; then
+    echo "Runner dependency installation failed." >&2
+    echo "Check network or package mirror settings, then retry." >&2
+    exit 2
+  fi
+fi
+
+export PYTHON="$RUNNER_PYTHON"
+"""
+
+
+def _runner_shell_platform_guard(target_os: str, arch: str) -> str:
+    expected_host_os = "Linux" if target_os == "linux" else "Darwin"
+    platform_label = "Linux" if target_os == "linux" else "macOS"
+    return f"""EXPECTED_HOST_OS={expected_host_os}
+HOST_OS="$(uname -s)"
+if [[ "$HOST_OS" != "$EXPECTED_HOST_OS" ]]; then
+  echo "This Runner package targets {platform_label}/{arch}, but the current host is $HOST_OS." >&2
+  echo "Download a {platform_label} Runner package from Task Center /" >&2
+  echo "Plugin Management / Executors and retry." >&2
+  exit 2
+fi
+"""
+
+
+def _runner_powershell_bootstrap_block() -> str:
+    return r'''$python = if ($env:PYTHON) { $env:PYTHON } else { "python" }
+& $python -m pip --version | Out-Null
+if ($LASTEXITCODE -ne 0) {
+  throw "pip is unavailable. Reinstall Python with pip support, then retry."
+}
+& $python -c "import cryptography" 2>$null
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "Installing Runner Python dependencies..."
+  & $python -m pip install --disable-pip-version-check -r runner_requirements.txt
+  if ($LASTEXITCODE -ne 0) {
+    throw "Runner dependency installation failed. Check network or package mirror settings."
+  }
+}
+'''
+
+
 def _runner_agent_python() -> str:
     return r"""#!/usr/bin/env python3
 from __future__ import annotations
@@ -2450,6 +2516,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+{_runner_shell_platform_guard(target_os, package_options['arch'])}
+
 if [[ ! -f ai-brain-runner.env ]]; then
   echo "ai-brain-runner.env not found" >&2
   exit 1
@@ -2468,6 +2536,7 @@ echo "Starting AI Brain Runner {runner.get('id')}"
 echo "Package: {target_os}/{package_options['arch']} ({install_mode})"
 echo "Executors: ${{AI_BRAIN_EXECUTORS}}"
 {follow_up}
+{_runner_python_bootstrap_block()}
 {_runner_start_command_block()}"""
 
 
@@ -2492,7 +2561,7 @@ if (-not $env:AI_BRAIN_RUNNER_TOKEN -or $env:AI_BRAIN_RUNNER_TOKEN -eq "<runner_
 }}
 
 Write-Host "Starting AI Brain Runner {runner.get('id')} for windows/{package_options['arch']}"
-$python = if ($env:PYTHON) {{ $env:PYTHON }} else {{ "python" }}
+{_runner_powershell_bootstrap_block()}
 & $python ".\\runner_agent.py"
 """
 
@@ -2505,8 +2574,7 @@ cd "$SCRIPT_DIR"
 set -a
 source ai-brain-runner.env
 set +a
-exec "${PYTHON:-python3}" runner_agent.py
-"""
+""" + _runner_python_bootstrap_block() + _runner_start_command_block()
 
 
 def _runner_manual_powershell_script() -> str:
@@ -2519,8 +2587,8 @@ Get-Content ".\\ai-brain-runner.env" | ForEach-Object {
   $parts = $_.Split("=", 2)
   [Environment]::SetEnvironmentVariable($parts[0], $parts[1], "Process")
 }
-$python = if ($env:PYTHON) { $env:PYTHON } else { "python" }
-& $python ".\\runner_agent.py"
+""" + _runner_powershell_bootstrap_block() + r"""
+& $python ".\runner_agent.py"
 """
 
 
@@ -2898,8 +2966,9 @@ def _runner_readme(runner: dict[str, Any], package_options: dict[str, str]) -> s
 
 ## 安装步骤
 
-1. 准备 Python 3.11+，并在 Runner 使用的 Python 环境执行
-   `python3 -m pip install -r runner_requirements.txt`。
+1. 准备 Python 3.11+。Linux、macOS 和通用 Shell 包首次启动时会在安装目录创建
+   `.venv` 并自动安装 `runner_requirements.txt` 中的依赖；Windows 脚本会自动安装缺失依赖，
+   Docker 镜像在构建时安装依赖。首次安装需要能访问 Python 包源。
 2. 在远程机器安装需要的执行器 CLI，例如 Codex、Claude Code、Hermes 或 OpenClaw。
 3. 解压本安装包。
 4. 编辑 `ai-brain-runner.env`，把 `AI_BRAIN_RUNNER_TOKEN=<runner_token>`

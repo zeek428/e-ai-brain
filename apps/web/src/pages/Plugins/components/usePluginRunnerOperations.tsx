@@ -26,6 +26,7 @@ import {
   stableJson,
 } from './pluginFormTransformHelpers';
 import {
+  runnerCustomMetadata,
   runnerExecutorCommandsFromMetadata,
   runnerPackageOptionsFromMetadata,
   type AiExecutorRunnerFormValues,
@@ -111,7 +112,7 @@ export function usePluginRunnerOperations({
       heartbeat_timeout_seconds: runner.heartbeat_timeout_seconds ?? 120,
       install_mode: packageOptions.install_mode,
       max_concurrent_tasks: runner.max_concurrent_tasks ?? 1,
-      metadata: stableJson(runner.metadata ?? {}),
+      metadata: stableJson(runnerCustomMetadata(runner.metadata)),
       name: runner.name,
       openclaw_command: executorCommands.openclaw || 'openclaw',
       package_arch: packageOptions.arch,
@@ -141,12 +142,14 @@ export function usePluginRunnerOperations({
       const created = await createAiExecutorRunner(payload);
       message.success('执行器已创建');
       if (created.runner_token) {
+        const environmentValue = `AI_BRAIN_RUNNER_TOKEN=${created.runner_token}`;
         Modal.info({
           content: (
             <Space orientation="vertical" size={8}>
               <Typography.Text>Runner Token 仅在创建时返回，请配置到本地 Runner。</Typography.Text>
-              <Typography.Text code copyable={{ text: created.runner_token }}>
-                {created.runner_token}
+              <Typography.Text type="secondary">请替换本地 <code>ai-brain-runner.env</code> 中的整行：</Typography.Text>
+              <Typography.Text code copyable={{ text: environmentValue }}>
+                {environmentValue}
               </Typography.Text>
             </Space>
           ),

@@ -25,6 +25,15 @@
 - 调整角色菜单、权限点或数据范围前，先在授权弹窗运行“保存前风险预检”；若提示菜单权限缺口，需要按自动修复建议补齐权限点后再保存。
 - 对比 read/write/admin scope 时优先查看“角色权限与范围预览”和预检结果，避免只给菜单入口而没有产品或知识空间数据范围。
 
+## AI 执行器 Runner
+
+在“任务中心 / 插件管理 / 执行器”中维护本地或远程 Runner。编辑时请让“目标系统、CPU 架构、安装模式”与实际安装机器一致：Apple 芯片 Mac 选择 `macOS / arm64 / launchd`，Linux 服务器再选择 `Linux / amd64 / systemd`。
+
+- Runner Token 不会在编辑窗口回显。需要更新凭据时，在列表点击“轮换”，确认后会弹出结果窗口；复制窗口中一次性显示的完整 `AI_BRAIN_RUNNER_TOKEN=...`，替换本机安装包目录 `ai-brain-runner.env` 中的同名配置。
+- 下载的安装包文件名会标出目标系统、架构和安装方式。不要在 macOS 上运行 `linux/*/systemd` 包；脚本会阻止启动并提示重新下载匹配的 macOS 包。
+- macOS 和 Linux 安装包首次运行 `install.sh` 时会创建安装目录下的 `.venv`，并自动安装 `runner_requirements.txt` 中的 Python 依赖。首次安装需要 Python 3.11+ 和可访问的 Python 包源；随后脚本使用该隔离环境启动 Runner。
+- 安装包启动后回到执行器列表，等待健康状态变为 `online`；仍为 `never_connected` 时先检查 Token、Endpoint 和本机网络。
+
 ## 系统健康
 
 系统健康用于统一查看平台依赖、配置完整性、最近失败摘要和修复建议。管理员可以从“系统管理 / 系统健康”进入，也可以在页面右上角点击“查看本页帮助”打开对应手册。

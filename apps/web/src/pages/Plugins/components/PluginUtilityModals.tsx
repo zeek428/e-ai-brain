@@ -441,23 +441,25 @@ export function RunnerTokenRotationNotice({
   if (!token) {
     return null;
   }
+  const environmentValue = `AI_BRAIN_RUNNER_TOKEN=${token}`;
   return (
-    <Alert
-      closable
-      description={(
-        <Space orientation="vertical" size={6}>
-          <Typography.Text>新 Token 仅本次返回，请同步更新本地 Runner 配置。</Typography.Text>
-          <Typography.Text code copyable={{ text: token }}>
-            {token}
-          </Typography.Text>
-        </Space>
-      )}
-      onClose={onClose}
-      showIcon
-      style={{ marginTop: 16 }}
+    <Modal
+      centered
+      destroyOnHidden
+      footer={<Button onClick={onClose} type="primary">知道了</Button>}
+      onCancel={onClose}
+      open
       title="Runner Token 已轮换"
-      type="success"
-    />
+      width={640}
+    >
+      <Space orientation="vertical" size={12} style={{ width: '100%' }}>
+        <Typography.Text>新 Token 仅本次返回，请立即同步更新本地 Runner 配置。</Typography.Text>
+        <Typography.Text type="secondary">替换 <code>ai-brain-runner.env</code> 中的整行：</Typography.Text>
+        <Typography.Paragraph code copyable={{ text: environmentValue }} style={{ marginBottom: 0 }}>
+          {environmentValue}
+        </Typography.Paragraph>
+      </Space>
+    </Modal>
   );
 }
 

@@ -36,6 +36,32 @@ const aiExecutorCommandFieldByType = new Map([
   ['openclaw', 'openclaw_command'],
 ] as const);
 
+const runnerVisualMetadataKeys = new Set([
+  'executor_commands',
+  'install_mode',
+  'package_arch',
+  'target_os',
+]);
+
+const runnerRuntimeMetadataKeys = new Set([
+  'capabilities',
+  'command_allowlist',
+  'command_allowlist_enforced',
+  'command_shell_disabled',
+  'executors',
+  'instruction_passed_via_stdin',
+  'package_version',
+  'pid',
+  'process_group_isolation',
+  'python',
+  'safety',
+  'server_high_risk_approval_required',
+  'shell_disabled',
+  'terminate_process_tree_on_timeout',
+  'workspace_roots',
+  'workspace_roots_enforced',
+]);
+
 export const aiExecutorRunnerTargetOsOptions = [
   { label: 'Linux', value: 'linux' },
   { label: 'macOS', value: 'macos' },
@@ -111,6 +137,14 @@ export function runnerExecutorCommandsFromMetadata(metadata: Record<string, unkn
     Array.from(aiExecutorCommandFieldByType.keys())
       .map((executorType) => [executorType, runnerStringValue(commands[executorType])] as const)
       .filter(([, command]) => Boolean(command)),
+  );
+}
+
+export function runnerCustomMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(metadata ?? {}).filter(
+      ([key]) => !runnerVisualMetadataKeys.has(key) && !runnerRuntimeMetadataKeys.has(key),
+    ),
   );
 }
 

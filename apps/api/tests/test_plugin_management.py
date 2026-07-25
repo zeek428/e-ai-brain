@@ -3376,6 +3376,7 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
 
     assert "START_STOP.md" in readme_text
     assert "runner_agent.py" in readme_text
+    assert "`.venv` 并自动安装" in readme_text
     assert "cryptography>=49.0.0" in runner_requirements_text
     assert "AI_BRAIN_RUNNER_PRINT_BACKGROUND_LOGS=true" in readme_text
     compile(runner_agent_text, "runner_agent.py", "exec")
@@ -3420,6 +3421,11 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
     assert "AI_BRAIN_BYPASS_PROXY" in runner_agent_text
     assert "subprocess.run(command_args" not in runner_agent_text
     assert "def _git_capture" in runner_agent_text
+    assert "EXPECTED_HOST_OS=Linux" in install_text
+    assert "This Runner package targets Linux/amd64" in install_text
+    assert "VENV_DIR=\"${AI_BRAIN_RUNNER_VENV:-$SCRIPT_DIR/.venv}\"" in install_text
+    assert "import cryptography" in install_text
+    assert "pip install --disable-pip-version-check -r runner_requirements.txt" in install_text
     assert 'exec "${PYTHON:-python3}" runner_agent.py' in install_text
     assert "启动 Runner" in start_stop_text
     assert "停止 Runner" in start_stop_text
@@ -3490,10 +3496,13 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
         assert "launchd/com.ai-brain.runner.plist" in names
         assert "systemd/ai-brain-runner.service" not in names
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+        install_text = archive.read("install.sh").decode("utf-8")
         start_stop_text = archive.read("START_STOP.md").decode("utf-8")
     assert manifest["package"]["target_os"] == "macos"
     assert manifest["package"]["arch"] == "arm64"
     assert manifest["package"]["install_mode"] == "launchd"
+    assert "EXPECTED_HOST_OS=Darwin" in install_text
+    assert "This Runner package targets macOS/arm64" in install_text
     assert "launchctl load" in start_stop_text
     assert "launchctl unload" in start_stop_text
     assert "launchctl list | grep ai-brain" in start_stop_text

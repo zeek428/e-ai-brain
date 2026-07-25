@@ -1204,7 +1204,10 @@ function installPluginsFetchMock(
                 },
                 install_mode: 'launchd',
                 package_arch: 'arm64',
+                pid: 1234,
+                safety: { stream_logs: true },
                 target_os: 'macos',
+                team_note: '本地研发机',
               },
               name: 'Zeek Mac 本地执行器',
               protocol: 'runner_polling',
@@ -2406,8 +2409,9 @@ describe('PluginsPage', () => {
     fireEvent.mouseDown(within(dialog).getByLabelText('CPU 架构'));
     const architectureMenu = screen.getAllByRole('listbox').at(-1);
     expect(within(architectureMenu as HTMLElement).getAllByRole('option').map((option) => option.textContent)).toEqual([
-      'arm64',
-      'universal',
+      'Intel 64 位（amd64）',
+      'Apple 芯片 / ARM64（arm64）',
+      '通用架构（universal）',
     ]);
     fireEvent.click(within(dialog).getByRole('button', { name: /确\s*定/ }));
 
@@ -2435,7 +2439,31 @@ describe('PluginsPage', () => {
         }),
       ]),
     );
-    expect(await screen.findByText('runner-token-created')).toBeInTheDocument();
+    expect(await screen.findByText('AI_BRAIN_RUNNER_TOKEN=runner-token-created')).toBeInTheDocument();
+  });
+
+  it('maps runner configuration into the edit form without exposing its token', async () => {
+    installPluginsFetchMock();
+
+    render(<PluginsPage />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '执行器' }));
+    fireEvent.click(await screen.findByRole('button', { name: '编辑执行器 Zeek Mac 本地执行器' }));
+
+    const dialog = await findDialogByTitle('编辑执行器');
+    expect(within(dialog).getByLabelText('名称')).toHaveValue('Zeek Mac 本地执行器');
+    expect(within(dialog).getByLabelText('Endpoint')).toHaveValue('runner://local');
+    const metadataInput = within(dialog).getByLabelText('Metadata JSON');
+    expect(JSON.parse((metadataInput as HTMLTextAreaElement).value)).toEqual({ team_note: '本地研发机' });
+    expect(within(dialog).getByText(/Token 不在编辑页展示/)).toBeInTheDocument();
+
+    fireEvent.mouseDown(within(dialog).getByLabelText('CPU 架构'));
+    const architectureMenu = screen.getAllByRole('listbox').at(-1);
+    expect(within(architectureMenu as HTMLElement).getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'Intel 64 位（amd64）',
+      'Apple 芯片 / ARM64（arm64）',
+      '通用架构（universal）',
+    ]);
   });
 
   it('shows the system default executor as a managed read-only executor', async () => {
@@ -2528,7 +2556,9 @@ describe('PluginsPage', () => {
     fireEvent.click(within(rotateDialog).getByRole('button', { name: /确\s*定/ }));
 
     await waitFor(() => expect(runnerRotateBodies).toEqual([{}]));
-    expect(await screen.findByText('runner-token-rotated')).toBeInTheDocument();
+    const rotationResultDialog = await findDialogByTitle('Runner Token 已轮换');
+    expect(within(rotationResultDialog).getByText('AI_BRAIN_RUNNER_TOKEN=runner-token-rotated')).toBeInTheDocument();
+    fireEvent.click(within(rotationResultDialog).getByRole('button', { name: '知道了' }));
 
     fireEvent.click(screen.getByRole('button', { name: '查看执行日志 Zeek Mac 本地执行器' }));
     const logDrawer = await screen.findByRole('dialog', { name: 'Runner 执行日志' });
