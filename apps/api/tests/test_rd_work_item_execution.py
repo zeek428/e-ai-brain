@@ -514,6 +514,68 @@ def test_failed_coding_runner_requires_a_new_work_item_attempt() -> None:
     assert retry["attempt"]["attempt_no"] == 2
 
 
+def test_timed_out_coding_runner_stops_at_frozen_auto_recovery_limit() -> None:
+    store = _ai_work_item_store()
+    store.rd_task_executor_policy_snapshots["snapshot-1"]["payload_json"][
+        "autonomy_config"
+    ] = {
+        "mode": "single_pass",
+        "timeout_seconds": 600,
+        "max_duration_seconds": 3600,
+        "max_iterations": 1,
+    }
+    store.ai_executor_runners["runner-frozen"] = {
+        "id": "runner-frozen",
+        "status": "active",
+        "executor_types": ["codex"],
+        "workspace_roots": ["/tmp/work-item"],
+    }
+    dispatch = dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="work-1",
+    )
+    coding_task = store.ai_executor_tasks[dispatch["runner_task"]["id"]]
+    coding_task.update(
+        {
+            "error_code": "AI_EXECUTOR_TASK_TIMEOUT",
+            "error_message": "Executor timed out after 600s",
+            "finished_at": "2026-07-24T03:00:00+00:00",
+            "status": "timed_out",
+        }
+    )
+
+    _sync_runner_completion_to_ai_task(store, task=coding_task, runner_id="runner-frozen")
+
+    work_item = store.rd_work_items["work-1"]
+    assert work_item["status"] == "waiting_human"
+    assert work_item["resume_state"] == "ready"
+    decision = store.decision_requests[work_item["suspended_decision_request_id"]]
+    assert decision["decision_type"] == "runner_timeout_recovery"
+    assert decision["options_hash"].startswith("sha256:")
+    assert decision["recommendation_json"]["max_iterations"] == 1
+    assert store.rd_work_item_attempts[dispatch["attempt"]["id"]]["status"] == "failed"
+
+    resumed = apply_decision(
+        store,
+        decision_request_id=decision["id"],
+        selected_option="retry_after_human_confirmation",
+        input_value={},
+        comment=None,
+        actor={"id": "reviewer-1", "roles": []},
+        version=decision["version"],
+        idempotency_key="decision:runner-timeout-retry:1",
+    )
+    retry = dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="work-1",
+    )
+
+    assert resumed["next_state"] == "ready"
+    assert retry["attempt"]["attempt_no"] == 2
+
+
 def test_failed_coding_runner_reconciles_an_older_task_only_failure() -> None:
     store = _ai_work_item_store()
     store.ai_executor_runners["runner-frozen"] = {

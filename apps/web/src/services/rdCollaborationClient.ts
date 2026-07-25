@@ -256,6 +256,21 @@ export async function fetchRdWorkItems(runId: string) {
   );
 }
 
+export async function resumeCancelledRdWorkItem(
+  workItemId: string,
+  payload: { reason: string; version: number },
+) {
+  const token = requireAccessToken();
+  return apiRequest<{ event: { event_type: string }; next_state: string; work_item: RdWorkItem }>(
+    `/api/delivery/rd-work-items/${workItemId}/resume`,
+    {
+      body: { ...payload, idempotency_key: crypto.randomUUID() },
+      method: 'POST',
+      token,
+    },
+  );
+}
+
 export async function decideRdDecisionRequest(
   decisionRequestId: string,
   payload: { comment?: string; selected_option: string; version: number },

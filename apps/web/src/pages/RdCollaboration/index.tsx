@@ -1,9 +1,10 @@
-import { Alert, Button, Card, Descriptions, Spin, Tabs, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Descriptions, message, Spin, Tabs, Tag, Typography } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   fetchRdCollaborationRun,
   fetchRdWorkItems,
+  resumeCancelledRdWorkItem,
   type RdCollaborationRun,
   type RdWorkItem,
   type RdWorkItemDependency,
@@ -24,6 +25,7 @@ export default function RdCollaborationPage() {
   const [dependencies, setDependencies] = useState<RdWorkItemDependency[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
+  const [resumingWorkItemId, setResumingWorkItemId] = useState<string>();
 
   const reload = useCallback(async () => {
     if (!runId) {
@@ -58,6 +60,22 @@ export default function RdCollaborationPage() {
     () => items.filter((item) => item.status === 'completed').length,
     [items],
   );
+
+  const resumeCancelledWorkItem = useCallback(async (item: RdWorkItem) => {
+    setResumingWorkItemId(item.id);
+    try {
+      await resumeCancelledRdWorkItem(item.id, {
+        reason: '人工确认：已修复根因，恢复已取消工作项并创建新的返工机会',
+        version: item.version,
+      });
+      message.success('工作项已进入返工待派发，旧执行证据已保留');
+      await reload();
+    } catch (resumeError) {
+      message.error(formatMutationError(resumeError));
+    } finally {
+      setResumingWorkItemId(undefined);
+    }
+  }, [reload]);
 
   return (
     <main>
@@ -101,7 +119,14 @@ export default function RdCollaborationPage() {
                     {
                       key: 'work',
                       label: `工作项 DAG（${completedCount}/${items.length}）`,
-                      children: <WorkItemDag dependencies={dependencies} items={items} />,
+                      children: (
+                        <WorkItemDag
+                          dependencies={dependencies}
+                          items={items}
+                          onResumeCancelled={resumeCancelledWorkItem}
+                          resumingWorkItemId={resumingWorkItemId}
+                        />
+                      ),
                     },
                     {
                       key: 'decision',

@@ -16,6 +16,7 @@ from app.api.deps import api_error
 from app.core.config import get_settings
 from app.services.rd_feedback_attribution import record_role_feedback
 from app.services.rd_role_experiences import generate_role_experience_candidate_from_feedback
+from app.services.task_persistence_helpers import build_audit_event, record_audit_event
 
 _SATISFIED_PREDECESSOR_STATES = {"completed", "approved"}
 _TERMINAL_WORK_ITEM_STATES = {"completed", "approved", "failed", "cancelled"}
@@ -786,7 +787,13 @@ def _fence_linked_delivery_memory(
     ]
     for runner_task_id in runner_task_ids:
         runner_task = runner_tasks[runner_task_id]
-        if runner_task.get("status") in {"succeeded", "failed", "cancelled", "timed_out"}:
+        if runner_task.get("status") in {
+            "succeeded",
+            "failed",
+            "cancelled",
+            "timed_out",
+            "dead_letter",
+        }:
             continue
         runner_task.update(
             {
@@ -808,7 +815,8 @@ def _fence_linked_delivery_memory(
             "failed",
         }:
             outbox.update({"status": "cancelled", "lease_owner": None, "lease_until": None})
-    outbox_id = f"outbox:work-item:{work_item_id}:cancel"
+    cancellation_version = int(item.get("version") or 1)
+    outbox_id = f"outbox:work-item:{work_item_id}:cancel:v{cancellation_version}"
     _records(store, "execution_outbox_events").setdefault(
         outbox_id,
         {
@@ -816,7 +824,7 @@ def _fence_linked_delivery_memory(
             "aggregate_type": "rd_work_item",
             "aggregate_id": work_item_id,
             "event_type": "rd.work_item.cancel_runner",
-            "idempotency_key": f"work-item:{work_item_id}:cancel",
+            "idempotency_key": f"work-item:{work_item_id}:cancel:v{cancellation_version}",
             "payload_json": {
                 "attempt_id": attempt.get("id") if attempt else None,
                 "ai_task_ids": task_ids,
@@ -1527,6 +1535,184 @@ def _cancel_work_item_repository(
 
     result = execute(
         command_type="cancel_work_item",
+        aggregate_type="rd_work_item",
+        aggregate_id=work_item_id,
+        idempotency_key=idempotency_key,
+        request_hash=_canonical_hash(request),
+        operation=operation,
+    )
+    return {**dict(result["response_json"]), "idempotent_replay": bool(result["idempotent_replay"])}
+
+
+def resume_cancelled_work_item(
+    store: Any,
+    *,
+    work_item_id: str,
+    reason: str,
+    actor: dict[str, Any],
+    version: int,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    """Create a new rework attempt after an explicit, audited cancellation recovery.
+
+    This command never revives the cancelled attempt, lease or Runner task.  It
+    only returns the work item to the scheduler's ``rework_required`` state,
+    from which a later dispatch creates a new immutable attempt.
+    """
+    from app.services.rd_maintenance_fence import require_rd_write_allowed
+
+    require_rd_write_allowed(store, operation="work_item.resume_cancelled")
+    request = {
+        "reason": reason,
+        "version": version,
+        "actor_id": actor.get("id"),
+    }
+    command_id = _command_key(
+        command_type="resume_cancelled_work_item",
+        aggregate_id=work_item_id,
+        idempotency_key=idempotency_key,
+    )
+    commands = _records(store, "rd_command_idempotency_records")
+    existing = commands.get(command_id)
+    if existing is not None:
+        if existing.get("request_hash") != _canonical_hash(request):
+            raise api_error(409, "RD_IDEMPOTENCY_CONFLICT", "Recovery key has another payload")
+        return {**deepcopy(existing["response_snapshot"]), "idempotent_replay": True}
+
+    repository = _repository(store)
+    if repository is not None:
+        return _resume_cancelled_work_item_repository(
+            store,
+            repository=repository,
+            work_item_id=work_item_id,
+            reason=reason,
+            actor=actor,
+            version=version,
+            idempotency_key=idempotency_key,
+            request=request,
+        )
+
+    item = _records(store, "rd_work_items").get(work_item_id)
+    if (
+        item is None
+        or item.get("status") != "cancelled"
+        or int(item.get("version") or 1) != version
+    ):
+        raise api_error(409, "RD_WORK_ITEM_STATE_INVALID", "Cancelled work item cannot be resumed")
+    run = _records(store, "rd_collaboration_runs").get(str(item["collaboration_run_id"]))
+    if run is None or run.get("status") not in {"running", "integrating", "verifying"}:
+        raise api_error(409, "RD_WORK_ITEM_STATE_INVALID", "Collaboration run is not active")
+    item.update(
+        {
+            "status": "rework_required",
+            "ai_task_id": None,
+            "lease_owner": None,
+            "lease_expires_at": None,
+            "next_dispatch_at": None,
+            "dispatch_failure_count": 0,
+            "last_dispatch_error_code": None,
+            "version": int(item.get("version") or 1) + 1,
+        }
+    )
+    event = {
+        "id": _new_id(store, "rd_collaboration_event"),
+        "collaboration_run_id": item["collaboration_run_id"],
+        "event_type": "work_item.rework_resumed",
+        "event_key": f"resume-cancelled:{work_item_id}:{idempotency_key}",
+        "subject_type": "rd_work_item",
+        "subject_id": work_item_id,
+        "payload_json": {"reason": reason, "previous_status": "cancelled"},
+    }
+    _records(store, "rd_collaboration_events")[event["id"]] = event
+    record_audit_event(
+        store,
+        event_type="rd_work_item.rework_resumed",
+        actor_id=str(actor["id"]),
+        subject_type="rd_work_item",
+        subject_id=work_item_id,
+        payload={"reason": reason, "previous_status": "cancelled"},
+    )
+    response = {
+        "work_item": deepcopy(item),
+        "event": deepcopy(event),
+        "run": deepcopy(run),
+        "next_state": "rework_required",
+        "idempotent_replay": False,
+    }
+    commands[command_id] = {
+        "id": command_id,
+        "command_type": "resume_cancelled_work_item",
+        "aggregate_id": work_item_id,
+        "idempotency_key": idempotency_key,
+        "request_hash": _canonical_hash(request),
+        "response_hash": _canonical_hash(response),
+        "response_snapshot": deepcopy(response),
+    }
+    return response
+
+
+def _resume_cancelled_work_item_repository(
+    store: Any,
+    *,
+    repository: Any,
+    work_item_id: str,
+    reason: str,
+    actor: dict[str, Any],
+    version: int,
+    idempotency_key: str,
+    request: dict[str, Any],
+) -> dict[str, Any]:
+    get_item = getattr(repository, "get_rd_work_item", None)
+    get_run = getattr(repository, "get_rd_collaboration_run", None)
+    execute = getattr(repository, "execute_idempotent_rd_command", None)
+    if not all(callable(method) for method in (get_item, get_run, execute)):
+        raise api_error(503, "REPOSITORY_REQUIRED", "Recovery repository is unavailable")
+    item = get_item(work_item_id)
+    if item is None:
+        raise api_error(404, "NOT_FOUND", "Work item not found")
+    run = get_run(str(item["collaboration_run_id"]))
+    if run is None:
+        raise api_error(409, "RD_WORK_ITEM_STATE_INVALID", "Collaboration run is unavailable")
+    event = {
+        "id": f"resume-cancelled-event:{work_item_id}:{idempotency_key}",
+        "collaboration_run_id": item["collaboration_run_id"],
+        "event_type": "work_item.rework_resumed",
+        "event_key": f"resume-cancelled:{work_item_id}:{idempotency_key}",
+        "subject_type": "rd_work_item",
+        "subject_id": work_item_id,
+        "payload_json": {"reason": reason, "previous_status": "cancelled"},
+    }
+    audit_event = build_audit_event(
+        store,
+        event_type="rd_work_item.rework_resumed",
+        actor_id=str(actor["id"]),
+        subject_type="rd_work_item",
+        subject_id=work_item_id,
+        payload={"reason": reason, "previous_status": "cancelled"},
+    )
+
+    def operation(transaction: Any) -> dict[str, Any]:
+        resumed = transaction.resume_cancelled_work_item_bundle(
+            work_item_id=work_item_id,
+            expected_version=version,
+            event=event,
+            audit_event=audit_event,
+        )
+        response = {
+            "work_item": resumed["work_item"],
+            "event": resumed["event"],
+            "run": get_run(str(item["collaboration_run_id"])),
+            "next_state": "rework_required",
+        }
+        return {
+            "result_type": "rd_work_item",
+            "result_id": work_item_id,
+            "http_status": 200,
+            "response_json": response,
+        }
+
+    result = execute(
+        command_type="resume_cancelled_work_item",
         aggregate_type="rd_work_item",
         aggregate_id=work_item_id,
         idempotency_key=idempotency_key,

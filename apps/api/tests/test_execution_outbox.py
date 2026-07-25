@@ -72,6 +72,9 @@ def test_execution_worker_iteration_processes_outbox_and_jenkins_sync(monkeypatc
     )
 
     assert result == {
+        "ai_executor_dead_letter_count": 0,
+        "ai_executor_lease_requeue_count": 0,
+        "ai_executor_timeout_count": 0,
         "external_event_count": 4,
         "jenkins_sync_count": 3,
         "outbox_count": 2,

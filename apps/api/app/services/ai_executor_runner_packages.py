@@ -2258,10 +2258,13 @@ def _run_task(task: dict) -> None:
         duration_ms = int((time.time() - started_at) * 1000)
         if server_terminal_status == "cancel_requested":
             if workspace_isolation and workspace_isolation.get("mode") == "git_worktree":
-                _discard_isolated_workspace(workspace_isolation)
                 workspace_isolation = {
-                    **workspace_isolation,
-                    "status": "discarded_after_cancel",
+                    **(_capture_workspace_patch(workspace_isolation) or workspace_isolation),
+                    # A work-item cancellation is a governance boundary, not
+                    # permission to erase evidence.  Keep the isolated tree
+                    # and its binary patch available to the subsequent
+                    # rework/human review flow.
+                    "status": "retained_after_cancel",
                 }
             _complete_task(
                 task_id,
@@ -2286,15 +2289,20 @@ def _run_task(task: dict) -> None:
                 file=sys.stderr,
             )
             if workspace_isolation and workspace_isolation.get("mode") == "git_worktree":
-                _discard_isolated_workspace(workspace_isolation)
+                # The control plane may time out a task before this Runner
+                # observes it.  Do not make that race erase the isolated
+                # workspace that is needed as timeout evidence.
+                _capture_workspace_patch(workspace_isolation)
             return
         workspace_isolation = _capture_workspace_patch(workspace_isolation)
         if timed_out:
             if workspace_isolation and workspace_isolation.get("mode") == "git_worktree":
-                _discard_isolated_workspace(workspace_isolation)
                 workspace_isolation = {
                     **workspace_isolation,
-                    "status": "discarded_after_timeout",
+                    # Preserve the tree and patch for diagnosis and explicit
+                    # work-item rework.  Automatic cleanup would violate the
+                    # evidence-retention contract for a timed-out execution.
+                    "status": "retained_after_timeout",
                 }
             _complete_task(
                 task_id,

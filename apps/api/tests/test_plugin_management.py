@@ -3399,6 +3399,8 @@ def test_ai_executor_runner_install_package_contains_remote_config_skill_and_os_
     assert "_finalize_workspace_decisions" in runner_agent_text
     assert "_merge_isolated_workspace" in runner_agent_text
     assert "_discard_isolated_workspace" in runner_agent_text
+    assert "retained_after_cancel" in runner_agent_text
+    assert "retained_after_timeout" in runner_agent_text
     assert "git worktree add" in runner_agent_text
     assert "workspace_isolation" in runner_agent_text
     assert "start_new_session" in runner_agent_text

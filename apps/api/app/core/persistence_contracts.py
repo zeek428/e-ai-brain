@@ -358,6 +358,7 @@ class RdCollaborationRepository(Protocol):
         attempt: dict[str, Any],
         expected_version: int | None = None,
         event: dict[str, Any] | None = None,
+        decision_request: dict[str, Any] | None = None,
         task: dict[str, Any] | None = None,
         audit_events: list[dict[str, Any]] | None = None,
         failure_injection: Callable[[str], None] | None = None,
@@ -416,6 +417,14 @@ class RdCollaborationRepository(Protocol):
         high_risk: bool,
         decision_request: dict[str, Any] | None = None,
         event: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
+    def resume_cancelled_work_item_bundle(
+        self,
+        *,
+        work_item_id: str,
+        expected_version: int,
+        event: dict[str, Any],
+        audit_event: dict[str, Any],
     ) -> dict[str, Any]: ...
     def execute_idempotent_rd_command(
         self,

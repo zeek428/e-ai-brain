@@ -97,6 +97,7 @@ POST           /api/delivery/rd-work-items/{work_item_id}/claim
 POST           /api/delivery/rd-work-items/{work_item_id}/submit
 POST           /api/delivery/rd-work-items/{work_item_id}/review
 POST           /api/delivery/rd-work-items/{work_item_id}/cancel
+POST           /api/delivery/rd-work-items/{work_item_id}/resume
 POST           /api/delivery/decision-requests/{decision_request_id}/decide
 POST           /api/delivery/decision-requests/{decision_request_id}/answers
 ```
@@ -107,7 +108,7 @@ POST           /api/delivery/decision-requests/{decision_request_id}/answers
 
 权限点分别为 `delivery.rd_roles.manage`、`delivery.rd_ai_employees.manage`、`delivery.rd_executor_profiles.manage`、`delivery.requirement_assessments.read/decide`、`delivery.rd_collaboration.read/plan/work`、`delivery.decision_requests.decide/answer` 和 `delivery.rd_role_experiences.read/decide`；策略继续使用 `delivery.rd_executor_policies.manage`，部署继续使用现有部署权限。岗位、员工档案或席位不会自动授予这些权限。
 
-工作项包含 `owner_seat_id/dependencies/input_contract/output_contract/acceptance_criteria/risk_level/status/resume_state/suspended_attempt_id/ai_task_id/reviewer_seat_id/idempotency_key`。依赖满足后才能进入 `ready`，无依赖项可并行；执行 Worker 自动派发 AI 席位的低/中风险工作项。派发前先按冻结席位容量预检，最终 bundle 事务以不加锁查询取得父运行 ID，再严格按 `rd_collaboration_runs FOR UPDATE -> rd_work_items FOR UPDATE` 的统一聚合锁顺序加锁；两把锁均取得后，重验工作项仍属于该运行、状态与 reservation version/到期边界仍有效、父运行仍为 `running/integrating/verifying`，随后才锁定席位并计数运行中工作项。候选保留后父运行进入 `waiting_human`、终态或其他非活动状态，或工作项已被并发取消时，陈旧派发等待既有父运行锁后返回 `409 RD_WORK_ITEM_STATE_INVALID`，不得形成 `40P01` 锁序死锁，任务、Runner、attempt、事件和审计 bundle 全部不写。达到容量时返回 `409 RD_SEAT_CAPACITY_EXHAUSTED`，自动派发把该项保留 `ready` 并列入 `capacity_deferred_work_item_ids`，不创建 AI 任务或 attempt。审核、质量门禁或当前有效 attempt 的编码 Runner 执行失败都会保留原 attempt、原子清除工作项租约并进入 `rework_required`；失败任务、attempt、协作事件和审计会作为返工证据保留，下一次领取只能创建新 attempt。范围、依赖或负责人变化则创建新计划版本和替代工作项。`blocked/awaiting_human` 保存平台冻结的恢复目标和解除条件；问题解除或决策完成后只能回到校验后的 `ready/running/rework_required/cancelled`。高风险工作项会原子创建 `high_risk_ai_dispatch` 决策并暂停；只有冻结选项 `approve_dispatch` 被指定真人席位确认后，Worker 才能派发该项。超权限、冲突、预算超限、门禁失败或部署边界同样创建 `decision_requests` 并暂停受影响分支。详情响应聚合 DAG、租约、AI 任务/Runner、审核、返工、门禁、Git、预算和角色反馈。
+工作项包含 `owner_seat_id/dependencies/input_contract/output_contract/acceptance_criteria/risk_level/status/resume_state/suspended_attempt_id/ai_task_id/reviewer_seat_id/idempotency_key`。依赖满足后才能进入 `ready`，无依赖项可并行；执行 Worker 自动派发 AI 席位的低/中风险工作项。派发前先按冻结席位容量预检，最终 bundle 事务以不加锁查询取得父运行 ID，再严格按 `rd_collaboration_runs FOR UPDATE -> rd_work_items FOR UPDATE` 的统一聚合锁顺序加锁；两把锁均取得后，重验工作项仍属于该运行、状态与 reservation version/到期边界仍有效、父运行仍为 `running/integrating/verifying`，随后才锁定席位并计数运行中工作项。候选保留后父运行进入 `waiting_human`、终态或其他非活动状态，或工作项已被并发取消时，陈旧派发等待既有父运行锁后返回 `409 RD_WORK_ITEM_STATE_INVALID`，不得形成 `40P01` 锁序死锁，任务、Runner、attempt、事件和审计 bundle 全部不写。达到容量时返回 `409 RD_SEAT_CAPACITY_EXHAUSTED`，自动派发把该项保留 `ready` 并列入 `capacity_deferred_work_item_ids`，不创建 AI 任务或 attempt。审核、质量门禁或当前有效 attempt 的编码 Runner 普通执行失败都会保留原 attempt、原子清除工作项租约并进入 `rework_required`；失败任务、attempt、协作事件和审计会作为返工证据保留，下一次领取只能创建新 attempt。`timed_out` 的编码 Runner 还必须按该任务冻结 `autonomy_config.max_iterations` 统计自动恢复次数：达到上限时，同一事务保存失败任务、attempt、事件、审计和 `runner_timeout_recovery` 决策，把工作项置为 `waiting_human/resume_state=ready`，不得再自动派发；指定真人只能选择 `retry_after_human_confirmation`（恢复 `ready`，随后由 Worker 创建新 attempt）或 `cancel_work_item`。策略快照不可变，增加 `timeout_seconds` 只能作用于后续协作代次。范围、依赖或负责人变化则创建新计划版本和替代工作项。`blocked/awaiting_human` 保存平台冻结的恢复目标和解除条件；问题解除或决策完成后只能回到校验后的 `ready/running/rework_required/cancelled`。高风险工作项会原子创建 `high_risk_ai_dispatch` 决策并暂停；只有冻结选项 `approve_dispatch` 被指定真人席位确认后，Worker 才能派发该项。超权限、冲突、预算超限、门禁失败或部署边界同样创建 `decision_requests` 并暂停受影响分支。详情响应聚合 DAG、租约、AI 任务/Runner、审核、返工、门禁、Git、预算和角色反馈。
 
 #### 迭代版本总览：协同入口与安全摘要
 
@@ -465,6 +466,24 @@ POST /api/delivery/rd-work-items/{work_item_id}/cancel
 调用者必须具备 `delivery.rd_collaboration.plan` 和产品范围；协作编排器使用内部服务身份调用同一领域命令。低风险、无已启动下游且策略允许直接取消时，服务端在一个数据库事务内校验工作项/运行版本，撤销数据库租约，关闭当前 attempt，取消 pending Review 和关联 AI task，把工作项推进为 `cancelled`，重算依赖和运行状态，并写入 Runner cancellation Outbox、协作事件和审计。物理 Runner 停止由 Outbox Worker 异步执行；被撤销租约的迟到完成回写必须拒绝，不能复活工作项。
 
 高风险、已有运行中下游、会扩大取消范围或策略要求人工确认时，不直接完成取消，但必须先安全暂停执行：同一事务把工作项置为 `awaiting_human`、撤销活动租约、把当前 attempt 标记为 `suspended_for_decision`，并写 Runner cancellation Outbox；迟到结果同样隔离。人工批准取消后再原子完成取消；人工拒绝取消或选择继续时，旧 attempt/lease 不复活，服务端重新校验权限、依赖、预算和工作区后把工作项推进到 `ready`，下一次 claim 使用新版本、新幂等键、新 attempt 和新 lease。返回 `202`、decision request 和暂停 Outbox。成功或幂等重放响应返回 `work_item/attempt/ai_task/review/run/dependency_recalculation/runner_cancellation_outbox_id/decision_request/next_state/idempotent_replay/trace_id`。终态项返回 `RD_WORK_ITEM_STATE_INVALID`，版本冲突返回 `RD_VERSION_CONFLICT`，需要人工决策但无法创建请求时返回 `RD_DECISION_REQUIRED`；事务任一步失败不得留下部分取消。
+
+#### 从已取消工作项恢复返工
+
+```http
+POST /api/delivery/rd-work-items/{work_item_id}/resume
+```
+
+当超时治理或 Runner 配置已修复、且人工决定继续交付时，具备 `delivery.rd_collaboration.plan` 和产品范围的人员可显式恢复已取消工作项：
+
+```json
+{
+  "reason": "已修复 Runner 超时治理，继续验证该工作项",
+  "version": 8,
+  "idempotency_key": "resume:rd_work_item_001:v8"
+}
+```
+
+该命令只接受父运行仍处于 `running/integrating/verifying` 的 `cancelled` 工作项，并在同一事务锁定运行后锁定工作项、确认全部关联 AI Task/Runner 已为终态、清空当前 `ai_task_id` 与租约、写入 `work_item.rework_resumed` 协作事件和审计，再将工作项置为 `rework_required`。旧 attempt、旧 AI Task、Runner 任务和隔离工作区产物保持不可变，不会被复活或覆盖；执行 Worker 后续派发时才会创建新的 attempt、任务、Runner lease 和隔离工作区。状态或版本冲突统一返回 `RD_WORK_ITEM_STATE_INVALID` / `RD_VERSION_CONFLICT`。
 
 #### 处理人工决策
 

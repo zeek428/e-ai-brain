@@ -1645,6 +1645,22 @@ class RdCollaborationTransaction:
             event=event,
         )
 
+    def resume_cancelled_work_item_bundle(
+        self,
+        *,
+        work_item_id: str,
+        expected_version: int,
+        event: dict[str, Any],
+        audit_event: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._repository._resume_cancelled_work_item_bundle_cursor(
+            self.cursor,
+            work_item_id=work_item_id,
+            expected_version=expected_version,
+            event=event,
+            audit_event=audit_event,
+        )
+
     def suspend_collaboration_run(
         self,
         *,

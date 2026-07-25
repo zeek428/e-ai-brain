@@ -11,6 +11,7 @@ from app.services.rd_work_item_scheduler import (
     claim_work_item,
     complete_attempt,
     ready_work_items,
+    resume_cancelled_work_item,
     review_work_item,
 )
 
@@ -479,3 +480,56 @@ def test_high_risk_cancel_suspends_item_pending_human_decision() -> None:
 
     assert result["work_item"]["status"] == "waiting_human"
     assert result["decision_request"]["status"] == "pending"
+
+
+def test_operator_can_resume_cancelled_work_item_as_a_new_rework_attempt() -> None:
+    """A recovery never revives the cancelled attempt or its old lease."""
+    store = MemoryStore()
+    store.rd_collaboration_runs["run-1"] = {
+        "id": "run-1",
+        "brain_app_id": "rd_brain",
+        "product_id": "product-1",
+        "status": "running",
+    }
+    store.rd_work_items["work-1"] = {
+        "id": "work-1",
+        "collaboration_run_id": "run-1",
+        "status": "cancelled",
+        "risk_level": "medium",
+        "version": 7,
+        "ai_task_id": "task-old",
+        "lease_owner": None,
+        "lease_expires_at": None,
+    }
+    store.rd_work_item_attempts["attempt-old"] = {
+        "id": "attempt-old",
+        "work_item_id": "work-1",
+        "attempt_no": 1,
+        "status": "cancelled",
+    }
+
+    resumed = resume_cancelled_work_item(
+        store,
+        work_item_id="work-1",
+        reason="runner timeout governance repaired; continue from preserved evidence",
+        actor={"id": "user-owner", "roles": ["rd_owner"]},
+        version=7,
+        idempotency_key="resume:work-1:v7",
+    )
+
+    assert resumed["work_item"]["status"] == "rework_required"
+    assert resumed["work_item"]["version"] == 8
+    assert resumed["work_item"]["ai_task_id"] is None
+    assert store.rd_work_item_attempts["attempt-old"]["status"] == "cancelled"
+    assert resumed["next_state"] == "rework_required"
+    assert resumed["event"]["event_type"] == "work_item.rework_resumed"
+
+    replay = resume_cancelled_work_item(
+        store,
+        work_item_id="work-1",
+        reason="runner timeout governance repaired; continue from preserved evidence",
+        actor={"id": "user-owner", "roles": ["rd_owner"]},
+        version=7,
+        idempotency_key="resume:work-1:v7",
+    )
+    assert replay["idempotent_replay"] is True

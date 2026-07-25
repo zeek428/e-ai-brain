@@ -7,9 +7,10 @@ late or duplicate Runner result cannot revive a cancelled or reworked lease.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.api.deps import api_error
@@ -88,6 +89,137 @@ def _runner_task(
             return dict(candidate)
     candidate = _records(current_store, "ai_executor_tasks").get(runner_task_id)
     return dict(candidate) if isinstance(candidate, dict) else None
+
+
+def _timeout_auto_recovery_limit(task: dict[str, Any]) -> tuple[int, int | None]:
+    """Read the immutable work-item recovery budget from the dispatched task."""
+    collaboration = (
+        task.get("input_json", {}).get("rd_collaboration", {})
+        if isinstance(task.get("input_json"), dict)
+        else {}
+    )
+    execution_snapshot = (
+        collaboration.get("execution_policy_snapshot")
+        if isinstance(collaboration, dict)
+        else {}
+    )
+    autonomy = (
+        execution_snapshot.get("autonomy_config")
+        if isinstance(execution_snapshot, dict)
+        else {}
+    )
+    try:
+        max_iterations = max(1, int((autonomy or {}).get("max_iterations") or 1))
+    except (TypeError, ValueError):
+        max_iterations = 1
+    try:
+        timeout_seconds = int((autonomy or {}).get("timeout_seconds") or 0) or None
+    except (TypeError, ValueError):
+        timeout_seconds = None
+    return max_iterations, timeout_seconds
+
+
+def _timed_out_attempt_count(
+    current_store: Any,
+    *,
+    work_item_id: str,
+    current_attempt_id: str,
+) -> int:
+    """Count terminal coding timeouts, including the unsaved current attempt."""
+    attempt_ids = {
+        str(attempt.get("id") or "")
+        for attempt in _work_item_attempts(current_store, work_item_id)
+        if isinstance(attempt.get("failure_json"), dict)
+        and str(attempt["failure_json"].get("runner_status") or "") == "timed_out"
+    }
+    attempt_ids.add(current_attempt_id)
+    return len(attempt_ids)
+
+
+def _runner_timeout_recovery_decision(
+    current_store: Any,
+    *,
+    ai_task: dict[str, Any],
+    item: dict[str, Any],
+    attempt: dict[str, Any],
+    max_iterations: int,
+    timed_out_attempt_count: int,
+    timeout_seconds: int | None,
+    observed_at: datetime,
+) -> dict[str, Any]:
+    """Freeze a human decision before a timed-out item can consume another attempt."""
+    run = _record(current_store, "rd_collaboration_runs", str(ai_task["collaboration_run_id"]))
+    if run is None:
+        raise api_error(409, "RD_WORK_ITEM_NOT_READY", "Collaboration run is unavailable")
+    reviewer = _record(current_store, "rd_run_seats", str(item.get("reviewer_seat_id") or ""))
+    selector = (
+        {"seat_ids": [str(reviewer["id"])]}
+        if reviewer
+        and reviewer.get("status", "active") == "active"
+        and reviewer.get("subject_type") == "human_user"
+        else {"role_codes": ["rd_owner"]}
+    )
+    decision_id = f"runner-timeout-recovery:{item['id']}:attempt:{attempt['attempt_no']}"
+    evidence = {
+        "error_code": "AI_EXECUTOR_TASK_TIMEOUT",
+        "kind": "runner_timeout",
+        "max_iterations": max_iterations,
+        "timed_out_attempt_count": timed_out_attempt_count,
+    }
+    if timeout_seconds is not None:
+        evidence["timeout_seconds"] = timeout_seconds
+    options = [
+        {
+            "code": "retry_after_human_confirmation",
+            "input_schema": {},
+            "outcome": "approve",
+            "subject_transition": "resume",
+        },
+        {
+            "code": "cancel_work_item",
+            "input_schema": {},
+            "outcome": "reject",
+            "requires_comment": True,
+            "subject_transition": "cancelled",
+        },
+    ]
+    return {
+        "id": decision_id,
+        "brain_app_id": run.get("brain_app_id", "rd_brain"),
+        "product_id": run["product_id"],
+        "subject_type": "rd_work_item",
+        "subject_id": item["id"],
+        "decision_type": "runner_timeout_recovery",
+        "plan_version": int(run.get("plan_version") or 0),
+        "options_json": options,
+        "options_hash": (
+            "sha256:"
+            + hashlib.sha256(
+                json.dumps(
+                    options,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()
+        ),
+        "evidence_json": [evidence],
+        "recommendation_json": {
+            "action": "review_timeout_before_retry",
+            "max_iterations": max_iterations,
+            "timed_out_attempt_count": timed_out_attempt_count,
+        },
+        "decision_actor_selector": selector,
+        "answer_actor_selector": {},
+        "answer_schema": {},
+        "status": "pending",
+        "expires_at": (observed_at + timedelta(hours=24)).isoformat(),
+        "timeout_policy": "escalate_keep_paused",
+        "escalation_target_selector": selector,
+        "escalation_level": 0,
+        "version": 1,
+        "created_by": run.get("created_by") or "system",
+    }
 
 
 def is_rd_collaboration_task(task: dict[str, Any] | None) -> bool:
@@ -439,7 +571,8 @@ def project_failed_coding_runner_result(
     ):
         return False
 
-    now = datetime.now(UTC).isoformat()
+    observed_at = datetime.now(UTC)
+    now = observed_at.isoformat()
     error_code = str(runner_task.get("error_code") or "AI_EXECUTOR_TASK_FAILED")
     error_message = str(runner_task.get("error_message") or "AI executor task failed")
     executor_snapshot = {
@@ -479,11 +612,42 @@ def project_failed_coding_runner_result(
         },
         "status": "failed",
     }
+    max_iterations, timeout_seconds = _timeout_auto_recovery_limit(ai_task)
+    timed_out_attempt_count = (
+        _timed_out_attempt_count(
+            current_store,
+            work_item_id=str(item["id"]),
+            current_attempt_id=str(updated_attempt["id"]),
+        )
+        if runner_status == "timed_out"
+        else 0
+    )
+    timeout_decision = (
+        _runner_timeout_recovery_decision(
+            current_store,
+            ai_task=ai_task,
+            item=item,
+            attempt=updated_attempt,
+            max_iterations=max_iterations,
+            timed_out_attempt_count=timed_out_attempt_count,
+            timeout_seconds=timeout_seconds,
+            observed_at=observed_at,
+        )
+        if runner_status == "timed_out" and timed_out_attempt_count >= max_iterations
+        else None
+    )
+    next_status = "waiting_human" if timeout_decision is not None else "rework_required"
     item = {
         **item,
         "lease_owner": None,
         "lease_expires_at": None,
-        "status": "rework_required",
+        "resume_state": "ready" if timeout_decision is not None else None,
+        "suspended_attempt_id": None,
+        "suspended_decision_request_id": (
+            timeout_decision["id"] if timeout_decision is not None else None
+        ),
+        "suspended_at": now if timeout_decision is not None else None,
+        "status": next_status,
         "version": int(item.get("version") or 1) + 1,
     }
     event_key = (
@@ -494,6 +658,9 @@ def project_failed_coding_runner_result(
         "error_code": error_code,
         "runner_status": runner_status,
         "runner_task_id": runner_task.get("id"),
+        "timeout_recovery_decision_id": (
+            timeout_decision["id"] if timeout_decision is not None else None
+        ),
     }
     event = {
         "id": current_store.new_id("rd_collaboration_event"),
@@ -520,10 +687,11 @@ def project_failed_coding_runner_result(
         persisted = save_bundle(
             work_item_id=item["id"],
             expected_statuses=["running"],
-            next_status="rework_required",
+            next_status=next_status,
             attempt=updated_attempt,
             expected_version=int(item["version"]) - 1,
             event=event,
+            decision_request=timeout_decision,
             task=updated_task,
             audit_events=[audit_event],
         )
@@ -533,6 +701,10 @@ def project_failed_coding_runner_result(
         _records(current_store, "rd_work_items")[item["id"]] = item
         _records(current_store, "rd_work_item_attempts")[updated_attempt["id"]] = updated_attempt
         _records(current_store, "rd_collaboration_events")[event["id"]] = event
+        if timeout_decision is not None:
+            _records(current_store, "decision_requests")[timeout_decision["id"]] = dict(
+                persisted["decision_request"] or timeout_decision
+            )
         _records(current_store, "ai_tasks")[updated_task["id"]] = updated_task
         return True
 
@@ -546,6 +718,8 @@ def project_failed_coding_runner_result(
         payload=event_payload,
     )
     _records(current_store, "rd_collaboration_events")[persisted_event["id"]] = persisted_event
+    if timeout_decision is not None:
+        _records(current_store, "decision_requests")[timeout_decision["id"]] = timeout_decision
     _records(current_store, "ai_tasks")[updated_task["id"]] = updated_task
     save_task_state_records(current_store, task=updated_task, audit_events=[audit_event])
     return True

@@ -56,6 +56,7 @@ def _seed_dispatchable_work_item(
     *,
     prefix: str,
     autonomy_mode: str = "single_pass",
+    max_iterations: int = 3,
     git_config: dict[str, object] | None = None,
     quality_gate_policy_id: str | None = None,
     seat_capacity: int = 1,
@@ -93,7 +94,7 @@ def _seed_dispatchable_work_item(
         "autonomy_config": {
             "cost_budget": 5.0,
             "max_duration_seconds": 600,
-            "max_iterations": 3,
+            "max_iterations": max_iterations,
             "mode": autonomy_mode,
             "timeout_seconds": 60,
             "token_budget": 10_000,
@@ -3190,6 +3191,44 @@ def test_postgres_failed_coding_runner_atomically_reopens_work_item(
         work_item_id=ids["work_item_id"],
     )
     assert retry["attempt"]["attempt_no"] == 2
+
+
+def test_postgres_timed_out_coding_runner_pauses_at_auto_recovery_limit(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    ids = _seed_dispatchable_work_item(
+        repository,
+        prefix="work-item-runner-timeout-limit",
+        max_iterations=1,
+    )
+    dispatched = dispatch_ai_task_for_work_item(
+        PostgresRuntimeStore(repository),
+        collaboration_run_id=ids["run_id"],
+        work_item_id=ids["work_item_id"],
+    )
+    coding_runner = repository.list_ai_executor_tasks(ai_task_id=dispatched["task"]["id"])[0]
+    coding_runner.update(
+        {
+            "error_code": "AI_EXECUTOR_TASK_TIMEOUT",
+            "error_message": "Executor timed out after 60s",
+            "finished_at": "2026-07-24T03:00:00+00:00",
+            "status": "timed_out",
+        }
+    )
+    repository.save_ai_executor_task_record(coding_runner)
+
+    _sync_runner_completion_to_ai_task(
+        PostgresRuntimeStore(repository),
+        task=coding_runner,
+        runner_id=coding_runner["runner_id"],
+    )
+
+    work_item = repository.get_rd_work_item(ids["work_item_id"])
+    assert work_item["status"] == "waiting_human"
+    assert work_item["resume_state"] == "ready"
+    decision = repository.get_decision_request(work_item["suspended_decision_request_id"])
+    assert decision["decision_type"] == "runner_timeout_recovery"
+    assert decision["recommendation_json"]["max_iterations"] == 1
 
 
 def test_postgres_failed_coding_runner_reconciles_task_only_failure(

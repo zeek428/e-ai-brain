@@ -2010,6 +2010,7 @@ class RdCollaborationWorkWriteMixin:
         attempt: dict[str, Any],
         expected_version: int | None = None,
         event: dict[str, Any] | None = None,
+        decision_request: dict[str, Any] | None = None,
         task: dict[str, Any] | None = None,
         audit_events: list[dict[str, Any]] | None = None,
         failure_injection: Callable[[str], None] | None = None,
@@ -2023,6 +2024,7 @@ class RdCollaborationWorkWriteMixin:
                 attempt=attempt,
                 expected_version=expected_version,
                 event=event,
+                decision_request=decision_request,
                 task=task,
                 audit_events=audit_events or [],
                 failure_injection=failure_injection,
@@ -2039,6 +2041,7 @@ class RdCollaborationWorkWriteMixin:
         attempt: dict[str, Any],
         expected_version: int | None = None,
         event: dict[str, Any] | None = None,
+        decision_request: dict[str, Any] | None = None,
         task: dict[str, Any] | None = None,
         audit_events: list[dict[str, Any]] | None = None,
         failure_injection: Callable[[str], None] | None = None,
@@ -2081,6 +2084,11 @@ class RdCollaborationWorkWriteMixin:
                         work_item_id=work_item_id,
                         attempt_id=attempt.get("id"),
                     )
+                if decision_request is not None and next_status != "waiting_human":
+                    raise self._idempotency_conflict(
+                        "a decision request requires waiting_human state",
+                        work_item_id=work_item_id,
+                    )
                 if task is not None:
                     task_repository = getattr(self, "_task_read_repository", None)
                     upsert_tasks = getattr(task_repository, "upsert_ai_tasks", None)
@@ -2100,17 +2108,32 @@ class RdCollaborationWorkWriteMixin:
                 persisted_attempt = self._insert_attempt(cursor, attempt)
                 if failure_injection is not None:
                     failure_injection("after_attempt")
+                persisted_decision = (
+                    self._insert_decision_request(cursor, decision_request)
+                    if decision_request is not None
+                    else None
+                )
                 cursor.execute(
                     """
                     UPDATE rd_work_items
                     SET status = %s,
+                        resume_state = CASE WHEN %s THEN 'ready' ELSE NULL END,
+                        suspended_attempt_id = NULL,
+                        suspended_decision_request_id = %s,
+                        suspended_at = CASE WHEN %s THEN now() ELSE NULL END,
                         lease_owner = CASE
-                            WHEN %s IN ('rework_required', 'completed', 'failed', 'cancelled')
+                            WHEN %s IN (
+                                'rework_required', 'waiting_human', 'completed',
+                                'failed', 'cancelled'
+                            )
                                 THEN NULL
                             ELSE lease_owner
                         END,
                         lease_expires_at = CASE
-                            WHEN %s IN ('rework_required', 'completed', 'failed', 'cancelled')
+                            WHEN %s IN (
+                                'rework_required', 'waiting_human', 'completed',
+                                'failed', 'cancelled'
+                            )
                                 THEN NULL
                             ELSE lease_expires_at
                         END,
@@ -2121,6 +2144,9 @@ class RdCollaborationWorkWriteMixin:
                     """,
                     (
                         next_status,
+                        persisted_decision is not None,
+                        persisted_decision["id"] if persisted_decision is not None else None,
+                        persisted_decision is not None,
                         next_status,
                         next_status,
                         work_item_id,
@@ -2159,6 +2185,7 @@ class RdCollaborationWorkWriteMixin:
                 return {
                     "work_item": persisted_work_item,
                     "attempt": persisted_attempt,
+                    "decision_request": persisted_decision,
                     "event": persisted_event,
                     "run": persisted_run,
                     "delivery_phase_event": persisted_phase_event,
@@ -2344,6 +2371,132 @@ class RdCollaborationWorkWriteMixin:
             )
         )
 
+    def resume_cancelled_work_item_bundle(
+        self,
+        *,
+        work_item_id: str,
+        expected_version: int,
+        event: dict[str, Any],
+        audit_event: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Return an explicitly recovered cancelled item to durable rework.
+
+        The previous AI task, Runner task and attempt remain terminal evidence.
+        This method does not create a new attempt; the scheduler owns that
+        follow-up transition after the item is safely dispatchable again.
+        """
+        return self._in_transaction(
+            lambda cursor: self._resume_cancelled_work_item_bundle_cursor(
+                cursor,
+                work_item_id=work_item_id,
+                expected_version=expected_version,
+                event=event,
+                audit_event=audit_event,
+            )
+        )
+
+    def _resume_cancelled_work_item_bundle_cursor(
+        self,
+        cursor: Any,
+        *,
+        work_item_id: str,
+        expected_version: int,
+        event: dict[str, Any],
+        audit_event: dict[str, Any],
+    ) -> dict[str, Any]:
+        with nullcontext():
+            with nullcontext(cursor) as cursor:
+                # Keep the same aggregate lock order used by dispatch and
+                # cancellation: run first, then its work item.
+                cursor.execute(
+                    "SELECT collaboration_run_id FROM rd_work_items WHERE id = %s",
+                    (work_item_id,),
+                )
+                identity = cursor.fetchone()
+                if identity is None:
+                    raise RdCollaborationRepositoryError(
+                        "RD_WORK_ITEM_STATE_INVALID", "work item does not exist"
+                    )
+                cursor.execute(
+                    "SELECT * FROM rd_collaboration_runs WHERE id = %s FOR UPDATE",
+                    (identity[0],),
+                )
+                run = _row_dict(cursor, cursor.fetchone())
+                cursor.execute(
+                    "SELECT * FROM rd_work_items WHERE id = %s FOR UPDATE",
+                    (work_item_id,),
+                )
+                work_item = _row_dict(cursor, cursor.fetchone())
+                if (
+                    run is None
+                    or run.get("status") not in {"running", "integrating", "verifying"}
+                    or work_item is None
+                    or work_item.get("status") != "cancelled"
+                ):
+                    raise RdCollaborationRepositoryError(
+                        "RD_WORK_ITEM_STATE_INVALID",
+                        "cancelled work item cannot be resumed from its current state",
+                    )
+                if int(work_item["version"]) != int(expected_version):
+                    raise RdCollaborationVersionConflictError(int(work_item["version"]))
+
+                # Cancellation must already have fenced every active delivery
+                # write before a new attempt becomes eligible for dispatch.
+                cursor.execute(
+                    """
+                    SELECT 1 FROM ai_tasks
+                    WHERE work_item_id = %s
+                      AND status NOT IN ('completed', 'failed', 'cancelled')
+                    LIMIT 1
+                    FOR UPDATE
+                    """,
+                    (work_item_id,),
+                )
+                if cursor.fetchone() is not None:
+                    raise RdCollaborationRepositoryError(
+                        "RD_WORK_ITEM_STATE_INVALID",
+                        "cancelled work item still has active AI delivery state",
+                    )
+                cursor.execute(
+                    """
+                    SELECT 1
+                    FROM ai_executor_tasks runner_task
+                    JOIN ai_tasks task ON task.id = runner_task.ai_task_id
+                    WHERE task.work_item_id = %s
+                      AND runner_task.status IN ('queued', 'claimed', 'running')
+                    LIMIT 1
+                    FOR UPDATE OF runner_task
+                    """,
+                    (work_item_id,),
+                )
+                if cursor.fetchone() is not None:
+                    raise RdCollaborationRepositoryError(
+                        "RD_WORK_ITEM_STATE_INVALID",
+                        "cancelled work item still has active Runner state",
+                    )
+                cursor.execute(
+                    """
+                    UPDATE rd_work_items
+                    SET status = 'rework_required', ai_task_id = NULL,
+                        lease_owner = NULL, lease_expires_at = NULL,
+                        next_dispatch_at = NULL, dispatch_failure_count = 0,
+                        last_dispatch_error_code = NULL,
+                        resume_state = NULL, suspended_attempt_id = NULL,
+                        suspended_decision_request_id = NULL, suspended_at = NULL,
+                        version = version + 1, updated_at = now()
+                    WHERE id = %s AND version = %s AND status = 'cancelled'
+                    RETURNING *
+                    """,
+                    (work_item_id, expected_version),
+                )
+                persisted_work_item = _row_dict(cursor, cursor.fetchone())
+                if persisted_work_item is None:
+                    raise RdCollaborationVersionConflictError(int(work_item["version"]))
+                transaction = RdCollaborationTransaction(self, cursor)
+                persisted_event = transaction.save_collaboration_event(event)
+                transaction.save_audit_event(audit_event)
+                return {"work_item": persisted_work_item, "event": persisted_event}
+
     def _cancel_work_item_bundle_cursor(
         self,
         cursor: Any,
@@ -2428,6 +2581,7 @@ class RdCollaborationWorkWriteMixin:
                     persisted_decision = self._insert_decision_request(cursor, decision_request)
                     self._cancel_linked_delivery_cursor(
                         cursor,
+                        cancellation_version=int(work_item["version"]),
                         run_id=str(run["id"]),
                         work_item_id=work_item_id,
                         reason="work_item_cancellation_pending_decision",
@@ -2492,6 +2646,7 @@ class RdCollaborationWorkWriteMixin:
                     persisted_work_item = _row_dict(cursor, cursor.fetchone())
                     self._cancel_linked_delivery_cursor(
                         cursor,
+                        cancellation_version=int(work_item["version"]),
                         run_id=str(run["id"]),
                         work_item_id=work_item_id,
                         reason="work_item_cancelled",
@@ -2510,6 +2665,7 @@ class RdCollaborationWorkWriteMixin:
         self,
         cursor: Any,
         *,
+        cancellation_version: int,
         run_id: str,
         work_item_id: str,
         reason: str,
@@ -2554,11 +2710,24 @@ class RdCollaborationWorkWriteMixin:
             cursor.execute(
                 """
                 UPDATE ai_executor_tasks
-                SET status = 'cancelled', error_code = 'RD_WORK_ITEM_CANCELLED',
-                    error_message = %s, finished_at = COALESCE(finished_at, now()),
+                SET status = CASE
+                      WHEN status = 'queued' THEN 'cancelled'
+                      ELSE 'cancel_requested'
+                    END,
+                    error_code = CASE
+                      WHEN status = 'queued' THEN 'RD_WORK_ITEM_CANCELLED'
+                      ELSE 'RD_WORK_ITEM_CANCEL_REQUESTED'
+                    END,
+                    error_message = %s,
+                    finished_at = CASE
+                      WHEN status = 'queued' THEN COALESCE(finished_at, now())
+                      ELSE NULL
+                    END,
                     updated_at = now()
                 WHERE ai_task_id = ANY(%s)
-                  AND status NOT IN ('succeeded', 'failed', 'cancelled', 'blocked')
+                  AND status NOT IN (
+                    'succeeded', 'failed', 'cancelled', 'blocked', 'timed_out', 'dead_letter'
+                  )
                 """,
                 (reason, task_ids),
             )
@@ -2585,11 +2754,11 @@ class RdCollaborationWorkWriteMixin:
         transaction = RdCollaborationTransaction(self, cursor)
         transaction.save_outbox_event(
             {
-                "id": f"outbox:work-item:{work_item_id}:cancel",
+                "id": f"outbox:work-item:{work_item_id}:cancel:v{cancellation_version}",
                 "aggregate_type": "rd_work_item",
                 "aggregate_id": work_item_id,
                 "event_type": "rd.work_item.cancel_runner",
-                "idempotency_key": f"work-item:{work_item_id}:cancel",
+                "idempotency_key": f"work-item:{work_item_id}:cancel:v{cancellation_version}",
                 "payload_json": {
                     "reason": reason,
                     "collaboration_run_id": run_id,
@@ -3212,6 +3381,7 @@ class RdCollaborationWorkWriteMixin:
                     if work_item is not None and target_status == "cancelled":
                         self._cancel_linked_delivery_cursor(
                             cursor,
+                            cancellation_version=int(work_item["version"]),
                             run_id=str(bound_run["id"]),
                             work_item_id=str(work_item["id"]),
                             reason="decision_approved_work_item_cancellation",

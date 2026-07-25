@@ -2748,6 +2748,119 @@ def test_high_risk_cancel_continue_fences_old_attempt_and_requires_new_attempt(
     assert reclaimed["lease_owner"] == "worker-new"
 
 
+def test_cancelled_work_item_recovery_preserves_old_attempt_for_new_rework(
+    repository: PostgresSnapshotRepository,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="resume-cancelled")
+    work_item_id = "resume-cancelled-work"
+    attempt_id = "resume-cancelled-attempt-1"
+    repository.save_rd_work_item_record(
+        {
+            "id": work_item_id,
+            "collaboration_run_id": seeded["run"]["id"],
+            "plan_version": 1,
+            "work_item_type": "implementation",
+            "title": "recover timed out execution",
+            "objective": "recover timed out execution",
+            "status": "ready",
+            "risk_level": "medium",
+            "idempotency_key": work_item_id,
+        }
+    )
+    claimed = repository.claim_ready_work_item(
+        work_item_id,
+        lease_owner="worker-old",
+        attempt={
+            "id": attempt_id,
+            "work_item_id": work_item_id,
+            "attempt_no": 1,
+            "idempotency_key": attempt_id,
+            "status": "running",
+        },
+    )
+    cancelled = repository.cancel_work_item_bundle(
+        work_item_id=work_item_id,
+        expected_version=int(claimed["version"]),
+        high_risk=False,
+    )
+
+    resumed = repository.resume_cancelled_work_item_bundle(
+        work_item_id=work_item_id,
+        expected_version=int(cancelled["work_item"]["version"]),
+        event={
+            "id": "resume-cancelled-event",
+            "collaboration_run_id": seeded["run"]["id"],
+            "event_type": "work_item.rework_resumed",
+            "event_key": "resume-cancelled:work:v2",
+            "subject_type": "rd_work_item",
+            "subject_id": work_item_id,
+            "payload_json": {"reason": "timeout governance repaired"},
+        },
+        audit_event={
+            "id": "resume-cancelled-audit",
+            "event_type": "rd_work_item.rework_resumed",
+            "actor_id": "user_admin",
+            "subject_type": "rd_work_item",
+            "subject_id": work_item_id,
+            "payload": {"reason": "timeout governance repaired"},
+        },
+    )
+
+    assert resumed["work_item"]["status"] == "rework_required"
+    assert resumed["work_item"]["lease_owner"] is None
+    assert resumed["event"]["event_type"] == "work_item.rework_resumed"
+    assert repository.get_rd_work_item_attempt(attempt_id)["status"] == "cancelled"
+    assert repository.list_rd_work_item_attempts(work_item_id) == [
+        repository.get_rd_work_item_attempt(attempt_id)
+    ]
+
+    with repository._connect(autocommit=False) as connection:
+        reclaimed_version = connection.execute(
+            """
+            UPDATE rd_work_items
+            SET status = 'running', version = version + 1
+            WHERE id = %s
+            RETURNING version
+            """,
+            (work_item_id,),
+        ).fetchone()[0]
+        connection.execute(
+            """
+            INSERT INTO rd_work_item_attempts (
+              id, work_item_id, attempt_no, idempotency_key, status
+            ) VALUES (%s, %s, 2, %s, 'running')
+            """,
+            (
+                "resume-cancelled-attempt-2",
+                work_item_id,
+                "resume-cancelled-attempt-2",
+            ),
+        )
+    cancelled_again = repository.cancel_work_item_bundle(
+        work_item_id=work_item_id,
+        expected_version=int(reclaimed_version),
+        high_risk=False,
+    )
+
+    assert cancelled_again["work_item"]["status"] == "cancelled"
+    with repository._connect() as connection:
+        cancellation_outbox_ids = [
+            row[0]
+            for row in connection.execute(
+                """
+                SELECT id
+                FROM execution_outbox_events
+                WHERE aggregate_id = %s
+                  AND event_type = 'rd.work_item.cancel_runner'
+                ORDER BY id
+                """,
+                (work_item_id,),
+            ).fetchall()
+        ]
+    assert len(cancellation_outbox_ids) == 2
+    assert cancellation_outbox_ids[0] != cancellation_outbox_ids[1]
+
+
 def test_high_risk_cancel_rejects_late_task_and_review_persistence_writes(
     repository: PostgresSnapshotRepository,
 ) -> None:
@@ -2909,6 +3022,26 @@ def test_low_risk_cancellation_fences_linked_task_review_and_external_work(
         )
         connection.execute(
             """
+            INSERT INTO ai_executor_tasks (
+              id, executor_type, instruction, workspace_root, status, ai_task_id
+            ) VALUES (
+              'cancel-linked-timed-out-runner', 'openclaw', 'timed out work',
+              '/tmp/cancel-linked', 'timed_out', 'cancel-linked-task'
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO ai_executor_tasks (
+              id, executor_type, instruction, workspace_root, status, ai_task_id
+            ) VALUES (
+              'cancel-linked-running-runner', 'openclaw', 'active work',
+              '/tmp/cancel-linked', 'running', 'cancel-linked-task'
+            )
+            """
+        )
+        connection.execute(
+            """
             INSERT INTO execution_outbox_events (
               id, aggregate_type, aggregate_id, event_type, idempotency_key, status
             ) VALUES (
@@ -2932,6 +3065,12 @@ def test_low_risk_cancellation_fences_linked_task_review_and_external_work(
         review_status = connection.execute(
             "SELECT status FROM human_reviews WHERE id = 'cancel-linked-review'"
         ).fetchone()[0]
+        timed_out_runner_status = connection.execute(
+            "SELECT status FROM ai_executor_tasks WHERE id = 'cancel-linked-timed-out-runner'"
+        ).fetchone()[0]
+        running_runner_status = connection.execute(
+            "SELECT status FROM ai_executor_tasks WHERE id = 'cancel-linked-running-runner'"
+        ).fetchone()[0]
         outbox_types = {
             row[0]
             for row in connection.execute(
@@ -2942,6 +3081,8 @@ def test_low_risk_cancellation_fences_linked_task_review_and_external_work(
         }
     assert task_status == "cancelled"
     assert review_status == "cancelled"
+    assert timed_out_runner_status == "timed_out"
+    assert running_runner_status == "cancel_requested"
     assert {"rd.work_item.cancel_runner", "rd.work_item.reconcile_cancellation"}.issubset(
         outbox_types
     )

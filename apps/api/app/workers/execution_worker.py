@@ -8,6 +8,7 @@ from typing import Any
 
 from app.core.config import Settings, get_settings
 from app.core.persistence import PostgresRuntimeStore, PostgresSnapshotRepository
+from app.services.ai_executor_runner_timeout import timeout_ai_executor_tasks_response
 from app.services.deployment_sync_worker import sync_due_jenkins_deployments
 from app.services.execution_worker_observability import record_execution_worker_heartbeat
 from app.services.external_event_inbox import process_external_event_inbox_events
@@ -24,6 +25,15 @@ from app.services.rd_collaboration_plan_generation import plan_pending_collabora
 logger = logging.getLogger(__name__)
 
 
+def _execution_worker_timeout_actor(worker_id: str) -> dict[str, Any]:
+    """Give the durable Worker only the permission needed for timeout recovery."""
+    return {
+        "id": worker_id,
+        "permissions": ["system.admin", "system.plugins.manage"],
+        "roles": [],
+    }
+
+
 def run_execution_worker_iteration(
     current_store: Any,
     *,
@@ -38,6 +48,11 @@ def run_execution_worker_iteration(
     external_event_count = process_external_event_inbox_events(
         current_store,
         worker_id=worker_id,
+    )
+    ai_executor_timeout = timeout_ai_executor_tasks_response(
+        current_store=current_store,
+        payload=None,
+        user=_execution_worker_timeout_actor(worker_id),
     )
     rd_collaboration_graph_event_count = process_rd_collaboration_graph_events(
         current_store,
@@ -63,6 +78,9 @@ def run_execution_worker_iteration(
     )
     counts = {
         "external_event_count": external_event_count,
+        "ai_executor_timeout_count": len(ai_executor_timeout["timed_out_task_ids"]),
+        "ai_executor_lease_requeue_count": len(ai_executor_timeout["requeued_task_ids"]),
+        "ai_executor_dead_letter_count": len(ai_executor_timeout["dead_letter_task_ids"]),
         "jenkins_sync_count": jenkins_sync_count,
         "outbox_count": outbox_count,
         "rd_collaboration_auto_dispatch_count": len(

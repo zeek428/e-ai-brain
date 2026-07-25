@@ -23,6 +23,26 @@ def test_worker_iteration_records_heartbeat(monkeypatch) -> None:
     assert execution_operations_overview(store)["workers"][0]["worker_id"] == "worker_001"
 
 
+def test_worker_iteration_times_out_overdue_runner_tasks() -> None:
+    store = MemoryStore()
+    store.ai_executor_tasks["executor_task_overdue"] = {
+        "id": "executor_task_overdue",
+        "claimed_at": "2020-01-01T00:00:00+00:00",
+        "created_at": "2020-01-01T00:00:00+00:00",
+        "logs": [],
+        "request_config": {"reliability": {"lease_timeout_seconds": 999999999}},
+        "runner_id": "runner_001",
+        "status": "running",
+        "timeout_seconds": 1,
+        "updated_at": "2020-01-01T00:00:00+00:00",
+    }
+
+    counts = run_execution_worker_iteration(store, worker_id="worker_001")
+
+    assert counts["ai_executor_timeout_count"] == 1
+    assert store.ai_executor_tasks["executor_task_overdue"]["status"] == "timed_out"
+
+
 def test_worker_overview_includes_operational_backlog_and_reconciliation() -> None:
     store = MemoryStore()
     store.execution_outbox_events = {

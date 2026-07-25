@@ -33,6 +33,7 @@ from app.services.rd_work_item_scheduler import (
     cancel_work_item,
     claim_work_item,
     complete_attempt,
+    resume_cancelled_work_item,
     review_work_item,
 )
 
@@ -85,6 +86,12 @@ class ReviewRequest(_StrictModel):
 
 
 class CancelRequest(_StrictModel):
+    reason: str = Field(min_length=1)
+    version: int = Field(gt=0)
+    idempotency_key: str = Field(min_length=1)
+
+
+class ResumeCancelledWorkItemRequest(_StrictModel):
     reason: str = Field(min_length=1)
     version: int = Field(gt=0)
     idempotency_key: str = Field(min_length=1)
@@ -467,6 +474,27 @@ def cancel(
     )
     if result.get("decision_request"):
         response.status_code = 202
+    return envelope(result, get_trace_id(request))
+
+
+@router.post("/api/delivery/rd-work-items/{work_item_id}/resume")
+def resume_cancelled(
+    work_item_id: str,
+    request: Request,
+    payload: ResumeCancelledWorkItemRequest,
+    user: dict[str, Any] = CurrentUser,
+) -> dict[str, Any]:
+    """Explicitly return a fenced cancelled item to the rework scheduler."""
+    _require(user, "delivery.rd_collaboration.plan")
+    require_work_item_scope(store(request), user, work_item_id)
+    result = resume_cancelled_work_item(
+        store(request),
+        work_item_id=work_item_id,
+        reason=payload.reason,
+        actor=user,
+        version=payload.version,
+        idempotency_key=payload.idempotency_key,
+    )
     return envelope(result, get_trace_id(request))
 
 

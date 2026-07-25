@@ -241,6 +241,20 @@ async function fetchJson(url, init) {
   return payload;
 }
 
+function solveLoginMathChallenge(question) {
+  const match = /([0-9]+)\s*\+\s*([0-9]+)/.exec(String(question || ''));
+  if (!match) {
+    throw new Error('Login challenge question is not a supported addition expression.');
+  }
+  return String(Number(match[1]) + Number(match[2]));
+}
+
+async function getLoginChallenge(options) {
+  return fetchJson(`${normalizeBaseUrl(options.apiBaseUrl)}/api/auth/login-challenge`, {
+    method: 'POST',
+  });
+}
+
 async function login(options) {
   if (options.bearerToken) {
     const user = await fetchJson(`${normalizeBaseUrl(options.apiBaseUrl)}/api/auth/me`, {
@@ -251,8 +265,17 @@ async function login(options) {
   if (!options.username || !options.password) {
     throw new Error('Provide READINESS_BEARER_TOKEN or READINESS_USERNAME/READINESS_PASSWORD.');
   }
+  const providers = await fetchJson(`${normalizeBaseUrl(options.apiBaseUrl)}/api/auth/providers`);
+  const challenge = providers?.data?.local?.challenge_required
+    ? await getLoginChallenge(options)
+    : null;
   const payload = await fetchJson(`${normalizeBaseUrl(options.apiBaseUrl)}/api/auth/login`, {
-    body: JSON.stringify({ username: options.username, password: options.password }),
+    body: JSON.stringify({
+      challenge_answer: challenge ? solveLoginMathChallenge(challenge?.data?.question) : undefined,
+      challenge_id: challenge?.data?.challenge_id,
+      password: options.password,
+      username: options.username,
+    }),
     headers: { 'Content-Type': 'application/json' },
     method: 'POST',
   });

@@ -1,10 +1,12 @@
-import { Card, Empty, Space, Tag, Typography } from 'antd';
+import { Button, Card, Empty, Popconfirm, Space, Tag, Typography } from 'antd';
 
 import type { RdWorkItem, RdWorkItemDependency } from '../../services/rdCollaborationClient';
 
 type Props = {
   dependencies: RdWorkItemDependency[];
   items: RdWorkItem[];
+  onResumeCancelled?: (item: RdWorkItem) => Promise<void>;
+  resumingWorkItemId?: string;
 };
 
 const statusColors: Record<string, string> = {
@@ -18,7 +20,12 @@ const statusColors: Record<string, string> = {
   waiting_review: 'purple',
 };
 
-export function WorkItemDag({ dependencies, items }: Props) {
+export function WorkItemDag({
+  dependencies,
+  items,
+  onResumeCancelled,
+  resumingWorkItemId,
+}: Props) {
   const titles = new Map(items.map((item) => [item.id, item.title]));
   const predecessorText = new Map<string, string[]>();
   for (const dependency of dependencies) {
@@ -44,6 +51,19 @@ export function WorkItemDag({ dependencies, items }: Props) {
             <Typography.Text type="secondary">
               前置工作项：{(predecessorText.get(item.id) ?? []).join('、') || '无，可并行推进'}
             </Typography.Text>
+            {item.status === 'cancelled' && onResumeCancelled ? (
+              <Popconfirm
+                cancelText="暂不恢复"
+                description="旧任务、旧 attempt 与隔离工作区产物会保留。确认后仅创建新的返工机会，由 Worker 重新派发。"
+                okText="确认恢复"
+                onConfirm={() => onResumeCancelled(item)}
+                title="确认已修复根因并恢复该工作项？"
+              >
+                <Button loading={resumingWorkItemId === item.id} size="small" type="primary">
+                  从取消恢复
+                </Button>
+              </Popconfirm>
+            ) : null}
           </Space>
         </Card>
       ))}
