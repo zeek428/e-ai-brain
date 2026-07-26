@@ -83,11 +83,11 @@ flowchart LR
 | 工作项 | 负责人 | 依赖 | 风险 | 完成定义 |
 | --- | --- | --- | --- | --- |
 | `implement_e2e_artifact` | AI 开发员工 | 无 | low | 在隔离 worktree 创建测试产物并产生本地提交；质量门禁通过；独立评审批准。 |
-| `verify_e2e_artifact` | AI 测试员工 | `implement_e2e_artifact` | low | 执行冻结策略中的测试命令，提交命令、摘要和证据；独立评审批准。 |
-| `integrate_e2e_branch` | 集成岗位 | `verify_e2e_artifact` | high | 仅推送测试分支，保存 local/remote SHA、Outbox、远程对账及分支范围证据。 |
-| `release_evidence_check` | 独立评审人或受控验证岗位 | `integrate_e2e_branch` | medium | 验证测试、门禁和可信交付记录齐全；推进到待发布，不请求部署。 |
+| `verify_e2e_artifact` | AI 测试员工 | `implement_e2e_artifact` | low | 使用标准 `automated_testing` 类型执行冻结测试命令，提交测试证据并形成集成交付分支；质量门禁和独立评审通过后保存 local/remote SHA、Outbox 与远程对账证据。 |
 
-低风险 AI 工作项由 Worker 自动派发；高风险集成工作项先创建人工派发决策。任何人工确认通过后，Worker 通过持久化状态和 outbox/event 处理扫描可执行工作项，并非靠页面轮询推进。
+低风险 AI 工作项由 Worker 自动派发；高风险测试变体先创建人工派发决策。任何人工确认通过后，Worker 通过持久化状态和 outbox/event 处理扫描可执行工作项，并非靠页面轮询推进。Git push 由可信交付 Outbox 创建冻结 Runner 任务，不由用户直接提交远程 SHA。
+
+两个工作项完成后，平台交付证据校验器检查实现与自动化测试两类可信 Git 交付、门禁和评审证据，随后推进到待发布；它不是可由用户领取的第三个工作项。
 
 ### 4.2 主链路测试用例
 
@@ -100,7 +100,7 @@ flowchart LR
 | E2E-05 | Runner 真实开发 | E2E-04 通过 | Runner 执行最小任务 | 存在隔离 worktree、执行日志、本地 commit、产物内容和 trace 关联 | P0 |
 | E2E-06 | 质量门禁和独立评审 | 开发执行完成 | 等待门禁，评审人批准 | 门禁 passed 后工作项 `reviewing`；批准后 `completed`，产生反馈归因 | P0 |
 | E2E-07 | 依赖自动解锁 | E2E-06 通过 | 等待 Worker 调度测试工作项 | 测试工作项由 blocked/ready 自动进入 running；不需手工推进 | P0 |
-| E2E-08 | 真实远程交付 | 测试证据获批 | 批准集成派发，等待 Outbox 和对账 | 远程仅新增测试分支；local/remote SHA 一致；存在可信交付记录 | P0 |
+| E2E-08 | 真实远程交付 | 实现与自动化测试证据获批 | 等待两类交付 Outbox、Runner push 和对账 | 远程仅新增原生隔离分支；local/remote SHA 一致；实现与自动化测试可信交付记录齐全 | P0 |
 | E2E-09 | 待发布收口 | 测试与 Git 证据齐全 | 执行交付证据校验 | 版本 `ready_for_release`；运行 `completed` 且原因为 `ready_for_release`；部署记录为零 | P0 |
 | E2E-10 | 页面操作验收 | E2E-02 至 E2E-09 有记录 | 浏览器访问版本总览、任务详情 | 可查看 DAG、执行状态、门禁、Git 证据、阻塞项；待确认项提供可操作确认入口 | P0 |
 
@@ -108,7 +108,7 @@ flowchart LR
 
 | ID | 场景 | 操作 | 预期结果 | 级别 |
 | --- | --- | --- | --- | --- |
-| E2E-11 | 高风险派发门禁 | 创建 high 风险集成工作项 | 运行/工作项暂停在 `waiting_human`，批准后才创建 Runner 任务 | P0 |
+| E2E-11 | 高风险派发门禁 | 创建 high 风险自动化测试变体 | 运行/工作项暂停在 `waiting_human`，批准后才创建 Runner 任务 | P0 |
 | E2E-12 | 质量门禁失败返工 | 返回失败质量结果 | 保留失败证据；进入返工；新 attempt 与旧 attempt 严格分离 | P0 |
 | E2E-13 | 取消和迟到结果围栏 | 取消运行中的工作项，再提交迟到完成结果 | `cancel_requested → cancelled`；迟到结果仅审计，不得恢复工作项或创建门禁 | P0 |
 | E2E-14 | Runner 超时恢复 | 触发冻结超时预算 | 生成 `runner_timeout_recovery` 决策；保留 worktree；人工恢复后新建 attempt | P0 |
