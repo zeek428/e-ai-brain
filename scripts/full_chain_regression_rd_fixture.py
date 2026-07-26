@@ -55,6 +55,38 @@ def _safe_summary(value: Any) -> Any:
     return value
 
 
+def safe_report_value(value: Any) -> Any:
+    """Return a recursively redacted value suitable for regression reports."""
+    return _safe_summary(value)
+
+
+def frozen_ai_and_human_role_bindings(
+    *,
+    ai_employee_id: str,
+    executor_profile_id: str,
+    role_code: str,
+    reviewer_user_id: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Build the immutable AI owner and independent human reviewer bindings."""
+    assert ai_employee_id and executor_profile_id and role_code and reviewer_user_id
+    assert ai_employee_id != reviewer_user_id, "AI owner and human reviewer must be distinct"
+    return (
+        {
+            "actor_mode": "ai",
+            "candidate_ai_employee_ids": [ai_employee_id],
+            "primary_executor_profile_id": executor_profile_id,
+            "role_code": role_code,
+            "status": "active",
+        },
+        {
+            "actor_mode": "human",
+            "candidate_human_user_ids": [reviewer_user_id],
+            "role_code": role_code,
+            "status": "active",
+        },
+    )
+
+
 def wait_for_value(
     fetch: Callable[[], Any],
     predicate: Callable[[Any], bool],
