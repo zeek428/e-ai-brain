@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import base64
 import importlib.util
 import json
 import sys
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 
 def _load_module(name: str, relative_path: str):
     script_path = Path(__file__).resolve().parents[3] / relative_path
+    script_directory = str(script_path.parent)
+    if script_directory not in sys.path:
+        sys.path.insert(0, script_directory)
     spec = importlib.util.spec_from_file_location(name, script_path)
     assert spec is not None
     module = importlib.util.module_from_spec(spec)
@@ -236,11 +242,14 @@ def test_rd_collaboration_suite_dispatches_to_its_dedicated_public_api_regressio
 class _SimulatedProtocolClient:
     def __init__(self, *, requires_quality_gate: bool = False) -> None:
         self.requests: list[tuple[str, str, dict | None, dict[str, str] | None]] = []
-        self.runner_token = ""
+        self.runner_tokens: dict[str, str] = {}
+        self.runner_creation_count = 0
         self.runner_completed = False
         self.requires_quality_gate = requires_quality_gate
         self.quality_gate_completed = False
         self.reviewer_approved = False
+        self.reviewing_reads = 0
+        self.verification_public_key = ""
 
     def get(self, path: str, query=None, *, headers=None):
         self.requests.append(("GET", path, query, headers))
@@ -273,16 +282,31 @@ class _SimulatedProtocolClient:
                 ]
             }
         if path == "/api/delivery/rd-collaboration-runs/run-1/work-items":
+            status = (
+                "running"
+                if self.requires_quality_gate and not self.quality_gate_completed
+                else (
+                    "completed"
+                    if self.reviewer_approved
+                    else (
+                        "running"
+                        if self.requires_quality_gate and self.reviewing_reads == 0
+                        else "reviewing"
+                    )
+                )
+            )
+            if (
+                self.requires_quality_gate
+                and self.quality_gate_completed
+                and not self.reviewer_approved
+            ):
+                self.reviewing_reads += 1
             return {
                 "items": [
                     {
                         "ai_task_id": "task-1",
                         "id": "work-item-1",
-                        "status": (
-                            "running"
-                            if self.requires_quality_gate and not self.quality_gate_completed
-                            else ("completed" if self.reviewer_approved else "reviewing")
-                        ),
+                        "status": status,
                     }
                 ]
             }
@@ -291,16 +315,39 @@ class _SimulatedProtocolClient:
     def post(self, path: str, body=None, *, headers=None):
         self.requests.append(("POST", path, body, headers))
         if path == "/api/system/ai-executor-runners":
-            assert {key: value for key, value in body.items() if key != "runner_token"} == {
+            self.runner_creation_count += 1
+            if self.runner_creation_count == 1:
+                assert {key: value for key, value in body.items() if key != "runner_token"} == {
+                    "executor_types": ["codex"],
+                    "name": "Simulated v2 Runner fixture-marker",
+                    "protocol": "runner_polling",
+                    "trust_boundary_id": "simulated-coding-fixture-marker",
+                    "trust_domain": "coding",
+                    "workspace_roots": ["/workspace/regression"],
+                }
+                self.runner_tokens["runner-1"] = str(body["runner_token"])
+                assert self.runner_tokens["runner-1"]
+                return {"id": "runner-1"}
+            assert self.runner_creation_count == 2
+            assert {
+                key: value
+                for key, value in body.items()
+                if key not in {"attestation_public_key", "runner_token"}
+            } == {
+                "attestation_status": "active",
                 "executor_types": ["codex"],
-                "name": "Simulated v2 Runner fixture-marker",
+                "name": "Simulated v2 verification Runner fixture-marker",
                 "protocol": "runner_polling",
-                "trust_domain": "coding",
+                "trust_boundary_id": "simulated-verification-fixture-marker",
+                "trust_domain": "verification",
                 "workspace_roots": ["/workspace/regression"],
             }
-            self.runner_token = str(body["runner_token"])
-            assert self.runner_token
-            return {"id": "runner-1"}
+            self.runner_tokens["verification-runner-1"] = str(body["runner_token"])
+            assert self.runner_tokens["verification-runner-1"]
+            assert self.runner_tokens["verification-runner-1"] != self.runner_tokens["runner-1"]
+            self.verification_public_key = str(body["attestation_public_key"])
+            assert len(base64.b64decode(self.verification_public_key, validate=True)) == 32
+            return {"id": "verification-runner-1"}
         if path == "/api/delivery/rd-ai-employees":
             assert body == {
                 "capability_tags": ["product_detail_design"],
@@ -327,12 +374,19 @@ class _SimulatedProtocolClient:
         if path == "/api/system/ai-executor-tasks/claim":
             runner_id = "verification-runner-1" if self.runner_completed else "runner-1"
             assert body == {"executor_type": "codex", "runner_id": runner_id}
-            assert headers == {"X-Runner-Token": self.runner_token}
+            assert headers == {"X-Runner-Token": self.runner_tokens[runner_id]}
             return {
                 "task": {
                     "ai_task_id": "task-1",
                     "id": "runner-task-2" if self.runner_completed else "runner-task-1",
-                    "input_payload": {"rd_work_item_attempt_id": "attempt-1"},
+                    "input_payload": (
+                        {
+                            "checks": [{"required": True, "type": "unit_test"}],
+                            "rd_work_item_attempt_id": "attempt-1",
+                        }
+                        if self.runner_completed
+                        else {"rd_work_item_attempt_id": "attempt-1"}
+                    ),
                     "status": "claimed",
                     "task_kind": (
                         "quality_gate"
@@ -347,7 +401,7 @@ class _SimulatedProtocolClient:
                 "runner_id": "runner-1",
                 "status": "running",
             }
-            assert headers == {"X-Runner-Token": self.runner_token}
+            assert headers == {"X-Runner-Token": self.runner_tokens["runner-1"]}
             return {"task": {"id": "runner-task-1", "status": "running"}}
         if path == "/api/system/ai-executor-tasks/runner-task-1/complete":
             assert body == {
@@ -356,7 +410,7 @@ class _SimulatedProtocolClient:
                 "runner_id": "runner-1",
                 "status": "succeeded",
             }
-            assert headers == {"X-Runner-Token": self.runner_token}
+            assert headers == {"X-Runner-Token": self.runner_tokens["runner-1"]}
             self.runner_completed = True
             return {"task": {"id": "runner-task-1", "status": "succeeded"}}
         if path == "/api/system/ai-executor-tasks/runner-task-2/logs":
@@ -365,16 +419,33 @@ class _SimulatedProtocolClient:
                 "runner_id": "verification-runner-1",
                 "status": "running",
             }
-            assert headers == {"X-Runner-Token": self.runner_token}
+            assert headers == {"X-Runner-Token": self.runner_tokens["verification-runner-1"]}
             return {"task": {"id": "runner-task-2", "status": "running"}}
         if path == "/api/system/ai-executor-tasks/runner-task-2/complete":
-            assert body == {
-                "logs": [{"level": "info", "message": "deterministic v2 regression completed"}],
-                "result_json": {"summary": "deterministic v2 regression output"},
-                "runner_id": "verification-runner-1",
-                "status": "succeeded",
-            }
-            assert headers == {"X-Runner-Token": self.runner_token}
+            assert body["logs"] == [
+                {"level": "info", "message": "deterministic v2 regression completed"}
+            ]
+            assert body["runner_id"] == "verification-runner-1"
+            assert body["status"] == "succeeded"
+            result_json = body["result_json"]
+            assert result_json["checks"] == [
+                {
+                    "evidence_ref": "simulated://runner-task-2/unit_test",
+                    "status": "passed",
+                    "type": "unit_test",
+                }
+            ]
+            proof = result_json["execution_attestation"]
+            assert proof["payload"] == {"runner_task_id": "runner-task-2"}
+            Ed25519PublicKey.from_public_bytes(
+                base64.b64decode(self.verification_public_key, validate=True)
+            ).verify(
+                base64.b64decode(proof["signature"], validate=True),
+                json.dumps(
+                    proof["payload"], ensure_ascii=True, separators=(",", ":"), sort_keys=True
+                ).encode("utf-8"),
+            )
+            assert headers == {"X-Runner-Token": self.runner_tokens["verification-runner-1"]}
             self.quality_gate_completed = True
             return {"task": {"id": "runner-task-2", "status": "succeeded"}}
         raise AssertionError(f"unexpected POST: {path} {body}")
@@ -388,6 +459,10 @@ class _IndependentReviewerClient:
     def get(self, path: str, query=None, *, headers=None):
         self.requests.append(("GET", path, query, headers))
         assert self.protocol_client.runner_completed
+        assert (
+            not self.protocol_client.requires_quality_gate
+            or self.protocol_client.quality_gate_completed
+        )
         assert path == "/api/reviews/pending"
         assert query == {"ai_task_id": "task-1"}
         return {"items": [{"ai_task_id": "task-1", "id": "review-1", "version": 1}]}
@@ -419,7 +494,7 @@ def simulate_protocol_fixture(*, requires_quality_gate: bool = False):
         run_id="run-1",
         work_item_id="work-item-1",
         reviewer_client=reviewer_client,
-        timeout_seconds=0.1,
+        timeout_seconds=1.0 if requires_quality_gate else 0.1,
     )
     return client, reviewer_client, result
 
@@ -433,6 +508,7 @@ def test_simulated_runner_completes_v2_task_without_git_side_effects() -> None:
     assert result.review_id == "review-1"
     assert "git_delivery" not in result.runner_result
     assert [path for method, path, _body, _headers in client.requests if method == "POST"] == [
+        "/api/system/ai-executor-runners",
         "/api/system/ai-executor-runners",
         "/api/delivery/rd-ai-employees",
         "/api/delivery/rd-executor-profiles",
@@ -457,22 +533,59 @@ def test_simulated_runner_token_is_excluded_from_step_detail_and_json_report() -
         "simulated_runner", result.step_detail
     ).detail
     report_content = json.dumps(result.report, sort_keys=True)
-    token = client.runner_token
+    token = client.runner_tokens["runner-1"]
 
     assert token not in detail
     assert token not in report_content
     assert all(
-        headers == {"X-Runner-Token": token}
+        headers == {"X-Runner-Token": client.runner_tokens["runner-1"]}
         for _method, path, _body, headers in client.requests
         if path.endswith(("/claim", "/logs", "/complete"))
+        and "runner-task-1" in path
     )
 
 
 def test_simulated_runner_completes_quality_gate_before_reviewing_work_item() -> None:
-    _client, _reviewer_client, result = simulate_protocol_fixture(requires_quality_gate=True)
+    client, _reviewer_client, result = simulate_protocol_fixture(requires_quality_gate=True)
 
     assert result.runner_task_ids == ("runner-task-1", "runner-task-2")
     assert result.work_item["status"] == "completed"
+    assert client.reviewing_reads == 2
+
+
+def test_simulated_runner_redacts_tokens_embedded_in_error_and_report_strings() -> None:
+    fixture = _load_module(
+        "full_chain_regression_rd_fixture_redaction_under_test",
+        "scripts/full_chain_regression_rd_fixture.py",
+    )
+    client, _reviewer_client, result = simulate_protocol_fixture()
+    coding_token = client.runner_tokens["runner-1"]
+    verifier_token = client.runner_tokens.get("verification-runner-1", "injected-verifier-token")
+
+    redacted_error = fixture.safe_report_value(
+        {"message": f"Runner authentication failed: {coding_token}"},
+        secret_values=(coding_token, verifier_token),
+    )
+    redacted_result = replace(
+        result,
+        runner_result={"error": f"verification token rejected: {verifier_token}"},
+    )
+    try:
+        fixture.wait_for_value(
+            lambda: {"message": f"Runner authentication failed: {coding_token}"},
+            lambda _value: False,
+            timeout_seconds=0.01,
+            description="redaction timeout",
+            secret_values=(coding_token,),
+        )
+    except AssertionError as exc:
+        timeout_message = str(exc)
+    else:
+        raise AssertionError("Redaction timeout should fail")
+
+    assert coding_token not in redacted_error["message"]
+    assert verifier_token not in json.dumps(redacted_result.report, sort_keys=True)
+    assert coding_token not in timeout_message
 
 
 def test_simulated_runner_freezes_distinct_ai_and_human_role_bindings() -> None:

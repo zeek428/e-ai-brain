@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import base64
+import json
+import secrets
+from dataclasses import dataclass, field
 from typing import Any
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from full_chain_regression_rd_fixture import (
     frozen_ai_and_human_role_bindings,
     safe_report_value,
@@ -21,6 +26,13 @@ class SimulatedRunnerSession:
     runner_headers: dict[str, str]
     executor_profile_id: str
     ai_employee_id: str
+    verification_runner_id: str | None = None
+    verification_runner_headers: dict[str, str] | None = field(default=None, repr=False)
+    verification_private_key: Ed25519PrivateKey | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
 
 @dataclass(frozen=True)
@@ -31,6 +43,7 @@ class SimulatedAiResult:
     runner_task_ids: tuple[str, ...]
     work_item: dict[str, Any]
     runner_result: dict[str, Any]
+    secret_values: tuple[str, ...] = field(default=(), repr=False, compare=False)
 
     @property
     def step_detail(self) -> str:
@@ -49,7 +62,8 @@ class SimulatedAiResult:
                 "runner_result": self.runner_result,
                 "runner_task_ids": self.runner_task_ids,
                 "work_item": self.work_item,
-            }
+            },
+            secret_values=self.secret_values,
         )
 
 
@@ -74,9 +88,17 @@ def _require_text(value: Any, description: str) -> str:
     return text
 
 
-def _runner_task(response: dict[str, Any], *, runner_id: str) -> dict[str, Any]:
+def _runner_task(
+    response: dict[str, Any],
+    *,
+    runner_id: str,
+    secret_values: tuple[str, ...],
+) -> dict[str, Any]:
     task = response.get("task") or {}
-    assert isinstance(task, dict) and task.get("id"), f"Runner {runner_id} did not claim a task"
+    assert isinstance(task, dict) and task.get("id"), (
+        f"Runner {runner_id} did not claim a task: "
+        f"{safe_report_value(response, secret_values=secret_values)}"
+    )
     return task
 
 
@@ -85,6 +107,7 @@ def _complete_runner_task(
     *,
     runner_headers: dict[str, str],
     runner_id: str,
+    result_json: dict[str, Any],
     task: dict[str, Any],
 ) -> dict[str, Any]:
     task_id = _require_text(task.get("id"), "Runner task id")
@@ -101,7 +124,7 @@ def _complete_runner_task(
         f"/api/system/ai-executor-tasks/{task_id}/complete",
         {
             "logs": [_COMPLETION_LOG],
-            "result_json": _COMPLETION_RESULT,
+            "result_json": result_json,
             "runner_id": runner_id,
             "status": "succeeded",
         },
@@ -109,7 +132,8 @@ def _complete_runner_task(
     )
     completed_task = completed.get("task") or {}
     assert completed_task.get("status") == "succeeded", (
-        f"Runner task was not completed: {safe_report_value(completed)}"
+        "Runner task was not completed: "
+        f"{safe_report_value(completed, secret_values=tuple(runner_headers.values()))}"
     )
     return completed_task
 
@@ -128,10 +152,17 @@ def _claim_runner_task(
             headers=runner_headers,
         ),
         runner_id=runner_id,
+        secret_values=tuple(runner_headers.values()),
     )
 
 
-def _quality_gate_task(client: Any, *, ai_task_id: str, timeout_seconds: float) -> dict[str, Any]:
+def _quality_gate_task(
+    client: Any,
+    *,
+    ai_task_id: str,
+    secret_values: tuple[str, ...],
+    timeout_seconds: float,
+) -> dict[str, Any]:
     def fetch() -> dict[str, Any]:
         return client.get(
             "/api/system/ai-executor-tasks",
@@ -148,20 +179,66 @@ def _quality_gate_task(client: Any, *, ai_task_id: str, timeout_seconds: float) 
         queued_quality_gate,
         timeout_seconds=timeout_seconds,
         description="verification quality-gate Runner task",
+        secret_values=secret_values,
     )
     return next(
         item for item in queued.get("items") or [] if item.get("task_kind") == "quality_gate"
     )
 
 
-def _work_item(client: Any, *, run_id: str, work_item_id: str) -> dict[str, Any]:
+def _quality_gate_result(
+    task: dict[str, Any],
+    *,
+    private_key: Ed25519PrivateKey,
+) -> dict[str, Any]:
+    task_id = _require_text(task.get("id"), "Quality gate Runner task id")
+    checks = []
+    for check in (task.get("input_payload") or {}).get("checks") or []:
+        if not isinstance(check, dict):
+            continue
+        check_type = _require_text(check.get("type"), "Check type")
+        checks.append(
+            {
+                "evidence_ref": f"simulated://{task_id}/{check_type}",
+                "status": "passed",
+                "type": check_type,
+            }
+        )
+    assert checks, "Quality gate Runner task did not include required checks"
+    attestation_payload = {"runner_task_id": task_id}
+    signature = private_key.sign(
+        json.dumps(
+            attestation_payload,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    )
+    return {
+        "checks": checks,
+        "execution_attestation": {
+            "payload": attestation_payload,
+            "signature": base64.b64encode(signature).decode("ascii"),
+        },
+        "summary": _COMPLETION_RESULT["summary"],
+    }
+
+
+def _work_item(
+    client: Any,
+    *,
+    run_id: str,
+    secret_values: tuple[str, ...],
+    work_item_id: str,
+) -> dict[str, Any]:
     response = client.get(f"/api/delivery/rd-collaboration-runs/{run_id}/work-items")
     item = next(
         (item for item in response.get("items") or [] if item.get("id") == work_item_id),
         None,
     )
     assert isinstance(item, dict), (
-        f"Collaboration work item was not returned: {safe_report_value(response)}"
+        "Collaboration work item was not returned: "
+        f"{safe_report_value(response, secret_values=secret_values)}"
     )
     return item
 
@@ -173,7 +250,7 @@ def create_simulated_runner_session(
     role_codes: tuple[str, ...],
 ) -> SimulatedRunnerSession:
     """Provision a disposable coding Runner and its frozen AI execution identity."""
-    token = f"simulated-runner-token-{marker}"
+    token = secrets.token_urlsafe(32)
     runner = client.post(
         "/api/system/ai-executor-runners",
         {
@@ -181,11 +258,37 @@ def create_simulated_runner_session(
             "name": f"Simulated v2 Runner {marker}",
             "protocol": "runner_polling",
             "runner_token": token,
+            "trust_boundary_id": f"simulated-coding-{marker}",
             "trust_domain": "coding",
             "workspace_roots": [workspace_root],
         },
     )
     runner_id = _require_text(runner.get("id"), "Simulated Runner id")
+    verification_token = secrets.token_urlsafe(32)
+    verification_private_key = Ed25519PrivateKey.generate()
+    verification_public_key = base64.b64encode(
+        verification_private_key.public_key().public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw,
+        )
+    ).decode("ascii")
+    verification_runner = client.post(
+        "/api/system/ai-executor-runners",
+        {
+            "attestation_public_key": verification_public_key,
+            "attestation_status": "active",
+            "executor_types": ["codex"],
+            "name": f"Simulated v2 verification Runner {marker}",
+            "protocol": "runner_polling",
+            "runner_token": verification_token,
+            "trust_boundary_id": f"simulated-verification-{marker}",
+            "trust_domain": "verification",
+            "workspace_roots": [workspace_root],
+        },
+    )
+    verification_runner_id = _require_text(
+        verification_runner.get("id"), "Simulated verification Runner id"
+    )
     employee = client.post(
         "/api/delivery/rd-ai-employees",
         {
@@ -218,6 +321,9 @@ def create_simulated_runner_session(
         runner_headers={"X-Runner-Token": token},
         executor_profile_id=executor_profile_id,
         ai_employee_id=ai_employee_id,
+        verification_runner_id=verification_runner_id,
+        verification_runner_headers={"X-Runner-Token": verification_token},
+        verification_private_key=verification_private_key,
     )
 
 
@@ -230,6 +336,11 @@ def complete_ai_work_item_via_runner_protocol(
     timeout_seconds: float,
 ) -> SimulatedAiResult:
     """Drive queued Runner work to independent Review without Git delivery."""
+    session_secret_values = tuple(
+        value
+        for headers in (session.runner_headers, session.verification_runner_headers or {})
+        for value in headers.values()
+    )
     first_task = _claim_runner_task(
         client,
         runner_headers=session.runner_headers,
@@ -246,6 +357,7 @@ def complete_ai_work_item_via_runner_protocol(
         client,
         runner_headers=session.runner_headers,
         runner_id=session.runner_id,
+        result_json=_COMPLETION_RESULT,
         task=first_task,
     )
 
@@ -253,10 +365,18 @@ def complete_ai_work_item_via_runner_protocol(
         gate_task = _quality_gate_task(
             client,
             ai_task_id=ai_task_id,
+            secret_values=session_secret_values,
             timeout_seconds=timeout_seconds,
         )
         gate_runner_id = _require_text(gate_task.get("runner_id"), "Verification Runner id")
-        assert gate_runner_id != session.runner_id, "Quality gate must use an independent Runner"
+        assert gate_runner_id == session.verification_runner_id, (
+            "Quality gate Runner does not match the independent verification session"
+        )
+        verification_headers = session.verification_runner_headers or {}
+        verification_private_key = session.verification_private_key
+        assert verification_headers and verification_private_key is not None, (
+            "Quality gate requires a verification-trust Runner session"
+        )
         assert (
             (gate_task.get("request_config") or {}).get("required_trust_domain")
             == "verification"
@@ -265,7 +385,7 @@ def complete_ai_work_item_via_runner_protocol(
         )
         claimed_gate = _claim_runner_task(
             client,
-            runner_headers=session.runner_headers,
+            runner_headers=verification_headers,
             runner_id=gate_runner_id,
             executor_type=_require_text(
                 gate_task.get("executor_type"), "Quality gate executor type"
@@ -277,14 +397,25 @@ def complete_ai_work_item_via_runner_protocol(
         runner_task_ids.append(_require_text(claimed_gate.get("id"), "Quality gate Runner task id"))
         completed_task = _complete_runner_task(
             client,
-            runner_headers=session.runner_headers,
+            runner_headers=verification_headers,
             runner_id=gate_runner_id,
+            result_json=_quality_gate_result(
+                claimed_gate,
+                private_key=verification_private_key,
+            ),
             task=claimed_gate,
         )
-        reviewing_item = _work_item(client, run_id=run_id, work_item_id=work_item_id)
-        assert reviewing_item.get("status") == "reviewing", (
-            "Work item did not wait for review after quality gate: "
-            f"{safe_report_value(reviewing_item)}"
+        wait_for_value(
+            lambda: _work_item(
+                client,
+                run_id=run_id,
+                secret_values=session_secret_values,
+                work_item_id=work_item_id,
+            ),
+            lambda item: item.get("status") == "reviewing",
+            timeout_seconds=timeout_seconds,
+            description="quality-gated collaboration work item awaiting review",
+            secret_values=session_secret_values,
         )
 
     waiting_task = wait_for_value(
@@ -292,6 +423,7 @@ def complete_ai_work_item_via_runner_protocol(
         lambda task: task.get("status") == "waiting_review",
         timeout_seconds=timeout_seconds,
         description="AI task waiting for independent review",
+        secret_values=session_secret_values,
     )
     pending_review = waiting_task.get("pending_review") or {}
     review_id = _require_text(pending_review.get("id"), "Pending review id")
@@ -301,7 +433,8 @@ def complete_ai_work_item_via_runner_protocol(
         None,
     )
     assert isinstance(review, dict), (
-        f"Independent reviewer cannot see pending review: {safe_report_value(pending)}"
+        "Independent reviewer cannot see pending review: "
+        f"{safe_report_value(pending, secret_values=session_secret_values)}"
     )
     approved = reviewer_client.post(
         f"/api/reviews/{review_id}/approve",
@@ -311,10 +444,16 @@ def complete_ai_work_item_via_runner_protocol(
         f"Independent review did not complete AI task: {safe_report_value(approved)}"
     )
     work_item = wait_for_value(
-        lambda: _work_item(client, run_id=run_id, work_item_id=work_item_id),
+        lambda: _work_item(
+            client,
+            run_id=run_id,
+            secret_values=session_secret_values,
+            work_item_id=work_item_id,
+        ),
         lambda item: item.get("status") == "completed",
         timeout_seconds=timeout_seconds,
         description="AI-owned collaboration work item completion",
+        secret_values=session_secret_values,
     )
     return SimulatedAiResult(
         ai_task_id=ai_task_id,
@@ -327,4 +466,5 @@ def complete_ai_work_item_via_runner_protocol(
             "runner_task_id": completed_task.get("id"),
             "status": completed_task.get("status"),
         },
+        secret_values=session_secret_values,
     )

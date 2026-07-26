@@ -32,10 +32,10 @@ class RdFixtureResult:
     work_items: tuple[dict[str, Any], ...]
 
 
-def _safe_summary(value: Any) -> Any:
+def _safe_summary(value: Any, *, secret_values: tuple[str, ...] = ()) -> Any:
     if isinstance(value, dict):
         return {
-            key: _safe_summary(item)
+            key: _safe_summary(item, secret_values=secret_values)
             for key, item in value.items()
             if not any(
                 sensitive in key.lower()
@@ -49,15 +49,20 @@ def _safe_summary(value: Any) -> Any:
             )
         }
     if isinstance(value, list):
-        return [_safe_summary(item) for item in value]
+        return [_safe_summary(item, secret_values=secret_values) for item in value]
     if isinstance(value, tuple):
-        return tuple(_safe_summary(item) for item in value)
+        return tuple(_safe_summary(item, secret_values=secret_values) for item in value)
+    if isinstance(value, str):
+        redacted = value
+        for secret in sorted((item for item in secret_values if item), key=len, reverse=True):
+            redacted = redacted.replace(secret, "[REDACTED]")
+        return redacted
     return value
 
 
-def safe_report_value(value: Any) -> Any:
+def safe_report_value(value: Any, *, secret_values: tuple[str, ...] = ()) -> Any:
     """Return a recursively redacted value suitable for regression reports."""
-    return _safe_summary(value)
+    return _safe_summary(value, secret_values=secret_values)
 
 
 def frozen_ai_and_human_role_bindings(
@@ -93,6 +98,7 @@ def wait_for_value(
     *,
     timeout_seconds: float,
     description: str,
+    secret_values: tuple[str, ...] = (),
 ) -> Any:
     deadline = time.monotonic() + timeout_seconds
     last_value = None
@@ -101,7 +107,10 @@ def wait_for_value(
         if predicate(last_value):
             return last_value
         time.sleep(min(0.5, max(0.05, deadline - time.monotonic())))
-    raise AssertionError(f"{description} timed out; last_value={_safe_summary(last_value)}")
+    raise AssertionError(
+        f"{description} timed out; "
+        f"last_value={_safe_summary(last_value, secret_values=secret_values)}"
+    )
 
 
 def complete_and_review_human_work_item(
