@@ -559,6 +559,7 @@ class TaskReadRepository:
         graph_run: dict[str, Any] | None = None,
         checkpoint: dict[str, Any] | None = None,
         model_log: dict[str, Any] | None = None,
+        code_review_report: dict[str, Any] | None = None,
     ) -> None:
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -570,6 +571,15 @@ class TaskReadRepository:
                     self.upsert_human_reviews(
                         cursor,
                         {review["id"]: review for review in reviews},
+                    )
+                if code_review_report is not None:
+                    self._require_callback(
+                        self._upsert_code_review_reports,
+                        "code review report upsert",
+                    )
+                    self._upsert_code_review_reports(
+                        cursor,
+                        {code_review_report["id"]: code_review_report},
                     )
                 if graph_run is not None:
                     self.upsert_graph_runs(cursor, {graph_run["id"]: graph_run})

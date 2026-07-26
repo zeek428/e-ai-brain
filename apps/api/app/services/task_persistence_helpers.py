@@ -25,18 +25,25 @@ def save_task_state_records(
     graph_run: dict[str, Any] | None = None,
     checkpoint: dict[str, Any] | None = None,
     model_log: dict[str, Any] | None = None,
+    code_review_report: dict[str, Any] | None = None,
 ) -> None:
     repository = getattr(current_store, "repository", None)
     save_records = getattr(repository, "save_task_state_records", None)
     if callable(save_records):
-        save_records(
-            task=task,
-            audit_events=audit_events,
-            reviews=reviews,
-            graph_run=graph_run,
-            checkpoint=checkpoint,
-            model_log=model_log,
-        )
+        kwargs = {
+            "task": task,
+            "audit_events": audit_events,
+            "reviews": reviews,
+            "graph_run": graph_run,
+            "checkpoint": checkpoint,
+            "model_log": model_log,
+        }
+        if code_review_report is not None:
+            kwargs["code_review_report"] = code_review_report
+        save_records(**kwargs)
+        return
+    if repository is None and code_review_report is not None:
+        current_store.code_review_reports[code_review_report["id"]] = code_review_report
 
 
 def save_task_start_records(

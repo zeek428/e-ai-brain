@@ -2739,15 +2739,19 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
         graph_run: dict[str, Any] | None = None,
         checkpoint: dict[str, Any] | None = None,
         model_log: dict[str, Any] | None = None,
+        code_review_report: dict[str, Any] | None = None,
     ) -> None:
-        self._task_read_repository.save_task_state_records(
-            task=task,
-            audit_events=audit_events,
-            reviews=reviews,
-            graph_run=graph_run,
-            checkpoint=checkpoint,
-            model_log=model_log,
-        )
+        kwargs = {
+            "task": task,
+            "audit_events": audit_events,
+            "reviews": reviews,
+            "graph_run": graph_run,
+            "checkpoint": checkpoint,
+            "model_log": model_log,
+        }
+        if code_review_report is not None:
+            kwargs["code_review_report"] = code_review_report
+        self._task_read_repository.save_task_state_records(**kwargs)
 
     def save_workflow_runtime(self, payload: dict[str, Any]) -> None:
         self._task_read_repository.save_workflow_runtime(payload)

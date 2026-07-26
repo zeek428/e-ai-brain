@@ -18,7 +18,7 @@ from app.services.task_start_execution import dispatch_ai_task_for_work_item
 from app.services.task_state_transitions import cancel_ai_task_for_work_item
 
 
-def _ai_work_item_store() -> MemoryStore:
+def _ai_work_item_store(*, task_type: str = "product_detail_design") -> MemoryStore:
     store = MemoryStore()
     store.products["product-1"] = {"id": "product-1", "name": "协作产品"}
     store.product_versions["version-1"] = {
@@ -86,11 +86,18 @@ def _ai_work_item_store() -> MemoryStore:
         "id": "work-1",
         "collaboration_run_id": "run-1",
         "requirement_id": "requirement-1",
-        "work_item_type": "product_detail_design",
+        "work_item_type": task_type,
         "title": "完成产品设计",
         "owner_seat_id": "seat-developer",
         "reviewer_seat_id": "seat-reviewer",
-        "input_contract": {"background": "需求背景"},
+        "input_contract": (
+            {
+                "background": "需求背景",
+                "gitlab_mr_snapshot_id": "snapshot-1",
+            }
+            if task_type == "code_review"
+            else {"background": "需求背景"}
+        ),
         "output_contract": {"summary": "string"},
         "acceptance_criteria": ["设计可审核"],
         "status": "ready",
@@ -383,6 +390,52 @@ def test_product_detail_design_runner_success_waits_for_human_review() -> None:
     assert approved["task_status"] == "completed"
     assert store.rd_work_items["work-1"]["status"] == "completed"
     assert store.rd_work_item_attempts[dispatch["attempt"]["id"]]["status"] == "completed"
+
+
+def test_v2_code_review_runner_completion_persists_report_with_pending_review() -> None:
+    store = _ai_work_item_store(task_type="code_review")
+    store.ai_executor_runners["runner-frozen"] = {
+        "id": "runner-frozen",
+        "status": "active",
+        "executor_types": ["codex"],
+        "workspace_roots": ["/tmp/work-item"],
+    }
+    dispatch = dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="work-1",
+    )
+    runner_task = store.ai_executor_tasks[dispatch["runner_task"]["id"]]
+    runner_task.update(
+        {
+            "result_json": {
+                "findings": [],
+                "risk_level": "low",
+                "summary": "No blocking findings",
+            },
+            "status": "succeeded",
+        }
+    )
+
+    _sync_runner_completion_to_ai_task(store, task=runner_task, runner_id="runner-frozen")
+
+    task = store.ai_tasks[dispatch["task"]["id"]]
+    report = store.code_review_reports[task["code_review_report_id"]]
+    review = store.human_reviews[task["review_ids"][0]]
+    assert task["status"] == "waiting_review"
+    assert report["gitlab_mr_snapshot_id"] == "snapshot-1"
+    assert report["review_id"] == review["id"]
+    assert report["status"] == "pending_review"
+
+    approve_review_response(
+        current_store=store,
+        review_id=review["id"],
+        user={"id": "reviewer-1", "roles": ["admin"]},
+        version=1,
+    )
+
+    assert store.code_review_reports[report["id"]]["status"] == "confirmed"
+    assert store.rd_work_items["work-1"]["status"] == "completed"
 
 
 def test_legacy_quality_verifier_without_attempt_provenance_uses_coding_retry_attempt() -> None:

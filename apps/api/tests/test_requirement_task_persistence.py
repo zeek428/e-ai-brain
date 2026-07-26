@@ -2,7 +2,99 @@ from test_database_persistence import FakeSnapshotRepository, app, auth_headers,
 
 from app.core.persistence import PersistentMemoryStore, PostgresRuntimeStore
 from app.core.users import MemoryUserRepository
+from app.services.ai_executor_runner_rd_completion import move_ai_task_to_executor_review
+from app.services.task_workflow_context import task_workflow_read_store
 from tests.requirement_fixtures import seed_accepted_assessment_provenance
+
+
+class CodeReviewTaskStateRepository(FakeSnapshotRepository):
+    def save_task_state_records(
+        self,
+        *,
+        task: dict,
+        audit_events: list[dict],
+        reviews: list[dict] | None = None,
+        graph_run: dict | None = None,
+        checkpoint: dict | None = None,
+        model_log: dict | None = None,
+        code_review_report: dict | None = None,
+    ) -> None:
+        super().save_task_state_records(
+            task=task,
+            audit_events=audit_events,
+            reviews=reviews,
+            graph_run=graph_run,
+            checkpoint=checkpoint,
+            model_log=model_log,
+        )
+        if code_review_report is not None:
+            payload = self.gitlab_review_payload or {
+                "code_review_reports": {},
+                "gitlab_mr_snapshots": {},
+            }
+            payload.setdefault("code_review_reports", {})[code_review_report["id"]] = dict(
+                code_review_report
+            )
+            self.gitlab_review_payload = payload
+
+
+def test_executor_review_reloads_linked_code_review_report_from_repository() -> None:
+    repository = CodeReviewTaskStateRepository()
+    repository.ai_tasks_payload = {
+        "ai_tasks": {
+            "task_001": {
+                "id": "task_001",
+                "input_json": {
+                    "work_item_input_contract": {
+                        "gitlab_mr_snapshot_id": "snapshot_001",
+                    }
+                },
+                "review_ids": [],
+                "status": "running",
+                "task_type": "code_review",
+            }
+        }
+    }
+    repository.gitlab_review_payload = {
+        "code_review_reports": {},
+        "gitlab_mr_snapshots": {
+            "snapshot_001": {
+                "id": "snapshot_001",
+                "requirement_id": "requirement_001",
+            }
+        },
+    }
+    repository.workflow_runtime_payload = {
+        "graph_checkpoints": {},
+        "graph_runs": {},
+        "human_reviews": {},
+    }
+    store = PostgresRuntimeStore(repository)
+    task = repository.ai_tasks_payload["ai_tasks"]["task_001"]
+
+    move_ai_task_to_executor_review(
+        store,
+        ai_task=task,
+        actor_id="runner-frozen",
+        executor_snapshot={"runner_id": "runner-frozen", "status": "succeeded"},
+        output_json={
+            "executor": {"runner_id": "runner-frozen", "status": "succeeded"},
+            "result": {
+                "findings": [],
+                "risk_level": "low",
+                "summary": "No blocking findings",
+            },
+            "summary": "No blocking findings",
+        },
+    )
+
+    reloaded = task_workflow_read_store(PostgresRuntimeStore(repository))
+    persisted_task = reloaded.ai_tasks["task_001"]
+    persisted_review = reloaded.human_reviews[persisted_task["review_ids"][0]]
+    persisted_report = reloaded.code_review_reports[persisted_task["code_review_report_id"]]
+    assert persisted_report["gitlab_mr_snapshot_id"] == "snapshot_001"
+    assert persisted_report["review_id"] == persisted_review["id"]
+    assert persisted_report["status"] == "pending_review"
 
 
 def test_requirements_are_persisted_through_fine_grained_repository_payload():
@@ -885,7 +977,7 @@ def test_start_task_writes_review_graph_and_checkpoint_without_request_persist()
         assert [review["id"] for review in pending_reviews] == [started["review_id"]]
         assert review_detail["id"] == started["review_id"]
         assert review_detail["task"]["id"] == generated["task_id"]
-        assert repository.task_workflow_source_row_reads == 3
+        assert repository.task_workflow_source_row_reads == 4
         assert (
             f"start:{generated['task_id']}:{started['review_id']}:"
             f"{started['graph_run_id']}:{started['checkpoint_id']}"

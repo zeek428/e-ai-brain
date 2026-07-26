@@ -156,18 +156,30 @@ def _persist_task_state_records(
     current_store: Any,
     *,
     audit_events: list[dict[str, Any]],
+    code_review_report: dict[str, Any] | None = None,
     reviews: list[dict[str, Any]] | None,
     task: dict[str, Any],
 ) -> None:
     repository = getattr(current_store, "repository", None)
     save_records = getattr(repository, "save_task_state_records", None)
     if callable(save_records):
-        save_records(task=task, audit_events=audit_events, reviews=reviews)
+        kwargs = {
+            "task": task,
+            "audit_events": audit_events,
+            "reviews": reviews,
+        }
+        if code_review_report is not None:
+            kwargs["code_review_report"] = code_review_report
+        save_records(**kwargs)
         return
     if repository is None:
         _memory_collection(current_store, "ai_tasks")[task["id"]] = task
         for review in reviews or []:
             _memory_collection(current_store, "human_reviews")[review["id"]] = review
+        if code_review_report is not None:
+            _memory_collection(current_store, "code_review_reports")[
+                code_review_report["id"]
+            ] = code_review_report
 
 
 def _existing_pending_review(

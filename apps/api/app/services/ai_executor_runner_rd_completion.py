@@ -20,8 +20,14 @@ from app.services.operational_records import record_audit_event
 from app.services.quality_gates import start_pre_merge_quality_gate
 from app.services.rd_git_delivery import record_version_git_delivery_from_runner
 from app.services.rd_work_item_execution import is_rd_collaboration_task
+from app.services.task_code_review_execution import create_code_review_report
 from app.services.task_output_summary import readable_runner_task_output_summary
-from app.services.task_persistence_helpers import record_audit_event as record_task_audit_event
+from app.services.task_persistence_helpers import (
+    record_audit_event as record_task_audit_event,
+)
+from app.services.task_persistence_helpers import (
+    uses_repository_context,
+)
 
 _ARTIFACT_REVIEW_TASK_TYPES = {
     "code_review",
@@ -93,6 +99,38 @@ def move_ai_task_to_executor_review(
         if review and review["id"] not in review_ids:
             review_ids.append(review["id"])
     updated_task["review_ids"] = review_ids
+    code_review_report = None
+    if updated_task.get("task_type") == "code_review":
+        review = reviews[0] if reviews else existing_review
+        input_json = dict(updated_task.get("input_json") or {})
+        work_item_input = dict(input_json.get("work_item_input_contract") or {})
+        report_task = {
+            **updated_task,
+            "input_json": {
+                **input_json,
+                "gitlab_mr_snapshot_id": (
+                    input_json.get("gitlab_mr_snapshot_id")
+                    or work_item_input.get("gitlab_mr_snapshot_id")
+                ),
+            },
+        }
+        result = dict(output_json.get("result") or {})
+        code_review_report = create_code_review_report(
+            current_store,
+            task=report_task,
+            output={
+                "executor": output_json.get("executor") or executor_snapshot,
+                "findings": result.get("findings") or [],
+                "risk_level": result.get("risk_level"),
+                "summary": result.get("summary") or output_json.get("summary"),
+            },
+            uses_repository_context=uses_repository_context,
+        )
+        code_review_report = {
+            **code_review_report,
+            "review_id": review["id"] if review is not None else None,
+        }
+        updated_task["code_review_report_id"] = code_review_report["id"]
     audit_event = record_audit_event(
         current_store,
         event_type="ai_task.executor_completed",
@@ -109,6 +147,7 @@ def move_ai_task_to_executor_review(
     _persist_task_state_records(
         current_store,
         audit_events=[audit_event],
+        code_review_report=code_review_report,
         reviews=reviews or None,
         task=updated_task,
     )

@@ -737,6 +737,7 @@ class AiTaskRepository(Protocol):
         graph_run: dict[str, Any] | None = None,
         checkpoint: dict[str, Any] | None = None,
         model_log: dict[str, Any] | None = None,
+        code_review_report: dict[str, Any] | None = None,
     ) -> None: ...
 
 
