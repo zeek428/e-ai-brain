@@ -146,6 +146,10 @@ def task_workflow_source_store(
         idempotency_key = result.get("idempotency_key") or result.get("task_id") or result.get("id")
         if idempotency_key is not None:
             source_store.mock_writebacks[str(idempotency_key)] = dict(result)
+    for report in source_store.code_review_reports.values():
+        task = source_store.ai_tasks.get(str(report.get("task_id") or ""))
+        if task is not None:
+            task["code_review_report_id"] = report["id"]
     return source_store
 
 

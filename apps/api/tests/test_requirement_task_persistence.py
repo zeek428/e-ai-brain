@@ -3,11 +3,40 @@ from test_database_persistence import FakeSnapshotRepository, app, auth_headers,
 from app.core.persistence import PersistentMemoryStore, PostgresRuntimeStore
 from app.core.users import MemoryUserRepository
 from app.services.ai_executor_runner_rd_completion import move_ai_task_to_executor_review
+from app.services.task_review_decisions import approve_review_response
 from app.services.task_workflow_context import task_workflow_read_store
 from tests.requirement_fixtures import seed_accepted_assessment_provenance
 
 
 class CodeReviewTaskStateRepository(FakeSnapshotRepository):
+    _TASK_SCHEMA_FIELDS = {
+        "brain_app_id",
+        "collaboration_run_id",
+        "created_at",
+        "created_by",
+        "current_step",
+        "error_code",
+        "error_message",
+        "id",
+        "input_json",
+        "module_code",
+        "output_json",
+        "product_context",
+        "product_id",
+        "requirement_id",
+        "requirement_snapshot",
+        "status",
+        "task_type",
+        "title",
+        "updated_at",
+        "version_id",
+        "work_item_id",
+    }
+
+    @classmethod
+    def _schema_task(cls, task: dict) -> dict:
+        return {key: value for key, value in task.items() if key in cls._TASK_SCHEMA_FIELDS}
+
     def save_task_state_records(
         self,
         *,
@@ -20,7 +49,7 @@ class CodeReviewTaskStateRepository(FakeSnapshotRepository):
         code_review_report: dict | None = None,
     ) -> None:
         super().save_task_state_records(
-            task=task,
+            task=self._schema_task(task),
             audit_events=audit_events,
             reviews=reviews,
             graph_run=graph_run,
@@ -38,20 +67,62 @@ class CodeReviewTaskStateRepository(FakeSnapshotRepository):
             self.gitlab_review_payload = payload
 
 
-def test_executor_review_reloads_linked_code_review_report_from_repository() -> None:
+    def save_review_decision_records(
+        self,
+        *,
+        task: dict,
+        review: dict,
+        graph_run: dict | None,
+        checkpoint: dict | None,
+        audit_events: list[dict],
+        requirement: dict | None = None,
+        knowledge_deposits: list[dict] | None = None,
+        bugs: list[dict] | None = None,
+        code_review_report: dict | None = None,
+    ) -> None:
+        super().save_review_decision_records(
+            task=self._schema_task(task),
+            review=review,
+            graph_run=graph_run,
+            checkpoint=checkpoint,
+            audit_events=audit_events,
+            requirement=requirement,
+            knowledge_deposits=knowledge_deposits,
+            bugs=bugs,
+            code_review_report=code_review_report,
+        )
+
+
+def test_executor_review_reloads_schema_backed_report_link_for_independent_approval() -> None:
     repository = CodeReviewTaskStateRepository()
     repository.ai_tasks_payload = {
         "ai_tasks": {
             "task_001": {
+                "brain_app_id": "rd_brain",
+                "collaboration_run_id": "run_001",
+                "created_at": "2026-07-26T00:00:00+00:00",
+                "created_by": "system",
+                "current_step": "waiting_ai_executor",
+                "error_code": None,
+                "error_message": None,
                 "id": "task_001",
                 "input_json": {
                     "work_item_input_contract": {
                         "gitlab_mr_snapshot_id": "snapshot_001",
                     }
                 },
-                "review_ids": [],
+                "module_code": None,
+                "output_json": None,
+                "product_context": {},
+                "product_id": "product_001",
+                "requirement_id": "requirement_001",
+                "requirement_snapshot": {"id": "requirement_001"},
                 "status": "running",
                 "task_type": "code_review",
+                "title": "Review frozen runner output",
+                "updated_at": "2026-07-26T00:00:00+00:00",
+                "version_id": "version_001",
+                "work_item_id": "work_001",
             }
         }
     }
@@ -88,13 +159,63 @@ def test_executor_review_reloads_linked_code_review_report_from_repository() -> 
         },
     )
 
-    reloaded = task_workflow_read_store(PostgresRuntimeStore(repository))
-    persisted_task = reloaded.ai_tasks["task_001"]
-    persisted_review = reloaded.human_reviews[persisted_task["review_ids"][0]]
-    persisted_report = reloaded.code_review_reports[persisted_task["code_review_report_id"]]
-    assert persisted_report["gitlab_mr_snapshot_id"] == "snapshot_001"
-    assert persisted_report["review_id"] == persisted_review["id"]
-    assert persisted_report["status"] == "pending_review"
+    report_id = next(iter(repository.gitlab_review_payload["code_review_reports"]))
+    reloaded_store = PostgresRuntimeStore(repository)
+    reloaded_store.rd_collaboration_runs["run_001"] = {
+        "id": "run_001",
+        "status": "running",
+    }
+    reloaded_store.rd_run_seats.update(
+        {
+            "seat_owner": {
+                "ai_employee_id": "employee-dev",
+                "id": "seat_owner",
+                "status": "active",
+                "subject_type": "ai_employee",
+            },
+            "seat_reviewer": {
+                "human_user_id": "reviewer-1",
+                "id": "seat_reviewer",
+                "status": "active",
+                "subject_type": "human_user",
+            },
+        }
+    )
+    reloaded_store.rd_work_items["work_001"] = {
+        "collaboration_run_id": "run_001",
+        "id": "work_001",
+        "owner_seat_id": "seat_owner",
+        "reviewer_seat_id": "seat_reviewer",
+        "status": "running",
+        "version": 1,
+    }
+    reloaded_store.rd_work_item_attempts["attempt_001"] = {
+        "attempt_no": 1,
+        "id": "attempt_001",
+        "status": "running",
+        "work_item_id": "work_001",
+    }
+    pending_review_id = next(
+        iter(repository.workflow_runtime_payload["human_reviews"])
+    )
+
+    approve_review_response(
+        current_store=reloaded_store,
+        review_id=pending_review_id,
+        user={"id": "reviewer-1", "roles": ["admin"]},
+        version=1,
+    )
+
+    confirmed = task_workflow_read_store(PostgresRuntimeStore(repository))
+    confirmed_task = confirmed.ai_tasks["task_001"]
+    confirmed_review = confirmed.human_reviews[pending_review_id]
+    confirmed_report = confirmed.code_review_reports[report_id]
+    assert "code_review_report_id" not in repository.ai_tasks_payload["ai_tasks"]["task_001"]
+    assert confirmed_report["status"] == "confirmed"
+    assert confirmed_report["review_id"] == confirmed_review["id"]
+    assert confirmed_report["gitlab_mr_snapshot_id"] == "snapshot_001"
+    assert confirmed_task["code_review_report_id"] == report_id
+    assert reloaded_store.rd_work_items["work_001"]["status"] == "completed"
 
 
 def test_requirements_are_persisted_through_fine_grained_repository_payload():
