@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 
@@ -14,6 +15,135 @@ def _load_module(name: str, relative_path: str):
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def fixture_module_paths_for_minimal_run() -> list[str]:
+    fixture = _load_module(
+        "full_chain_regression_rd_fixture_under_test",
+        "scripts/full_chain_regression_rd_fixture.py",
+    )
+
+    class FixtureClient:
+        def __init__(self) -> None:
+            self.paths: list[str] = []
+
+        def get(self, path: str, query=None):
+            self.paths.append(path)
+            assert query is None
+            assert path == "/api/requirements/requirement-1/assessments/latest"
+            return {"id": "assessment-1", "version": 2}
+
+        def post(self, path: str, body=None, extra_headers=None):
+            self.paths.append(path)
+            assert extra_headers is None
+            if path == "/api/requirements":
+                return {"id": "requirement-1"}
+            if path == "/api/requirements/requirement-1/assessments":
+                return {
+                    "id": "assessment-1",
+                    "initial_strategy_snapshot_id": "strategy-1",
+                }
+            if path == "/api/requirement-assessments/assessment-1/opinions":
+                return {"id": "opinion-1"}
+            if path == "/api/requirement-assessments/assessment-1/decisions":
+                return {
+                    "grouping": {
+                        "status": "planned",
+                        "version": {"id": "version-1", "scope_version": 3},
+                    }
+                }
+            if path == "/api/product-versions/version-1/collaboration-runs":
+                return {
+                    "delivery_target": "ready_for_release",
+                    "id": "run-1",
+                    "strategy_snapshot_kind": "version_resolved",
+                }
+            if path == "/api/delivery/rd-collaboration-runs/run-1/plan":
+                return {
+                    "work_items": [
+                        {
+                            "id": "implementation-1",
+                            "status": "ready",
+                            "work_item_type": "implementation",
+                        }
+                    ]
+                }
+            raise AssertionError(f"unexpected request: {path} {body}")
+
+    spec = fixture.RdFixtureSpec(
+        dependencies=(),
+        marker="fixture-marker",
+        policy_overrides={},
+        product_id="product-1",
+        repository_id="repository-1",
+        required_role_codes=("developer",),
+        role_bindings=(
+            {
+                "actor_mode": "human",
+                "candidate_human_user_ids": ["owner-1"],
+                "role_code": "developer",
+                "status": "active",
+            },
+        ),
+        work_items=(
+            {
+                "id": "implementation-1",
+                "owner_role_code": "developer",
+                "priority": 1,
+                "reviewer_role_code": "developer",
+                "work_item_type": "implementation",
+            },
+        ),
+    )
+    client = FixtureClient()
+
+    result = fixture.create_rd_fixture(client, owner_user_id="owner-1", spec=spec)
+
+    assert result == fixture.RdFixtureResult(
+        assessment_id="assessment-1",
+        product_id="product-1",
+        requirement_id="requirement-1",
+        run_id="run-1",
+        scope_version=3,
+        strategy_snapshot_id="strategy-1",
+        version_id="version-1",
+        work_items=(
+            {
+                "id": "implementation-1",
+                "status": "ready",
+                "work_item_type": "implementation",
+            },
+        ),
+    )
+    try:
+        result.run_id = "mutated"
+    except FrozenInstanceError:
+        pass
+    else:
+        raise AssertionError("fixture result must be immutable")
+    try:
+        spec.marker = "mutated"
+    except FrozenInstanceError:
+        pass
+    else:
+        raise AssertionError("fixture spec must be immutable")
+    return client.paths
+
+
+def test_v2_fixture_uses_assessment_grouping_and_collaboration_run() -> None:
+    paths = fixture_module_paths_for_minimal_run()
+
+    assert paths == [
+        "/api/requirements",
+        "/api/requirements/requirement-1/assessments",
+        "/api/requirement-assessments/assessment-1/opinions",
+        "/api/requirements/requirement-1/assessments/latest",
+        "/api/requirement-assessments/assessment-1/decisions",
+        "/api/product-versions/version-1/collaboration-runs",
+        "/api/delivery/rd-collaboration-runs/run-1/plan",
+    ]
+    assert all("/approve" not in path for path in paths)
+    assert all("generate-task" not in path for path in paths)
 
 
 def test_rd_collaboration_regression_is_a_declared_targeted_suite() -> None:
