@@ -12,6 +12,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import full_chain_regression as regression_cli  # noqa: E402
+import full_chain_regression_rd_delivery_e2e as rd_delivery_e2e  # noqa: E402
 from full_chain_regression_rd_delivery_e2e import (  # noqa: E402
     RdDeliveryE2EConfig,
     RegressionError,
@@ -399,17 +400,57 @@ class HappyPathClient(PreflightClient):
             return {"id": "assessment-e2e", "version": 4}
         if path == "/api/delivery/rd-collaboration-runs/run-e2e/work-items":
             testing_running = self.phase == 1 and not self.testing_dispatch_observed
+            implementation_attempt = {
+                "ai_task_id": "ai-task-implementation",
+                "attempt_no": 1,
+                "completed_at": "2026-07-26T00:00:00+00:00",
+                "failure_code": None,
+                "fence_event_id": None,
+                "late_result_fenced": False,
+                "rework_evidence_count": 0,
+                "runner_status": "succeeded",
+                "runner_task_id": "runner-task-implementation",
+                "started_at": "2026-07-25T23:59:00+00:00",
+                "status": "completed",
+                "workspace_fingerprint": "sha256:" + ("a" * 64),
+            }
             implementation = {
                 "active_attempt_count": 0,
                 "ai_task_id": "ai-task-implementation",
+                "attempt_history": {
+                    "items": [implementation_attempt],
+                    "total": 1,
+                    "truncated": False,
+                },
                 "id": "work-implementation",
                 "status": "reviewing" if self.phase == 0 else "completed",
                 "title": "implement_e2e_artifact",
                 "version": 2,
             }
+            testing_attempt = {
+                "ai_task_id": "ai-task-testing",
+                "attempt_no": 1,
+                "completed_at": (
+                    None if testing_running else "2026-07-26T00:02:00+00:00"
+                ),
+                "failure_code": None,
+                "fence_event_id": None,
+                "late_result_fenced": False,
+                "rework_evidence_count": 0,
+                "runner_status": "running" if testing_running else "succeeded",
+                "runner_task_id": "runner-task-testing",
+                "started_at": "2026-07-26T00:01:00+00:00",
+                "status": "running" if testing_running else "completed",
+                "workspace_fingerprint": "sha256:" + ("b" * 64),
+            }
             testing = {
                 "active_attempt_count": 1 if testing_running else 0,
                 "ai_task_id": "ai-task-testing" if self.phase >= 1 else None,
+                "attempt_history": {
+                    "items": [testing_attempt] if self.phase >= 1 else [],
+                    "total": 1 if self.phase >= 1 else 0,
+                    "truncated": False,
+                },
                 "id": "work-testing",
                 "status": "running" if testing_running else (
                     "reviewing" if self.phase == 1 else (
@@ -629,6 +670,43 @@ def test_real_e2e_happy_path_projects_native_runner_gate_delivery_and_no_deploym
         "rd_delivery_evidence",
         "rd_delivery_ready_for_release",
     ]
+    assert results[-1].evidence == {
+        "attempt_chain": {
+            "automated_testing": [
+                {
+                    "ai_task_id": "ai-task-testing",
+                    "attempt_no": 1,
+                    "completed_at": "2026-07-26T00:02:00+00:00",
+                    "failure_code": None,
+                    "fence_event_id": None,
+                    "late_result_fenced": False,
+                    "rework_evidence_count": 0,
+                    "runner_status": "succeeded",
+                    "runner_task_id": "runner-task-testing",
+                    "started_at": "2026-07-26T00:01:00+00:00",
+                    "status": "completed",
+                    "workspace_fingerprint": "sha256:" + ("b" * 64),
+                }
+            ],
+            "implementation": [
+                {
+                    "ai_task_id": "ai-task-implementation",
+                    "attempt_no": 1,
+                    "completed_at": "2026-07-26T00:00:00+00:00",
+                    "failure_code": None,
+                    "fence_event_id": None,
+                    "late_result_fenced": False,
+                    "rework_evidence_count": 0,
+                    "runner_status": "succeeded",
+                    "runner_task_id": "runner-task-implementation",
+                    "started_at": "2026-07-25T23:59:00+00:00",
+                    "status": "completed",
+                    "workspace_fingerprint": "sha256:" + ("a" * 64),
+                }
+            ],
+        },
+        "scenario": "happy-path",
+    }
     report = repr(results)
     assert "owner-secret" not in report
     assert "reviewer-secret" not in report
@@ -842,3 +920,772 @@ def test_e2e_config_is_accessed_only_when_explicit_suite_is_selected(
         password="owner-secret",
     )
     assert accesses == ["rd-delivery-e2e"]
+
+
+SCENARIOS = (
+    "happy-path",
+    "quality-rework",
+    "cancel-resume",
+    "timeout-recovery",
+    "high-risk-dispatch",
+)
+
+
+def test_rd_e2e_cli_exposes_exact_scenario_choices() -> None:
+    parser = regression_cli.build_argument_parser()
+    action = next(
+        action
+        for action in parser._actions
+        if action.dest == "rd_e2e_scenario"
+    )
+
+    assert tuple(action.choices or ()) == SCENARIOS
+    assert action.default == "happy-path"
+
+
+def test_regression_report_keeps_attempt_chain_machine_readable() -> None:
+    report = regression_cli.build_regression_report(
+        api_base_url="http://localhost:8000",
+        duration_ms=1,
+        error=None,
+        finished_at="2026-07-27T03:00:01+00:00",
+        started_at="2026-07-27T03:00:00+00:00",
+        status="passed",
+        steps=[
+            regression_cli.StepResult(
+                "rd_delivery_ready_for_release",
+                "scenario=timeout-recovery",
+                evidence={
+                    "attempt_chain": [
+                        {
+                            "attempt_no": 1,
+                            "runner_task_id": "runner-attempt-1",
+                            "status": "failed",
+                        }
+                    ]
+                },
+            )
+        ],
+        suite="rd-delivery-e2e",
+        task_execution_mode="simulated_runner",
+    )
+
+    assert report["steps"][0]["evidence"]["attempt_chain"] == [
+        {
+            "attempt_no": 1,
+            "runner_task_id": "runner-attempt-1",
+            "status": "failed",
+        }
+    ]
+
+
+def test_rd_e2e_scenario_is_ignored_outside_explicit_suite(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    configured = valid_config()
+
+    monkeypatch.setattr(
+        regression_cli,
+        "validate_permission_visibility_quick_regression",
+        lambda client, *, username, password: [],
+    )
+    monkeypatch.setattr(
+        regression_cli.RdDeliveryE2EConfig,
+        "from_env",
+        classmethod(lambda cls: calls.append("config") or configured),
+    )
+    monkeypatch.setattr(
+        regression_cli,
+        "validate_rd_delivery_e2e",
+        lambda client, username, password, config, *, scenario: (
+            calls.append(scenario) or []
+        ),
+    )
+
+    regression_cli.run_regression_suite(
+        object(),
+        suite="permission-visibility",
+        username="owner@example.com",
+        password="owner-secret",
+        rd_e2e_scenario="timeout-recovery",
+    )
+    assert calls == []
+
+    regression_cli.run_regression_suite(
+        object(),
+        suite="rd-delivery-e2e",
+        username="owner@example.com",
+        password="owner-secret",
+        rd_e2e_scenario="timeout-recovery",
+    )
+    assert calls == ["config", "timeout-recovery"]
+
+
+class TimeoutPolicyLifecycleClient:
+    def __init__(self, *, fail_restore: bool = False) -> None:
+        self.calls: list[tuple[str, str, dict[str, object]]] = []
+        self.fail_restore = fail_restore
+
+    def patch(self, path: str, body=None, *, headers=None) -> dict[str, object]:
+        del headers
+        payload = dict(body or {})
+        self.calls.append(("PATCH", path, payload))
+        patch_count = len([call for call in self.calls if call[0] == "PATCH"])
+        if patch_count == 1:
+            assert payload["expected_policy_version"] == 7
+            assert payload["changes"]["autonomy_config"] == {
+                "max_iterations": 1,
+                "mode": "single_pass",
+                "timeout_seconds": 3,
+            }
+            return {
+                "policy": {
+                    "id": "policy-1",
+                    "policy_version": 8,
+                    **payload["changes"],
+                }
+            }
+        if self.fail_restore and patch_count == 2:
+            raise RegressionError("restore conflict")
+        assert payload["expected_policy_version"] == 8
+        assert payload["changes"]["status"] == "active"
+        assert payload["changes"]["autonomy_config"] == {
+            "max_iterations": 5,
+            "mode": "autonomous_loop",
+            "timeout_seconds": 600,
+        }
+        return {
+            "policy": {
+                "id": "policy-1",
+                "policy_version": 9,
+                **payload["changes"],
+            }
+        }
+
+    def post(self, path: str, body=None, *, headers=None) -> dict[str, object]:
+        del headers
+        payload = dict(body or {})
+        self.calls.append(("POST", path, payload))
+        return {
+            "id": "assessment-timeout",
+            "initial_strategy_snapshot_id": "snapshot-timeout",
+        }
+
+
+def _policy_for_timeout_lifecycle() -> dict[str, object]:
+    return {
+        "assessment_config": {},
+        "autonomy_config": {
+            "max_iterations": 5,
+            "mode": "autonomous_loop",
+            "timeout_seconds": 600,
+        },
+        "brain_app_id": "rd_brain",
+        "delivery_target": "ready_for_release",
+        "deployment_config": {},
+        "experience_reuse_config": {},
+        "git_config": {"repository_id": "repository-1", "workspace_root": "/workspace"},
+        "id": "policy-1",
+        "iteration_config": {},
+        "matching_config": {"task_types": ["implementation", "automated_testing"]},
+        "name": "Policy",
+        "policy_version": 7,
+        "product_id": "product-1",
+        "quality_gate_config": {},
+        "role_bindings": [],
+        "status": "active",
+        "team_config": {"required_role_codes": []},
+    }
+
+
+def test_timeout_fault_policy_is_versioned_frozen_and_immediately_restored() -> None:
+    client = TimeoutPolicyLifecycleClient()
+
+    assessment, versions = rd_delivery_e2e.create_scenario_assessment(
+        client,
+        scenario="timeout-recovery",
+        policy=_policy_for_timeout_lifecycle(),
+        requirement_id="requirement-1",
+        request_payload={
+            "reason": "timeout scenario",
+            "request_id": "assessment-request",
+            "requirement_revision": 1,
+        },
+    )
+
+    assert assessment["initial_strategy_snapshot_id"] == "snapshot-timeout"
+    assert versions == {
+        "fault_policy_version": 8,
+        "original_policy_version": 7,
+        "restored_policy_version": 9,
+    }
+    assert [method for method, _path, _body in client.calls] == [
+        "PATCH",
+        "POST",
+        "PATCH",
+    ]
+
+
+def test_timeout_fault_policy_restore_failure_stops_before_following_writes() -> None:
+    client = TimeoutPolicyLifecycleClient(fail_restore=True)
+
+    with pytest.raises(RegressionError, match="restore conflict"):
+        rd_delivery_e2e.create_scenario_assessment(
+            client,
+            scenario="timeout-recovery",
+            policy=_policy_for_timeout_lifecycle(),
+            requirement_id="requirement-1",
+            request_payload={
+                "reason": "timeout scenario",
+                "request_id": "assessment-request",
+                "requirement_revision": 1,
+            },
+        )
+
+    assert [method for method, _path, _body in client.calls] == [
+        "PATCH",
+        "POST",
+        "PATCH",
+        "PATCH",
+    ]
+
+
+def test_quality_rework_contract_starts_pre_fault_and_requires_real_gate_repair() -> None:
+    criteria, instruction = rd_delivery_e2e.build_scenario_task_contract(
+        artifact_path="docs/e2e/quality.md",
+        scenario="quality-rework",
+    )
+
+    assert any("quality_rework_complete=true" in item for item in criteria)
+    assert "first real Runner attempt" in instruction
+    assert "omit quality_rework_complete=true" in instruction
+    assert "independent quality gate" in instruction
+    assert "rework evidence" in instruction
+    assert "callback" not in instruction
+
+
+class GovernanceScenarioClient:
+    def __init__(self, scenario: str) -> None:
+        self.scenario = scenario
+        self.phase = 0
+        self.calls: list[tuple[str, str]] = []
+        self.decision_posts = 0
+
+    @staticmethod
+    def _attempt(
+        attempt_no: int,
+        *,
+        ai_task_id: str,
+        failure_code: str | None = None,
+        fenced: bool = False,
+        rework_evidence_count: int = 0,
+        runner_status: str,
+        runner_task_id: str,
+        status: str,
+        workspace_fingerprint: str = "sha256:" + ("a" * 64),
+    ) -> dict[str, object]:
+        return {
+            "ai_task_id": ai_task_id,
+            "attempt_no": attempt_no,
+            "completed_at": (
+                "2026-07-27T02:01:00+00:00"
+                if status in {"cancelled", "completed", "failed"}
+                else None
+            ),
+            "failure_code": failure_code,
+            "fence_event_id": "fence-event-1" if fenced else None,
+            "late_result_fenced": fenced,
+            "rework_evidence_count": rework_evidence_count,
+            "runner_status": runner_status,
+            "runner_task_id": runner_task_id,
+            "started_at": "2026-07-27T02:00:00+00:00",
+            "status": status,
+            "workspace_fingerprint": workspace_fingerprint,
+        }
+
+    @staticmethod
+    def _history(items: list[dict[str, object]]) -> dict[str, object]:
+        return {"items": items, "total": len(items), "truncated": False}
+
+    def login(self, username: str, password: str) -> dict[str, object]:
+        del password
+        self.calls.append(("LOGIN", username))
+        return {
+            "user": {
+                "id": "reviewer-user" if username.startswith("reviewer") else "owner-user",
+                "username": username,
+            }
+        }
+
+    def _item_response(self) -> dict[str, object]:
+        quality_failed = self.scenario == "quality-rework" and self.phase >= 1
+        first = self._attempt(
+            1,
+            ai_task_id="ai-task-attempt-1",
+            failure_code=(
+                "AI_EXECUTOR_TASK_TIMEOUT"
+                if self.scenario == "timeout-recovery"
+                else None
+            ),
+            fenced=self.scenario == "cancel-resume" and self.phase >= 1,
+            rework_evidence_count=0,
+            runner_status=(
+                "succeeded"
+                if quality_failed
+                else (
+                    "cancelled"
+                    if self.scenario == "cancel-resume" and self.phase >= 1
+                    else (
+                        "timed_out"
+                        if self.scenario == "timeout-recovery"
+                        else "running"
+                    )
+                )
+            ),
+            runner_task_id="runner-attempt-1",
+            status=(
+                "failed"
+                if quality_failed or self.scenario == "timeout-recovery"
+                else (
+                    "cancelled"
+                    if self.scenario == "cancel-resume" and self.phase >= 1
+                    else "running"
+                )
+            ),
+        )
+        second = self._attempt(
+            2,
+            ai_task_id="ai-task-attempt-2",
+            runner_status="succeeded",
+            runner_task_id="runner-attempt-2",
+            status="completed",
+        )
+        status = "running"
+        active_attempt_count = 1
+        ai_task_id: str | None = "ai-task-attempt-1"
+        history = [first]
+        version = 3
+        decision_id: str | None = None
+        if self.scenario == "quality-rework":
+            if self.phase == 0:
+                status = "running"
+                active_attempt_count = 1
+                self.phase = 1
+            elif self.phase == 1:
+                status = "rework_required"
+                active_attempt_count = 0
+                self.phase = 2
+            else:
+                status = "reviewing"
+                active_attempt_count = 0
+                ai_task_id = "ai-task-attempt-2"
+                history.append(second)
+                version = 5
+        elif self.scenario == "cancel-resume":
+            if self.phase == 1:
+                status = "cancelled"
+                active_attempt_count = 0
+                version = 4
+            elif self.phase >= 2:
+                status = "reviewing"
+                active_attempt_count = 0
+                ai_task_id = "ai-task-attempt-2"
+                history.append(second)
+                version = 6
+        elif self.scenario == "timeout-recovery":
+            if self.phase == 0:
+                status = "waiting_human"
+                active_attempt_count = 0
+                decision_id = "decision-timeout"
+                version = 4
+            else:
+                status = "reviewing"
+                active_attempt_count = 0
+                ai_task_id = "ai-task-attempt-2"
+                history.append(second)
+                version = 6
+        elif self.scenario == "high-risk-dispatch":
+            if self.phase == 0:
+                status = "waiting_human"
+                active_attempt_count = 0
+                ai_task_id = None
+                history = []
+                decision_id = "decision-high-risk"
+                version = 2
+            elif self.phase == 1:
+                status = "running"
+                active_attempt_count = 1
+                self.phase = 2
+            else:
+                first = {**first, "runner_status": "succeeded", "status": "completed"}
+                status = "reviewing"
+                active_attempt_count = 0
+                history = [first]
+                version = 4
+        return {
+            "active_attempt_count": active_attempt_count,
+            "ai_task_id": ai_task_id,
+            "attempt_history": self._history(history),
+            "id": "work-scenario",
+            "resume_state": (
+                "ready"
+                if self.scenario == "timeout-recovery" and self.phase == 0
+                else None
+            ),
+            "status": status,
+            "suspended_decision_request_id": decision_id,
+            "title": "scenario_work_item",
+            "version": version,
+        }
+
+    def get(self, path: str, query=None, *, headers=None) -> dict[str, object]:
+        del headers
+        self.calls.append(("GET", path))
+        if path == "/api/delivery/rd-collaboration-runs/run-scenario/work-items":
+            return {"dependencies": [], "items": [self._item_response()]}
+        if path == "/api/delivery/decision-requests/decision-timeout":
+            return {
+                "decision_type": "runner_timeout_recovery",
+                "evidence_json": [
+                    {
+                        "error_code": "AI_EXECUTOR_TASK_TIMEOUT",
+                        "max_iterations": 1,
+                        "timed_out_attempt_count": 1,
+                        "timeout_seconds": 3,
+                    }
+                ],
+                "id": "decision-timeout",
+                "options_json": [
+                    {"code": "retry_after_human_confirmation"},
+                    {"code": "cancel_work_item"},
+                ],
+                "status": "pending",
+                "version": 1,
+            }
+        if path == "/api/delivery/decision-requests/decision-high-risk":
+            return {
+                "decision_type": "high_risk_ai_dispatch",
+                "id": "decision-high-risk",
+                "options_json": [
+                    {"code": "approve_dispatch"},
+                    {"code": "reject_dispatch"},
+                ],
+                "status": "pending",
+                "version": 1,
+            }
+        if path.startswith("/api/ai-tasks/"):
+            task_id = path.rsplit("/", 1)[-1]
+            first_quality_failure = (
+                self.scenario == "quality-rework" and task_id == "ai-task-attempt-1"
+            )
+            return {
+                "id": task_id,
+                "pending_review": (
+                    None if first_quality_failure else {"id": f"review-{task_id}"}
+                ),
+                "quality_gate": {
+                    "id": f"gate-{task_id}",
+                    "independent_evidence_count": 1,
+                    "status": "failed" if first_quality_failure else "passed",
+                    "verified_attestation_count": 1,
+                    "verifier_trust_isolated": True,
+                },
+                "status": "failed" if first_quality_failure else "waiting_review",
+            }
+        if path == "/api/system/ai-executor-tasks":
+            ai_task_id = str((query or {}).get("ai_task_id") or "")
+            attempt_no = 1 if ai_task_id.endswith("-1") else 2
+            coding_status = (
+                "cancelled"
+                if self.scenario == "cancel-resume" and attempt_no == 1
+                else (
+                    "timed_out"
+                    if self.scenario == "timeout-recovery" and attempt_no == 1
+                    else "succeeded"
+                )
+            )
+            items: list[dict[str, object]] = [
+                {
+                    "ai_task_id": ai_task_id,
+                    "id": f"runner-attempt-{attempt_no}",
+                    "runner_id": "runner-codex",
+                    "status": coding_status,
+                    "task_kind": "coding",
+                    "workspace_root": f"/not-reported/by-attempt-{attempt_no}",
+                }
+            ]
+            if coding_status == "succeeded":
+                items.append(
+                    {
+                        "ai_task_id": ai_task_id,
+                        "id": f"verifier-attempt-{attempt_no}",
+                        "quality_gate_run_id": f"gate-{ai_task_id}",
+                        "request_config": {
+                            "required_trust_domain": "verification",
+                        },
+                        "runner_id": "runner-verifier",
+                        "status": "succeeded",
+                        "task_kind": "quality_gate",
+                    }
+                )
+            return {"items": items}
+        raise AssertionError(f"unexpected GET {path} {query}")
+
+    def post(self, path: str, body=None, *, headers=None) -> dict[str, object]:
+        del headers
+        payload = dict(body or {})
+        self.calls.append(("POST", path))
+        if path == "/api/delivery/rd-work-items/work-scenario/cancel":
+            assert self.scenario == "cancel-resume"
+            assert payload["version"] == 3
+            self.phase = 1
+            return {
+                "idempotent_replay": False,
+                "next_state": "cancelled",
+                "work_item": {"id": "work-scenario", "status": "cancelled", "version": 4},
+            }
+        if path == "/api/delivery/rd-work-items/work-scenario/resume":
+            assert self.scenario == "cancel-resume"
+            assert self.phase == 1
+            assert payload["version"] == 4
+            self.phase = 2
+            return {
+                "idempotent_replay": False,
+                "next_state": "rework_required",
+                "work_item": {
+                    "id": "work-scenario",
+                    "status": "rework_required",
+                    "version": 5,
+                },
+            }
+        if path in {
+            "/api/delivery/decision-requests/decision-timeout/decide",
+            "/api/delivery/decision-requests/decision-high-risk/decide",
+        }:
+            expected = (
+                "retry_after_human_confirmation"
+                if self.scenario == "timeout-recovery"
+                else "approve_dispatch"
+            )
+            assert payload["selected_option"] == expected
+            self.decision_posts += 1
+            self.phase = 1
+            return {
+                "decision_request": {
+                    "id": path.split("/")[-2],
+                    "selected_option": expected,
+                    "status": "approved",
+                },
+                "idempotent_replay": self.decision_posts > 1,
+                "next_state": "ready",
+            }
+        raise AssertionError(f"unexpected POST {path}")
+
+
+@pytest.mark.parametrize(
+    ("scenario", "attempt_numbers", "first_status"),
+    [
+        ("quality-rework", [1, 2], "failed"),
+        ("cancel-resume", [1, 2], "cancelled"),
+        ("timeout-recovery", [1, 2], "failed"),
+        ("high-risk-dispatch", [1], "completed"),
+    ],
+)
+def test_governance_scenarios_produce_immutable_attempt_chains(
+    scenario: str,
+    attempt_numbers: list[int],
+    first_status: str,
+) -> None:
+    client = GovernanceScenarioClient(scenario)
+
+    outcome = rd_delivery_e2e.validate_governance_scenario(
+        client,
+        scenario=scenario,
+        config=valid_config(timeout_seconds=2),
+        marker="scenario-marker",
+        owner_password="owner-secret",
+        owner_username="owner@example.com",
+        run_id="run-scenario",
+        work_item_id="work-scenario",
+    )
+
+    assert [item["attempt_no"] for item in outcome.attempt_chain] == attempt_numbers
+    assert outcome.attempt_chain[0]["status"] == first_status
+    assert [item["runner_task_id"] for item in outcome.attempt_chain] == [
+        f"runner-attempt-{attempt_no}" for attempt_no in attempt_numbers
+    ]
+    assert "owner-secret" not in repr(outcome)
+    assert "reviewer-secret" not in repr(outcome)
+    assert all(
+        set(item).issubset(
+            {
+                "ai_task_id",
+                "attempt_no",
+                "completed_at",
+                "failure_code",
+                "fence_event_id",
+                "late_result_fenced",
+                "rework_evidence_count",
+                "runner_status",
+                "runner_task_id",
+                "started_at",
+                "status",
+                "workspace_fingerprint",
+            }
+        )
+        for item in outcome.attempt_chain
+    )
+
+    posted_paths = [path for method, path in client.calls if method == "POST"]
+    assert not any(
+        path == "/api/ai-tasks"
+        or path.startswith("/api/ai-tasks/")
+        or path.endswith("/retry")
+        or path.endswith("/start")
+        or path.endswith("/complete")
+        or "/webhooks/" in path
+        or path.startswith("/api/devops/deployments")
+        for path in posted_paths
+    )
+
+
+def test_quality_rework_requires_failed_gate_before_attempt_two() -> None:
+    client = GovernanceScenarioClient("quality-rework")
+
+    outcome = rd_delivery_e2e.validate_governance_scenario(
+        client,
+        scenario="quality-rework",
+        config=valid_config(timeout_seconds=2),
+        marker="quality-marker",
+        owner_password="owner-secret",
+        owner_username="owner@example.com",
+        run_id="run-scenario",
+        work_item_id="work-scenario",
+    )
+
+    assert outcome.observed_states == ("rework_required", "reviewing")
+    assert outcome.attempt_chain[0]["failure_code"] is None
+    assert outcome.attempt_chain[0]["rework_evidence_count"] == 0
+    assert outcome.transition_evidence == (
+        {
+            "attempt_no": 1,
+            "quality_gate_id": "gate-ai-task-attempt-1",
+            "quality_gate_status": "failed",
+            "verifier_runner_task_id": "verifier-attempt-1",
+        },
+    )
+
+
+def test_cancel_resume_uses_only_work_item_commands_and_requires_fenced_late_result() -> None:
+    client = GovernanceScenarioClient("cancel-resume")
+
+    outcome = rd_delivery_e2e.validate_governance_scenario(
+        client,
+        scenario="cancel-resume",
+        config=valid_config(timeout_seconds=2),
+        marker="cancel-marker",
+        owner_password="owner-secret",
+        owner_username="owner@example.com",
+        run_id="run-scenario",
+        work_item_id="work-scenario",
+    )
+
+    assert outcome.observed_states == (
+        "running",
+        "cancelled",
+        "rework_required",
+        "reviewing",
+    )
+    assert outcome.attempt_chain[0]["runner_status"] == "cancelled"
+    assert outcome.attempt_chain[0]["late_result_fenced"] is True
+    assert [path for method, path in client.calls if method == "POST"] == [
+        "/api/delivery/rd-work-items/work-scenario/cancel",
+        "/api/delivery/rd-work-items/work-scenario/resume",
+    ]
+
+
+def test_cancel_resume_waits_for_runner_terminal_and_durable_fence() -> None:
+    class DelayedFenceClient(GovernanceScenarioClient):
+        def __init__(self) -> None:
+            super().__init__("cancel-resume")
+            self.cancelled_reads = 0
+
+        def _item_response(self) -> dict[str, object]:
+            item = super()._item_response()
+            if item["status"] == "cancelled":
+                self.cancelled_reads += 1
+                if self.cancelled_reads == 1:
+                    history = dict(item["attempt_history"])
+                    attempt = dict(history["items"][0])
+                    attempt.update(
+                        {
+                            "fence_event_id": None,
+                            "late_result_fenced": False,
+                            "runner_status": "cancel_requested",
+                        }
+                    )
+                    item["attempt_history"] = {**history, "items": [attempt]}
+            return item
+
+    client = DelayedFenceClient()
+
+    rd_delivery_e2e.validate_governance_scenario(
+        client,
+        scenario="cancel-resume",
+        config=valid_config(timeout_seconds=2),
+        marker="cancel-wait-marker",
+        owner_password="owner-secret",
+        owner_username="owner@example.com",
+        run_id="run-scenario",
+        work_item_id="work-scenario",
+    )
+
+    assert client.cancelled_reads >= 2
+
+
+def test_timeout_recovery_uses_only_frozen_human_retry_and_retains_workspace() -> None:
+    client = GovernanceScenarioClient("timeout-recovery")
+
+    outcome = rd_delivery_e2e.validate_governance_scenario(
+        client,
+        scenario="timeout-recovery",
+        config=valid_config(timeout_seconds=2),
+        marker="timeout-marker",
+        owner_password="owner-secret",
+        owner_username="owner@example.com",
+        run_id="run-scenario",
+        work_item_id="work-scenario",
+    )
+
+    assert outcome.observed_states == ("waiting_human", "ready", "reviewing")
+    assert outcome.attempt_chain[0]["runner_status"] == "timed_out"
+    assert (
+        outcome.attempt_chain[0]["workspace_fingerprint"]
+        == outcome.attempt_chain[1]["workspace_fingerprint"]
+    )
+    decision_posts = [
+        path for method, path in client.calls if method == "POST" and "/decision-requests/" in path
+    ]
+    assert decision_posts == [
+        "/api/delivery/decision-requests/decision-timeout/decide"
+    ]
+
+
+def test_high_risk_dispatch_replay_creates_exactly_one_attempt() -> None:
+    client = GovernanceScenarioClient("high-risk-dispatch")
+
+    outcome = rd_delivery_e2e.validate_governance_scenario(
+        client,
+        scenario="high-risk-dispatch",
+        config=valid_config(timeout_seconds=2),
+        marker="high-risk-marker",
+        owner_password="owner-secret",
+        owner_username="owner@example.com",
+        run_id="run-scenario",
+        work_item_id="work-scenario",
+    )
+
+    assert outcome.observed_states == ("waiting_human", "running", "reviewing")
+    assert len(outcome.attempt_chain) == 1
+    assert client.decision_posts == 2

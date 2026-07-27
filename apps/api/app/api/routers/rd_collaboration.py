@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 from copy import deepcopy
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Request, Response
@@ -39,6 +42,29 @@ from app.services.rd_work_item_scheduler import (
 )
 
 router = APIRouter(tags=["rd_collaboration"])
+
+_ATTEMPT_HISTORY_LIMIT = 20
+_PUBLIC_ATTEMPT_STATUSES = {
+    "cancelled",
+    "claimed",
+    "completed",
+    "expired",
+    "failed",
+    "running",
+    "waiting_human",
+}
+_PUBLIC_RUNNER_STATUSES = {
+    "cancel_requested",
+    "cancelled",
+    "claimed",
+    "dead_letter",
+    "failed",
+    "queued",
+    "running",
+    "succeeded",
+    "timed_out",
+}
+_SAFE_CODE_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]+$")
 
 
 class _StrictModel(BaseModel):
@@ -157,13 +183,46 @@ def _list(
 def _work_items_with_active_attempt_counts(
     current_store: Any,
     *,
+    product_id: str,
     run_id: str,
 ) -> list[dict[str, Any]]:
     items = _list(current_store, "rd_work_items", run_id, "list_rd_work_items")
     repository = getattr(current_store, "repository", None)
     list_attempts = getattr(repository, "list_rd_work_item_attempts", None)
+    list_runner_tasks = getattr(repository, "list_ai_executor_tasks", None)
+    list_events = getattr(repository, "list_rd_collaboration_events", None)
     memory_attempts = getattr(current_store, "rd_work_item_attempts", {})
     memory_attempts = memory_attempts if isinstance(memory_attempts, dict) else {}
+    memory_runner_tasks = getattr(current_store, "ai_executor_tasks", {})
+    memory_runner_tasks = (
+        memory_runner_tasks if isinstance(memory_runner_tasks, dict) else {}
+    )
+    memory_ai_tasks = getattr(current_store, "ai_tasks", {})
+    memory_ai_tasks = memory_ai_tasks if isinstance(memory_ai_tasks, dict) else {}
+    memory_events = getattr(current_store, "rd_collaboration_events", {})
+    memory_events = memory_events if isinstance(memory_events, dict) else {}
+    runner_tasks = (
+        list_runner_tasks(product_scope_ids=[product_id])
+        if callable(list_runner_tasks)
+        else [
+            deepcopy(value)
+            for value in memory_runner_tasks.values()
+            if isinstance(value, dict)
+            and isinstance(memory_ai_tasks.get(str(value.get("ai_task_id") or "")), dict)
+            and memory_ai_tasks[str(value.get("ai_task_id") or "")].get("product_id")
+            == product_id
+        ]
+    )
+    events = (
+        list_events(run_id)
+        if callable(list_events)
+        else [
+            deepcopy(value)
+            for value in memory_events.values()
+            if isinstance(value, dict)
+            and value.get("collaboration_run_id") == run_id
+        ]
+    )
     projected: list[dict[str, Any]] = []
     for item in items:
         work_item_id = str(item.get("id") or "")
@@ -173,7 +232,8 @@ def _work_items_with_active_attempt_counts(
             else [
                 attempt
                 for attempt in memory_attempts.values()
-                if attempt.get("work_item_id") == work_item_id
+                if isinstance(attempt, dict)
+                and attempt.get("work_item_id") == work_item_id
             ]
         )
         active_attempt_count = sum(
@@ -185,9 +245,185 @@ def _work_items_with_active_attempt_counts(
             {
                 **item,
                 "active_attempt_count": active_attempt_count,
+                "attempt_history": _attempt_history_projection(
+                    attempts=attempts,
+                    events=events,
+                    runner_tasks=runner_tasks,
+                    work_item_id=work_item_id,
+                ),
             }
         )
     return projected
+
+
+def _bounded_safe_value(value: Any, *, maximum: int) -> str | None:
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    if not candidate or len(candidate) > maximum:
+        return None
+    return candidate if _SAFE_CODE_PATTERN.fullmatch(candidate) else None
+
+
+def _bounded_timestamp(value: Any) -> str | None:
+    if not isinstance(value, str) or not value or len(value) > 64:
+        return None
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return value
+
+
+def _runner_attempt_id(task: dict[str, Any]) -> str:
+    for field in ("input_payload", "request_config"):
+        payload = task.get(field)
+        if isinstance(payload, dict):
+            attempt_id = payload.get("rd_work_item_attempt_id")
+            if isinstance(attempt_id, str) and attempt_id:
+                return attempt_id
+    return ""
+
+
+def _attempt_fence_event(
+    events: list[dict[str, Any]],
+    *,
+    attempt_id: str,
+    work_item_id: str,
+) -> dict[str, Any] | None:
+    matches = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if event.get("event_type") not in {
+            "work_item.runner_result_fenced",
+            "rd_work_item.runner_result_fenced",
+        }:
+            continue
+        if event.get("subject_type") != "rd_work_item":
+            continue
+        if str(event.get("subject_id") or "") != work_item_id:
+            continue
+        payload = event.get("payload_json")
+        payload_attempt_id = (
+            str(payload.get("attempt_id") or "") if isinstance(payload, dict) else ""
+        )
+        event_key = str(event.get("event_key") or "")
+        if (
+            payload_attempt_id == attempt_id
+            or event_key.startswith(f"work-item-runner-fenced:{work_item_id}:{attempt_id}:")
+        ):
+            matches.append(event)
+    if not matches:
+        return None
+    return sorted(
+        matches,
+        key=lambda value: (
+            str(value.get("occurred_at") or ""),
+            str(value.get("id") or ""),
+        ),
+    )[0]
+
+
+def _attempt_history_projection(
+    *,
+    attempts: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+    runner_tasks: list[dict[str, Any]],
+    work_item_id: str,
+) -> dict[str, Any]:
+    normalized_attempts = [
+        attempt for attempt in attempts if isinstance(attempt, dict)
+    ]
+    normalized_attempts.sort(
+        key=lambda value: (
+            value.get("attempt_no")
+            if isinstance(value.get("attempt_no"), int)
+            and not isinstance(value.get("attempt_no"), bool)
+            else 0,
+            str(value.get("id") or ""),
+        )
+    )
+    total = len(normalized_attempts)
+    selected_attempts = normalized_attempts[-_ATTEMPT_HISTORY_LIMIT:]
+    items = []
+    for attempt in selected_attempts:
+        attempt_id = str(attempt.get("id") or "")
+        attempt_no = attempt.get("attempt_no")
+        if (
+            not isinstance(attempt_no, int)
+            or isinstance(attempt_no, bool)
+            or attempt_no < 1
+        ):
+            continue
+        matching_runners = [
+            task
+            for task in runner_tasks
+            if isinstance(task, dict)
+            and task.get("task_kind") == "coding"
+            and _runner_attempt_id(task) == attempt_id
+        ]
+        runner_task = matching_runners[0] if len(matching_runners) == 1 else {}
+        workspace_root = runner_task.get("workspace_root")
+        workspace_fingerprint = (
+            "sha256:" + hashlib.sha256(workspace_root.encode("utf-8")).hexdigest()
+            if isinstance(workspace_root, str) and workspace_root
+            else None
+        )
+        failure = attempt.get("failure_json")
+        failure_code = (
+            _bounded_safe_value(failure.get("error_code"), maximum=128)
+            if isinstance(failure, dict)
+            else None
+        )
+        fence_event = _attempt_fence_event(
+            events,
+            attempt_id=attempt_id,
+            work_item_id=work_item_id,
+        )
+        ai_task_id = _bounded_safe_value(
+            runner_task.get("ai_task_id"),
+            maximum=160,
+        )
+        runner_task_id = _bounded_safe_value(runner_task.get("id"), maximum=160)
+        runner_status = runner_task.get("status")
+        rework_evidence = attempt.get("rework_evidence")
+        public_attempt_status = attempt.get("status")
+        items.append(
+            {
+                "attempt_no": attempt_no,
+                "status": (
+                    public_attempt_status
+                    if public_attempt_status in _PUBLIC_ATTEMPT_STATUSES
+                    else "unknown"
+                ),
+                "ai_task_id": ai_task_id,
+                "runner_task_id": runner_task_id,
+                "runner_status": (
+                    runner_status if runner_status in _PUBLIC_RUNNER_STATUSES else None
+                ),
+                "workspace_fingerprint": workspace_fingerprint,
+                "failure_code": failure_code,
+                "rework_evidence_count": (
+                    min(len(rework_evidence), 10_000)
+                    if isinstance(rework_evidence, list)
+                    else 0
+                ),
+                "late_result_fenced": fence_event is not None,
+                "fence_event_id": (
+                    _bounded_safe_value(fence_event.get("id"), maximum=160)
+                    if fence_event is not None
+                    else None
+                ),
+                "started_at": _bounded_timestamp(attempt.get("started_at")),
+                "completed_at": _bounded_timestamp(attempt.get("completed_at")),
+            }
+        )
+    return {
+        "items": items,
+        "total": total,
+        "truncated": total > _ATTEMPT_HISTORY_LIMIT,
+    }
 
 
 def _run_payload(result: dict[str, Any]) -> dict[str, Any]:
@@ -380,11 +616,12 @@ def list_work_items(
 ) -> dict[str, Any]:
     _require(user, "delivery.rd_collaboration.read")
     current_store = store(request)
-    require_run_scope(current_store, user, run_id)
+    run = require_run_scope(current_store, user, run_id)
     return envelope(
         {
             "items": _work_items_with_active_attempt_counts(
                 current_store,
+                product_id=str(run.get("product_id") or ""),
                 run_id=run_id,
             ),
             "dependencies": _list(

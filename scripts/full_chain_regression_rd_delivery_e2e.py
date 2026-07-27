@@ -18,6 +18,44 @@ _DEPLOYMENT_AUDIT_EVENTS = (
     "deployment.run.started",
     "deployment_request.completed",
 )
+RD_E2E_SCENARIOS = (
+    "happy-path",
+    "quality-rework",
+    "cancel-resume",
+    "timeout-recovery",
+    "high-risk-dispatch",
+)
+_ATTEMPT_CHAIN_FIELDS = {
+    "ai_task_id",
+    "attempt_no",
+    "completed_at",
+    "failure_code",
+    "fence_event_id",
+    "late_result_fenced",
+    "rework_evidence_count",
+    "runner_status",
+    "runner_task_id",
+    "started_at",
+    "status",
+    "workspace_fingerprint",
+}
+_POLICY_MUTABLE_FIELDS = (
+    "assessment_config",
+    "autonomy_config",
+    "brain_app_id",
+    "delivery_target",
+    "deployment_config",
+    "experience_reuse_config",
+    "git_config",
+    "iteration_config",
+    "matching_config",
+    "name",
+    "product_id",
+    "quality_gate_config",
+    "role_bindings",
+    "status",
+    "team_config",
+)
 
 
 class RegressionError(AssertionError):
@@ -28,6 +66,14 @@ class RegressionError(AssertionError):
 class StepResult:
     name: str
     detail: str
+    evidence: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class GovernanceScenarioOutcome:
+    attempt_chain: tuple[dict[str, Any], ...]
+    observed_states: tuple[str, ...]
+    transition_evidence: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -408,11 +454,16 @@ def _runner_and_gate_evidence(
     *,
     ai_task_id: str,
     expected_coding_runner_id: str,
+    expected_gate_status: str = "passed",
+    require_pending_review: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], str]:
     task = client.get(f"/api/ai-tasks/{ai_task_id}")
     gate = task.get("quality_gate")
     gate = gate if isinstance(gate, dict) else {}
-    _assert(gate.get("status") == "passed" and gate.get("id"), "Independent quality gate failed")
+    _assert(
+        gate.get("status") == expected_gate_status and gate.get("id"),
+        f"Independent quality gate did not reach {expected_gate_status}",
+    )
     _assert(
         gate.get("verifier_trust_isolated") is True
         and isinstance(gate.get("verified_attestation_count"), int)
@@ -467,8 +518,518 @@ def _runner_and_gate_evidence(
         "Quality-gate Runner task is missing the verification trust boundary",
     )
     review_id = str((task.get("pending_review") or {}).get("id") or "")
-    _assert(review_id, "AI task pending Review is missing")
+    if require_pending_review:
+        _assert(review_id, "AI task pending Review is missing")
     return coding_task, verifier_task, gate, review_id
+
+
+def _scenario_work_item(
+    client: Any,
+    *,
+    run_id: str,
+    work_item_id: str,
+) -> dict[str, Any]:
+    items = _work_items(client, run_id)
+    matches = [item for item in items if str(item.get("id") or "") == work_item_id]
+    _assert(len(matches) == 1, f"Scenario work item {work_item_id} is unavailable")
+    return matches[0]
+
+
+def _attempt_chain(
+    item: dict[str, Any],
+    *,
+    secret_values: tuple[str, ...],
+) -> tuple[dict[str, Any], ...]:
+    history = item.get("attempt_history")
+    _assert(isinstance(history, dict), "Public attempt history is missing")
+    raw_items = history.get("items")
+    _assert(isinstance(raw_items, list), "Public attempt history items are invalid")
+    _assert(history.get("truncated") is False, "Scenario attempt history is truncated")
+    total = history.get("total")
+    _assert(
+        isinstance(total, int)
+        and not isinstance(total, bool)
+        and total == len(raw_items),
+        "Scenario attempt history total is invalid",
+    )
+    chain: list[dict[str, Any]] = []
+    for raw_item in raw_items:
+        _assert(isinstance(raw_item, dict), "Scenario attempt history entry is invalid")
+        _assert(
+            set(raw_item).issubset(_ATTEMPT_CHAIN_FIELDS),
+            "Scenario attempt history exposes non-public fields",
+        )
+        attempt_no = raw_item.get("attempt_no")
+        _assert(
+            isinstance(attempt_no, int)
+            and not isinstance(attempt_no, bool)
+            and attempt_no > 0,
+            "Scenario attempt number is invalid",
+        )
+        chain.append({field: raw_item.get(field) for field in sorted(_ATTEMPT_CHAIN_FIELDS)})
+    _assert(
+        [item["attempt_no"] for item in chain]
+        == sorted({item["attempt_no"] for item in chain}),
+        "Scenario attempt history is not immutable and ordered",
+    )
+    redacted = safe_report_value(chain, secret_values=secret_values)
+    _assert(isinstance(redacted, list), "Scenario attempt report projection is invalid")
+    return tuple(dict(item) for item in redacted if isinstance(item, dict))
+
+
+def _decision_options(decision: dict[str, Any]) -> set[str]:
+    return {
+        str(option.get("code") or "")
+        for option in decision.get("options_json") or []
+        if isinstance(option, dict)
+    }
+
+
+def _cancelled_attempt_is_fenced(
+    item: dict[str, Any],
+    *,
+    secret_values: tuple[str, ...],
+) -> bool:
+    if item.get("status") != "cancelled":
+        return False
+    chain = _attempt_chain(item, secret_values=secret_values)
+    return (
+        len(chain) == 1
+        and chain[0]["status"] == "cancelled"
+        and chain[0]["runner_status"] == "cancelled"
+        and chain[0]["late_result_fenced"] is True
+        and bool(chain[0]["fence_event_id"])
+    )
+
+
+def _policy_changes(policy: dict[str, Any]) -> dict[str, Any]:
+    missing = [field for field in _POLICY_MUTABLE_FIELDS if field not in policy]
+    _assert(not missing, f"Policy restore payload is incomplete: {', '.join(missing)}")
+    return {field: policy[field] for field in _POLICY_MUTABLE_FIELDS}
+
+
+def create_scenario_assessment(
+    client: Any,
+    *,
+    scenario: str,
+    policy: dict[str, Any],
+    requirement_id: str,
+    request_payload: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, int]]:
+    assessment_path = f"/api/requirements/{requirement_id}/assessments"
+    if scenario != "timeout-recovery":
+        return client.post(assessment_path, request_payload), {}
+
+    policy_id = str(policy.get("id") or "")
+    original_version = policy.get("policy_version")
+    _assert(
+        policy_id
+        and isinstance(original_version, int)
+        and not isinstance(original_version, bool)
+        and original_version > 0,
+        "Timeout scenario requires a versioned active policy",
+    )
+    original_changes = _policy_changes(policy)
+    original_autonomy = original_changes.get("autonomy_config")
+    _assert(
+        isinstance(original_autonomy, dict),
+        "Timeout scenario policy autonomy_config is invalid",
+    )
+    fault_changes = {
+        **original_changes,
+        "autonomy_config": {
+            **original_autonomy,
+            "max_iterations": 1,
+            "mode": "single_pass",
+            "timeout_seconds": 3,
+        },
+    }
+    fault_response = client.patch(
+        f"/api/delivery/rd-task-executor-policies/{policy_id}",
+        {
+            "changes": fault_changes,
+            "expected_policy_version": original_version,
+        },
+    )
+    fault_policy = fault_response.get("policy") or {}
+    fault_version = fault_policy.get("policy_version")
+    _assert(
+        isinstance(fault_version, int)
+        and not isinstance(fault_version, bool)
+        and fault_version > original_version,
+        "Timeout fault policy version was not advanced",
+    )
+    assessment: dict[str, Any] | None = None
+    restored_policy: dict[str, Any] = {}
+    try:
+        assessment = client.post(assessment_path, request_payload)
+        _assert(
+            assessment.get("initial_strategy_snapshot_id"),
+            "Timeout assessment did not freeze the fault policy",
+        )
+    finally:
+        restore_payload = {
+            "changes": original_changes,
+            "expected_policy_version": fault_version,
+        }
+        first_restore_error: Exception | None = None
+        try:
+            restored_response = client.patch(
+                f"/api/delivery/rd-task-executor-policies/{policy_id}",
+                restore_payload,
+            )
+        except Exception as exc:
+            first_restore_error = exc
+            restored_response = client.patch(
+                f"/api/delivery/rd-task-executor-policies/{policy_id}",
+                restore_payload,
+            )
+        restored_policy = restored_response.get("policy") or {}
+        _assert(
+            all(
+                restored_policy.get(field) == original_changes[field]
+                for field in _POLICY_MUTABLE_FIELDS
+            ),
+            "Timeout scenario failed to restore the original policy payload",
+        )
+        if first_restore_error is not None:
+            raise first_restore_error
+    _assert(assessment is not None, "Timeout assessment was not created")
+    restored_version = restored_policy.get("policy_version")
+    _assert(
+        isinstance(restored_version, int)
+        and not isinstance(restored_version, bool)
+        and restored_version > fault_version,
+        "Timeout policy restore version was not advanced",
+    )
+    return assessment, {
+        "fault_policy_version": fault_version,
+        "original_policy_version": original_version,
+        "restored_policy_version": restored_version,
+    }
+
+
+def build_scenario_task_contract(
+    *,
+    artifact_path: str,
+    scenario: str,
+) -> tuple[list[str], str]:
+    acceptance_criteria = [
+        f"Only {artifact_path} is changed",
+        "Independent quality gate and automated testing pass",
+        "Delivery stops at ready_for_release without deployment",
+    ]
+    instruction = (
+        f"Create only {artifact_path} containing requirement_id, run_id, trace_id, "
+        f"and these acceptance criteria: {'; '.join(acceptance_criteria)}. "
+        "Do not modify application code, dependencies, CI, deployment files, "
+        "protected branches, or secrets."
+    )
+    if scenario == "quality-rework":
+        acceptance_criteria.append(
+            "The final artifact contains quality_rework_complete=true"
+        )
+        instruction = (
+            f"{instruction} For the first real Runner attempt only, intentionally "
+            "omit quality_rework_complete=true so the independent quality gate "
+            "rejects the artifact against the final acceptance criteria. After the "
+            "platform supplies durable rework evidence, amend the same isolated "
+            "artifact to include quality_rework_complete=true and satisfy every "
+            "criterion. Do not simulate or report a gate result."
+        )
+    return acceptance_criteria, instruction
+
+
+def validate_governance_scenario(
+    client: Any,
+    *,
+    scenario: str,
+    config: RdDeliveryE2EConfig,
+    marker: str,
+    owner_password: str,
+    owner_username: str,
+    run_id: str,
+    work_item_id: str,
+) -> GovernanceScenarioOutcome:
+    _assert(
+        scenario in set(RD_E2E_SCENARIOS) - {"happy-path"},
+        f"Unsupported R&D delivery governance scenario: {scenario}",
+    )
+    secrets = (owner_password, config.reviewer_password)
+    observed_states: list[str] = []
+    transition_evidence: list[dict[str, Any]] = []
+
+    initial = _scenario_work_item(
+        client,
+        run_id=run_id,
+        work_item_id=work_item_id,
+    )
+
+    if scenario == "quality-rework":
+        initial = _wait_for(
+            lambda: _scenario_work_item(
+                client,
+                run_id=run_id,
+                work_item_id=work_item_id,
+            ),
+            lambda item: item.get("status") == "rework_required"
+            and item.get("active_attempt_count") == 0,
+            description="real independent gate producing rework_required",
+            timeout_seconds=config.timeout_seconds,
+            secret_values=secrets,
+        )
+        observed_states.append("rework_required")
+        _assert(
+            initial.get("status") == "rework_required"
+            and initial.get("active_attempt_count") == 0,
+            "Quality failure did not stop at rework_required",
+        )
+        initial_chain = _attempt_chain(initial, secret_values=secrets)
+        _assert(
+            len(initial_chain) == 1
+            and initial_chain[0]["status"] == "failed"
+            and initial_chain[0]["runner_status"] == "succeeded",
+            "First quality failure is not durably attributable to attempt 1",
+        )
+        _, verifier_task, failed_gate, _ = _runner_and_gate_evidence(
+            client,
+            ai_task_id=str(initial_chain[0]["ai_task_id"] or ""),
+            expected_coding_runner_id=config.runner_id,
+            expected_gate_status="failed",
+            require_pending_review=False,
+        )
+        gate_id = str(failed_gate.get("id") or "")
+        verifier_task_id = str(verifier_task.get("id") or "")
+        _assert(
+            0 < len(gate_id) <= 160 and 0 < len(verifier_task_id) <= 160,
+            "Quality rework transition evidence is not bounded",
+        )
+        transition_evidence.append(
+            {
+                "attempt_no": 1,
+                "quality_gate_id": gate_id,
+                "quality_gate_status": "failed",
+                "verifier_runner_task_id": verifier_task_id,
+            }
+        )
+        final = _wait_for(
+            lambda: _scenario_work_item(
+                client,
+                run_id=run_id,
+                work_item_id=work_item_id,
+            ),
+            lambda item: item.get("status") == "reviewing",
+            description="quality rework attempt reaching Review",
+            timeout_seconds=config.timeout_seconds,
+            secret_values=secrets,
+        )
+    elif scenario == "cancel-resume":
+        observed_states.append(str(initial.get("status") or ""))
+        _assert(
+            initial.get("status") == "running"
+            and initial.get("active_attempt_count") == 1,
+            "Cancel/resume scenario did not start with one active attempt",
+        )
+        cancelled_response = client.post(
+            f"/api/delivery/rd-work-items/{work_item_id}/cancel",
+            {
+                "idempotency_key": f"rd-e2e-cancel:{marker}:{work_item_id}",
+                "reason": "exercise work-item cancellation and late-result fencing",
+                "version": initial["version"],
+            },
+        )
+        cancelled = _wait_for(
+            lambda: _scenario_work_item(
+                client,
+                run_id=run_id,
+                work_item_id=work_item_id,
+            ),
+            lambda item: _cancelled_attempt_is_fenced(
+                item,
+                secret_values=secrets,
+            ),
+            description=(
+                "work-item cancellation reaching terminal Runner state with "
+                "a durable late-result fence"
+            ),
+            timeout_seconds=config.timeout_seconds,
+            secret_values=secrets,
+        )
+        observed_states.append("cancelled")
+        cancelled_chain = _attempt_chain(cancelled, secret_values=secrets)
+        _assert(
+            len(cancelled_chain) == 1
+            and cancelled_chain[0]["status"] == "cancelled"
+            and cancelled_chain[0]["runner_status"] == "cancelled"
+            and cancelled_chain[0]["late_result_fenced"] is True
+            and cancelled_chain[0]["fence_event_id"],
+            "Cancelled attempt is missing terminal Runner and durable fence evidence",
+        )
+        _assert(
+            (cancelled_response.get("work_item") or {}).get("status") == "cancelled",
+            "Work-item cancellation response is invalid",
+        )
+        resumed = client.post(
+            f"/api/delivery/rd-work-items/{work_item_id}/resume",
+            {
+                "idempotency_key": f"rd-e2e-resume:{marker}:{work_item_id}",
+                "reason": "resume from retained isolated workspace",
+                "version": cancelled["version"],
+            },
+        )
+        _assert(
+            resumed.get("next_state") == "rework_required",
+            "Work-item resume did not enter rework_required",
+        )
+        observed_states.append("rework_required")
+        final = _wait_for(
+            lambda: _scenario_work_item(
+                client,
+                run_id=run_id,
+                work_item_id=work_item_id,
+            ),
+            lambda item: item.get("status") == "reviewing",
+            description="resumed work item reaching Review",
+            timeout_seconds=config.timeout_seconds,
+            secret_values=secrets,
+        )
+    else:
+        observed_states.append(str(initial.get("status") or ""))
+        _assert(
+            initial.get("status") == "waiting_human"
+            and initial.get("active_attempt_count") == 0,
+            f"{scenario} did not stop before human confirmation",
+        )
+        decision_id = str(initial.get("suspended_decision_request_id") or "")
+        _assert(decision_id, f"{scenario} decision request is missing")
+        decision = client.get(f"/api/delivery/decision-requests/{decision_id}")
+        if scenario == "timeout-recovery":
+            initial_chain = _attempt_chain(initial, secret_values=secrets)
+            _assert(
+                initial.get("resume_state") == "ready"
+                and len(initial_chain) == 1
+                and initial_chain[0]["status"] == "failed"
+                and initial_chain[0]["runner_status"] == "timed_out",
+                "Timeout did not freeze the failed attempt for human recovery",
+            )
+            _assert(
+                decision.get("decision_type") == "runner_timeout_recovery"
+                and _decision_options(decision)
+                == {"retry_after_human_confirmation", "cancel_work_item"},
+                "Timeout recovery decision options are unsafe",
+            )
+            evidence = decision.get("evidence_json")
+            _assert(
+                isinstance(evidence, list) and len(evidence) == 1,
+                "Timeout decision evidence is not bounded",
+            )
+            frozen = evidence[0] if isinstance(evidence[0], dict) else {}
+            _assert(
+                frozen.get("max_iterations") == 1
+                and frozen.get("timed_out_attempt_count") == 1
+                and isinstance(frozen.get("timeout_seconds"), int)
+                and 0 < frozen["timeout_seconds"] <= 30,
+                "Timeout decision did not freeze the isolated low-timeout policy",
+            )
+            selected_option = "retry_after_human_confirmation"
+        else:
+            _assert(
+                not initial.get("ai_task_id")
+                and _attempt_chain(initial, secret_values=secrets) == (),
+                "High-risk dispatch created a task or attempt before approval",
+            )
+            _assert(
+                decision.get("decision_type") == "high_risk_ai_dispatch"
+                and _decision_options(decision)
+                == {"approve_dispatch", "reject_dispatch"},
+                "High-risk dispatch decision options are unsafe",
+            )
+            selected_option = "approve_dispatch"
+
+        client.login(config.reviewer_username, config.reviewer_password)
+        payload = {
+            "comment": f"Approve isolated {scenario} E2E recovery",
+            "idempotency_key": f"rd-e2e-decision:{marker}:{decision_id}",
+            "selected_option": selected_option,
+            "version": decision["version"],
+        }
+        decided = client.post(
+            f"/api/delivery/decision-requests/{decision_id}/decide",
+            payload,
+        )
+        if scenario == "high-risk-dispatch":
+            replay = client.post(
+                f"/api/delivery/decision-requests/{decision_id}/decide",
+                payload,
+            )
+            _assert(
+                replay.get("idempotent_replay") is True,
+                "High-risk approval replay was not idempotent",
+            )
+        client.login(owner_username, owner_password)
+        _assert(
+            decided.get("next_state") == "ready",
+            f"{scenario} decision did not resume through ready",
+        )
+        observed_states.append("ready")
+        if scenario == "high-risk-dispatch":
+            running = _wait_for(
+                lambda: _scenario_work_item(
+                    client,
+                    run_id=run_id,
+                    work_item_id=work_item_id,
+                ),
+                lambda item: item.get("status") == "running"
+                and item.get("active_attempt_count") == 1,
+                description="approved high-risk work item dispatching exactly once",
+                timeout_seconds=config.timeout_seconds,
+                secret_values=secrets,
+            )
+            running_chain = _attempt_chain(running, secret_values=secrets)
+            _assert(
+                len(running_chain) == 1,
+                "High-risk approval did not create exactly one attempt",
+            )
+            observed_states[-1] = "running"
+        final = _wait_for(
+            lambda: _scenario_work_item(
+                client,
+                run_id=run_id,
+                work_item_id=work_item_id,
+            ),
+            lambda item: item.get("status") == "reviewing",
+            description=f"{scenario} recovery reaching Review",
+            timeout_seconds=config.timeout_seconds,
+            secret_values=secrets,
+        )
+
+    observed_states.append("reviewing")
+    attempt_chain = _attempt_chain(final, secret_values=secrets)
+    expected_attempts = 1 if scenario == "high-risk-dispatch" else 2
+    _assert(
+        [item["attempt_no"] for item in attempt_chain]
+        == list(range(1, expected_attempts + 1)),
+        f"{scenario} did not retain the immutable attempt chain",
+    )
+    if scenario == "timeout-recovery":
+        _assert(
+            attempt_chain[0]["workspace_fingerprint"]
+            and attempt_chain[0]["workspace_fingerprint"]
+            == attempt_chain[1]["workspace_fingerprint"],
+            "Timeout recovery did not retain the isolated workspace",
+        )
+    final_task_id = str(attempt_chain[-1]["ai_task_id"] or "")
+    _assert(final_task_id, f"{scenario} final attempt has no AI task")
+    _runner_and_gate_evidence(
+        client,
+        ai_task_id=final_task_id,
+        expected_coding_runner_id=config.runner_id,
+    )
+    return GovernanceScenarioOutcome(
+        attempt_chain=attempt_chain,
+        observed_states=tuple(observed_states),
+        transition_evidence=tuple(transition_evidence),
+    )
 
 
 def _approve_item(
@@ -508,7 +1069,13 @@ def validate_rd_delivery_e2e(
     owner_username: str,
     owner_password: str,
     config: RdDeliveryE2EConfig,
+    *,
+    scenario: str = "happy-path",
 ) -> list[StepResult]:
+    _assert(
+        scenario in RD_E2E_SCENARIOS,
+        f"Unsupported R&D delivery E2E scenario: {scenario}",
+    )
     secrets = (owner_password, config.reviewer_password)
     preflight = preflight_rd_delivery_e2e(
         client,
@@ -557,16 +1124,9 @@ def validate_rd_delivery_e2e(
     )
 
     artifact_path = f"docs/e2e/rd-collaboration-{marker}.md"
-    acceptance_criteria = [
-        f"Only {artifact_path} is changed",
-        "Independent quality gate and automated testing pass",
-        "Delivery stops at ready_for_release without deployment",
-    ]
-    instruction = (
-        f"Create only {artifact_path} containing requirement_id, run_id, trace_id, "
-        f"and these acceptance criteria: {'; '.join(acceptance_criteria)}. "
-        "Do not modify application code, dependencies, CI, deployment files, "
-        "protected branches, or secrets."
+    acceptance_criteria, instruction = build_scenario_task_contract(
+        artifact_path=artifact_path,
+        scenario=scenario,
     )
     requirement = client.post(
         "/api/requirements",
@@ -581,9 +1141,12 @@ def validate_rd_delivery_e2e(
     )
     requirement_id = str(requirement.get("id") or "")
     _assert(requirement_id, "Requirement creation did not return an id")
-    assessment = client.post(
-        f"/api/requirements/{requirement_id}/assessments",
-        {
+    assessment, scenario_policy_versions = create_scenario_assessment(
+        client,
+        scenario=scenario,
+        policy=preflight.policy,
+        requirement_id=requirement_id,
+        request_payload={
             "reason": "opt-in real R&D delivery E2E",
             "request_id": f"rd-e2e-assessment:{marker}",
             "requirement_revision": int(requirement.get("revision") or 1),
@@ -686,7 +1249,9 @@ def validate_rd_delivery_e2e(
                         }
                     ],
                     "reviewer_role_code": preflight.reviewer_role_code,
-                    "risk_level": "low",
+                    "risk_level": (
+                        "high" if scenario == "high-risk-dispatch" else "low"
+                    ),
                     "title": implementation_key,
                     "work_item_type": "implementation",
                 },
@@ -746,13 +1311,35 @@ def validate_rd_delivery_e2e(
     implementation_id = str(implementation["id"])
     testing_id = str(testing["id"])
 
-    implementation = _wait_for_reviewing_item(
-        client,
-        run_id=run_id,
-        timeout_seconds=config.timeout_seconds,
-        title=implementation_key,
-        secret_values=secrets,
-    )
+    scenario_outcome: GovernanceScenarioOutcome | None = None
+    if scenario == "happy-path":
+        implementation = _wait_for_reviewing_item(
+            client,
+            run_id=run_id,
+            timeout_seconds=config.timeout_seconds,
+            title=implementation_key,
+            secret_values=secrets,
+        )
+    else:
+        scenario_outcome = validate_governance_scenario(
+            client,
+            scenario=scenario,
+            config=config,
+            marker=marker,
+            owner_password=owner_password,
+            owner_username=owner_username,
+            run_id=run_id,
+            work_item_id=implementation_id,
+        )
+        implementation = _scenario_work_item(
+            client,
+            run_id=run_id,
+            work_item_id=implementation_id,
+        )
+        _assert(
+            implementation.get("status") == "reviewing",
+            f"{scenario} did not return the implementation work item to Review",
+        )
     pre_review_snapshot = client.get(
         f"/api/delivery/rd-collaboration-runs/{run_id}/work-items"
     )
@@ -925,8 +1512,31 @@ def validate_rd_delivery_e2e(
             StepResult(
                 "rd_delivery_ready_for_release",
                 (
-                    f"run={run_id}:completed(ready_for_release) / "
+                    f"scenario={scenario} / run={run_id}:completed(ready_for_release) / "
                     f"version={version_id}:ready_for_release / deployment=not_requested"
+                ),
+                evidence=(
+                    {
+                        "attempt_chain": list(scenario_outcome.attempt_chain),
+                        "observed_states": list(scenario_outcome.observed_states),
+                        "policy_versions": scenario_policy_versions,
+                        "scenario": scenario,
+                        "transition_evidence": list(
+                            scenario_outcome.transition_evidence
+                        ),
+                    }
+                    if scenario_outcome is not None
+                    else {
+                        "attempt_chain": {
+                            "automated_testing": list(
+                                _attempt_chain(testing, secret_values=secrets)
+                            ),
+                            "implementation": list(
+                                _attempt_chain(implementation, secret_values=secrets)
+                            ),
+                        },
+                        "scenario": scenario,
+                    }
                 ),
             ),
         ]

@@ -34,6 +34,7 @@ from full_chain_regression_rd_collaboration import (  # noqa: E402
     validate_rd_collaboration_quick_regression,
 )
 from full_chain_regression_rd_delivery_e2e import (  # noqa: E402
+    RD_E2E_SCENARIOS,
     RdDeliveryE2EConfig,
     validate_rd_delivery_e2e,
 )
@@ -82,6 +83,7 @@ class ApiError(RegressionError):
 class StepResult:
     name: str
     detail: str
+    evidence: dict[str, Any] | None = None
 
 
 def _utc_now_iso() -> str:
@@ -131,7 +133,13 @@ def build_regression_report(
         "finished_at": finished_at,
         "started_at": started_at,
         "status": status,
-        "steps": [{"detail": step.detail, "name": step.name} for step in steps],
+        "steps": [
+            {
+                **{"detail": step.detail, "name": step.name},
+                **({"evidence": step.evidence} if step.evidence is not None else {}),
+            }
+            for step in steps
+        ],
         "suite": suite,
         "task_execution_mode": task_execution_mode,
     }
@@ -237,6 +245,15 @@ class ApiClient:
         headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         return self.request("POST", path, body=body or {}, extra_headers=headers)
+
+    def patch(
+        self,
+        path: str,
+        body: dict[str, Any] | None = None,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        return self.request("PATCH", path, body=body or {}, extra_headers=headers)
 
     def request(
         self,
@@ -1828,6 +1845,7 @@ def run_regression_suite(
     suite: str,
     username: str,
     password: str,
+    rd_e2e_scenario: str = "happy-path",
 ) -> list[StepResult]:
     results = regression_suite_header_results(suite)
     if suite == "full":
@@ -1935,19 +1953,29 @@ def run_regression_suite(
         )
         return results
     if suite == "rd-delivery-e2e":
-        results.extend(
+        config = RdDeliveryE2EConfig.from_env()
+        validation = (
             validate_rd_delivery_e2e(
                 client,
                 username,
                 password,
-                RdDeliveryE2EConfig.from_env(),
+                config,
+            )
+            if rd_e2e_scenario == "happy-path"
+            else validate_rd_delivery_e2e(
+                client,
+                username,
+                password,
+                config,
+                scenario=rd_e2e_scenario,
             )
         )
+        results.extend(validation)
         return results
     raise RegressionError(f"Unsupported regression suite: {suite}")
 
 
-def main() -> int:
+def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run a real AI Brain full-chain regression through public APIs.",
     )
@@ -2018,6 +2046,15 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--rd-e2e-scenario",
+        choices=RD_E2E_SCENARIOS,
+        default="happy-path",
+        help=(
+            "Governance scenario for the explicit rd-delivery-e2e suite. "
+            "It is ignored by every other suite."
+        ),
+    )
+    parser.add_argument(
         "--json-output",
         default=os.getenv("FULL_CHAIN_JSON_OUTPUT"),
         help=(
@@ -2030,6 +2067,11 @@ def main() -> int:
         default=os.getenv("FULL_CHAIN_USERNAME", os.getenv("READINESS_USERNAME")),
         help="Login username. Defaults to FULL_CHAIN_USERNAME or READINESS_USERNAME.",
     )
+    return parser
+
+
+def main() -> int:
+    parser = build_argument_parser()
     args = parser.parse_args()
 
     results: list[StepResult] = []
@@ -2043,6 +2085,7 @@ def main() -> int:
             suite=args.suite,
             username=username,
             password=password,
+            rd_e2e_scenario=args.rd_e2e_scenario,
         )
     except (RegressionError, AssertionError) as exc:
         finished_at_iso = _utc_now_iso()

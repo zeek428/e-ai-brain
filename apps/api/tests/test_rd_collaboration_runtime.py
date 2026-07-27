@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -780,7 +782,7 @@ def test_collaboration_routes_enforce_aggregate_product_scope() -> None:
     assert "must-not-leak-attempt-token" not in denied_work_items.text
 
 
-def test_work_item_list_projects_only_active_attempt_count() -> None:
+def test_work_item_list_projects_bounded_redacted_attempt_history() -> None:
     client = TestClient(app)
     app.state.store.reset()
     login = client.post(
@@ -813,22 +815,107 @@ def test_work_item_list_projects_only_active_attempt_count() -> None:
             "attempt-completed": {
                 "id": "attempt-completed",
                 "work_item_id": "work-running",
-                "status": "completed",
+                "attempt_no": 1,
+                "status": "failed",
                 "lease_id": "secret-completed-lease",
                 "lease_token_hash": "secret-completed-token",
-                "output": {"raw_payload": "secret-completed-output"},
+                "executor_profile_id": "secret-completed-executor",
+                "idempotency_key": "secret-completed-idempotency",
+                "input_json": {"task_id": "ai-task-first", "secret": "secret-input"},
+                "result_json": {"raw_payload": "secret-completed-output"},
+                "failure_json": {
+                    "error_code": "QUALITY_GATE_FAILED",
+                    "error_message": "secret-error-message",
+                },
+                "rework_evidence": [{"comment": "secret-rework-comment"}],
+                "started_at": "2026-07-27T01:00:00+00:00",
+                "completed_at": "2026-07-27T01:01:00+00:00",
             },
             "attempt-running": {
                 "id": "attempt-running",
                 "work_item_id": "work-running",
+                "attempt_no": 2,
                 "status": "running",
                 "executor_profile_id": "secret-executor-profile",
                 "idempotency_key": "secret-idempotency-key",
                 "lease_id": "secret-running-lease",
                 "lease_token_hash": "secret-running-token",
+                "input_json": {"task_id": "ai-task-second"},
+                "started_at": "2026-07-27T01:02:00+00:00",
             },
         }
     )
+    app.state.store.ai_tasks.update(
+        {
+            "ai-task-first": {
+                "id": "ai-task-first",
+                "product_id": "product-attempt-summary",
+            },
+            "ai-task-second": {
+                "id": "ai-task-second",
+                "product_id": "product-attempt-summary",
+            },
+            "ai-task-other-product": {
+                "id": "ai-task-other-product",
+                "product_id": "product-other",
+            },
+        }
+    )
+    app.state.store.ai_executor_tasks.update(
+        {
+            "runner-first": {
+                "id": "runner-first",
+                "ai_task_id": "ai-task-first",
+                "task_kind": "coding",
+                "status": "succeeded",
+                "workspace_root": "/secret/worktrees/attempt-first",
+                "request_config": {
+                    "rd_work_item_attempt_id": "attempt-completed",
+                    "authorization": "secret-runner-auth",
+                },
+                "result_json": {"secret": "secret-runner-result"},
+            },
+            "runner-second": {
+                "id": "runner-second",
+                "ai_task_id": "ai-task-second",
+                "task_kind": "coding",
+                "status": "running",
+                "workspace_root": "/secret/worktrees/attempt-second",
+                "request_config": {"rd_work_item_attempt_id": "attempt-running"},
+            },
+            "runner-verifier": {
+                "id": "runner-verifier",
+                "ai_task_id": "ai-task-first",
+                "task_kind": "quality_gate",
+                "status": "succeeded",
+                "workspace_root": "/secret/verifier",
+                "request_config": {"rd_work_item_attempt_id": "attempt-completed"},
+            },
+            "runner-other-product": {
+                "id": "runner-other-product",
+                "ai_task_id": "ai-task-other-product",
+                "task_kind": "coding",
+                "status": "succeeded",
+                "workspace_root": "/secret/cross-product-worktree",
+                "request_config": {
+                    "rd_work_item_attempt_id": "attempt-completed",
+                    "secret": "secret-cross-product-runner",
+                },
+            },
+        }
+    )
+    app.state.store.rd_collaboration_events["fence-first"] = {
+        "id": "fence-first",
+        "collaboration_run_id": "run-attempt-summary",
+        "event_type": "work_item.runner_result_fenced",
+        "event_key": "work-item-runner-fenced:work-running:attempt-completed:runner-first",
+        "subject_type": "rd_work_item",
+        "subject_id": "work-running",
+        "payload_json": {
+            "attempt_id": "attempt-completed",
+            "raw": "secret-fence-payload",
+        },
+    }
 
     response = client.get(
         "/api/delivery/rd-collaboration-runs/run-attempt-summary/work-items",
@@ -841,18 +928,274 @@ def test_work_item_list_projects_only_active_attempt_count() -> None:
     }
     assert items["work-blocked"]["active_attempt_count"] == 0
     assert items["work-running"]["active_attempt_count"] == 1
+    assert items["work-blocked"]["attempt_history"] == {
+        "items": [],
+        "total": 0,
+        "truncated": False,
+    }
+    history = items["work-running"]["attempt_history"]
+    assert history["total"] == 2
+    assert history["truncated"] is False
+    assert history["items"] == [
+        {
+            "ai_task_id": "ai-task-first",
+            "attempt_no": 1,
+            "completed_at": "2026-07-27T01:01:00+00:00",
+            "failure_code": "QUALITY_GATE_FAILED",
+            "fence_event_id": "fence-first",
+            "late_result_fenced": True,
+            "rework_evidence_count": 1,
+            "runner_status": "succeeded",
+            "runner_task_id": "runner-first",
+            "started_at": "2026-07-27T01:00:00+00:00",
+            "status": "failed",
+            "workspace_fingerprint": (
+                "sha256:"
+                + hashlib.sha256(b"/secret/worktrees/attempt-first").hexdigest()
+            ),
+        },
+        {
+            "ai_task_id": "ai-task-second",
+            "attempt_no": 2,
+            "completed_at": None,
+            "failure_code": None,
+            "fence_event_id": None,
+            "late_result_fenced": False,
+            "rework_evidence_count": 0,
+            "runner_status": "running",
+            "runner_task_id": "runner-second",
+            "started_at": "2026-07-27T01:02:00+00:00",
+            "status": "running",
+            "workspace_fingerprint": (
+                "sha256:"
+                + hashlib.sha256(b"/secret/worktrees/attempt-second").hexdigest()
+            ),
+        },
+    ]
+    assert set(history["items"][0]) == {
+        "ai_task_id",
+        "attempt_no",
+        "completed_at",
+        "failure_code",
+        "fence_event_id",
+        "late_result_fenced",
+        "rework_evidence_count",
+        "runner_status",
+        "runner_task_id",
+        "started_at",
+        "status",
+        "workspace_fingerprint",
+    }
     for sensitive in (
         "attempt-completed",
         "attempt-running",
+        "/secret/worktrees/attempt-first",
+        "/secret/worktrees/attempt-second",
         "secret-completed-lease",
+        "secret-completed-executor",
+        "secret-completed-idempotency",
         "secret-completed-output",
         "secret-completed-token",
+        "secret-cross-product-runner",
+        "secret-error-message",
         "secret-executor-profile",
+        "secret-fence-payload",
         "secret-idempotency-key",
+        "secret-input",
+        "secret-rework-comment",
+        "secret-runner-auth",
+        "secret-runner-result",
         "secret-running-lease",
         "secret-running-token",
     ):
         assert sensitive not in response.text
+
+
+def test_work_item_attempt_history_is_latest_twenty_and_sanitizes_dirty_rows() -> None:
+    client = TestClient(app)
+    app.state.store.reset()
+    login = client.post(
+        "/api/auth/login",
+        json={"username": "admin@example.com", "password": "admin123"},
+    )
+    headers = {"Authorization": f"Bearer {login.json()['data']['access_token']}"}
+    app.state.store.rd_collaboration_runs["run-attempt-bounds"] = {
+        "id": "run-attempt-bounds",
+        "product_id": "product-attempt-bounds",
+        "product_version_id": "version-attempt-bounds",
+        "status": "running",
+    }
+    app.state.store.rd_work_items["work-attempt-bounds"] = {
+        "id": "work-attempt-bounds",
+        "collaboration_run_id": "run-attempt-bounds",
+        "status": "running",
+    }
+    for attempt_no in range(1, 23):
+        app.state.store.rd_work_item_attempts[f"dirty-attempt-{attempt_no}"] = {
+            "id": f"dirty-attempt-{attempt_no}",
+            "work_item_id": "work-attempt-bounds",
+            "attempt_no": attempt_no,
+            "status": "not-a-public-status" if attempt_no == 22 else "completed",
+            "failure_json": {
+                "error_code": (
+                    "BAD CODE with spaces" if attempt_no == 22 else "SAFE_CODE"
+                ),
+            },
+            "rework_evidence": "not-a-list" if attempt_no == 22 else [],
+            "input_json": (
+                {"task_id": "safe-looking-cross-product-task"}
+                if attempt_no == 22
+                else {}
+            ),
+            "started_at": "not-a-timestamp" if attempt_no == 22 else None,
+            "completed_at": "x" * 500 if attempt_no == 22 else None,
+            "secret": "must-never-leak-dirty-row",
+        }
+    app.state.store.ai_executor_tasks.update(
+        {
+            "ambiguous-runner-a": {
+                "id": "ambiguous-runner-a",
+                "ai_task_id": "ambiguous-task-a",
+                "task_kind": "coding",
+                "status": "succeeded",
+                "workspace_root": "/must/not/select/a",
+                "request_config": {
+                    "rd_work_item_attempt_id": "dirty-attempt-21",
+                },
+            },
+            "ambiguous-runner-b": {
+                "id": "ambiguous-runner-b",
+                "ai_task_id": "ambiguous-task-b",
+                "task_kind": "coding",
+                "status": "succeeded",
+                "workspace_root": "/must/not/select/b",
+                "request_config": {
+                    "rd_work_item_attempt_id": "dirty-attempt-21",
+                },
+            },
+        }
+    )
+
+    response = client.get(
+        "/api/delivery/rd-collaboration-runs/run-attempt-bounds/work-items",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    history = response.json()["data"]["items"][0]["attempt_history"]
+    assert history["total"] == 22
+    assert history["truncated"] is True
+    assert [item["attempt_no"] for item in history["items"]] == list(range(3, 23))
+    assert history["items"][-1]["status"] == "unknown"
+    assert history["items"][-1]["failure_code"] is None
+    assert history["items"][-1]["rework_evidence_count"] == 0
+    assert history["items"][-1]["started_at"] is None
+    assert history["items"][-1]["completed_at"] is None
+    assert history["items"][-1]["ai_task_id"] is None
+    assert history["items"][-2]["ai_task_id"] is None
+    assert history["items"][-2]["runner_task_id"] is None
+    assert history["items"][-2]["runner_status"] is None
+    assert history["items"][-2]["workspace_fingerprint"] is None
+    assert "must-never-leak-dirty-row" not in response.text
+    assert "safe-looking-cross-product-task" not in response.text
+
+
+def test_work_item_attempt_history_uses_repository_rows() -> None:
+    class AttemptHistoryRepository:
+        def get_rd_collaboration_run(self, run_id: str) -> dict[str, object] | None:
+            if run_id != "run-repository-history":
+                return None
+            return {
+                "id": run_id,
+                "product_id": "product-repository-history",
+                "status": "running",
+            }
+
+        def list_rd_work_items(self, run_id: str) -> list[dict[str, object]]:
+            assert run_id == "run-repository-history"
+            return [
+                {
+                    "id": "work-repository-history",
+                    "collaboration_run_id": run_id,
+                    "status": "completed",
+                }
+            ]
+
+        def list_rd_work_item_attempts(
+            self,
+            work_item_id: str,
+        ) -> list[dict[str, object]]:
+            assert work_item_id == "work-repository-history"
+            return [
+                {
+                    "id": "repository-attempt",
+                    "work_item_id": work_item_id,
+                    "attempt_no": 1,
+                    "status": "completed",
+                    "input_json": {"task_id": "repository-ai-task"},
+                }
+            ]
+
+        def list_ai_executor_tasks(self, **filters: object) -> list[dict[str, object]]:
+            assert filters == {
+                "product_scope_ids": ["product-repository-history"],
+            }
+            return [
+                {
+                    "id": "repository-runner-task",
+                    "ai_task_id": "repository-ai-task",
+                    "task_kind": "coding",
+                    "status": "succeeded",
+                    "workspace_root": "/repository/secret/worktree",
+                    "request_config": {
+                        "rd_work_item_attempt_id": "repository-attempt",
+                    },
+                }
+            ]
+
+        def list_rd_collaboration_events(
+            self,
+            run_id: str,
+        ) -> list[dict[str, object]]:
+            assert run_id == "run-repository-history"
+            return []
+
+        def list_rd_work_item_dependencies(
+            self,
+            run_id: str,
+        ) -> list[dict[str, object]]:
+            assert run_id == "run-repository-history"
+            return []
+
+    client = TestClient(app)
+    app.state.store.reset()
+    login = client.post(
+        "/api/auth/login",
+        json={"username": "admin@example.com", "password": "admin123"},
+    )
+    headers = {"Authorization": f"Bearer {login.json()['data']['access_token']}"}
+    original_repository = getattr(app.state.store, "repository", None)
+    app.state.store.repository = AttemptHistoryRepository()
+    try:
+        response = client.get(
+            "/api/delivery/rd-collaboration-runs/run-repository-history/work-items",
+            headers=headers,
+        )
+    finally:
+        app.state.store.repository = original_repository
+
+    assert response.status_code == 200
+    history = response.json()["data"]["items"][0]["attempt_history"]
+    assert history["total"] == 1
+    assert history["items"][0]["attempt_no"] == 1
+    assert history["items"][0]["runner_task_id"] == "repository-runner-task"
+    assert history["items"][0]["ai_task_id"] == "repository-ai-task"
+    assert history["items"][0]["workspace_fingerprint"] == (
+        "sha256:"
+        + hashlib.sha256(b"/repository/secret/worktree").hexdigest()
+    )
+    assert "repository-attempt" not in response.text
+    assert "/repository/secret/worktree" not in response.text
 
 
 def test_collaboration_run_detail_hydrates_allowlisted_git_delivery_evidence() -> None:
