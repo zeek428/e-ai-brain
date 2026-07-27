@@ -749,6 +749,17 @@ def test_collaboration_routes_enforce_aggregate_product_scope() -> None:
         "working_branch": "rd/run-cross-product/denied-work-item",
         "local_commit_sha": "must-not-leak",
     }}
+    app.state.store.rd_work_items["denied-work-item"] = {
+        "id": "denied-work-item",
+        "collaboration_run_id": "run-cross-product",
+        "status": "running",
+    }
+    app.state.store.rd_work_item_attempts["denied-attempt"] = {
+        "id": "denied-attempt",
+        "work_item_id": "denied-work-item",
+        "status": "running",
+        "lease_token_hash": "must-not-leak-attempt-token",
+    }
 
     denied = client.get(
         "/api/delivery/rd-collaboration-runs/run-cross-product",
@@ -758,6 +769,90 @@ def test_collaboration_routes_enforce_aggregate_product_scope() -> None:
     assert denied.status_code == 403
     assert denied.json()["detail"]["code"] == "FORBIDDEN"
     assert "must-not-leak" not in denied.text
+
+    denied_work_items = client.get(
+        "/api/delivery/rd-collaboration-runs/run-cross-product/work-items",
+        headers=scoped_headers,
+    )
+
+    assert denied_work_items.status_code == 403
+    assert denied_work_items.json()["detail"]["code"] == "FORBIDDEN"
+    assert "must-not-leak-attempt-token" not in denied_work_items.text
+
+
+def test_work_item_list_projects_only_active_attempt_count() -> None:
+    client = TestClient(app)
+    app.state.store.reset()
+    login = client.post(
+        "/api/auth/login",
+        json={"username": "admin@example.com", "password": "admin123"},
+    )
+    headers = {"Authorization": f"Bearer {login.json()['data']['access_token']}"}
+    app.state.store.rd_collaboration_runs["run-attempt-summary"] = {
+        "id": "run-attempt-summary",
+        "product_id": "product-attempt-summary",
+        "product_version_id": "version-attempt-summary",
+        "status": "running",
+    }
+    app.state.store.rd_work_items.update(
+        {
+            "work-blocked": {
+                "id": "work-blocked",
+                "collaboration_run_id": "run-attempt-summary",
+                "status": "blocked",
+            },
+            "work-running": {
+                "id": "work-running",
+                "collaboration_run_id": "run-attempt-summary",
+                "status": "running",
+            },
+        }
+    )
+    app.state.store.rd_work_item_attempts.update(
+        {
+            "attempt-completed": {
+                "id": "attempt-completed",
+                "work_item_id": "work-running",
+                "status": "completed",
+                "lease_id": "secret-completed-lease",
+                "lease_token_hash": "secret-completed-token",
+                "output": {"raw_payload": "secret-completed-output"},
+            },
+            "attempt-running": {
+                "id": "attempt-running",
+                "work_item_id": "work-running",
+                "status": "running",
+                "executor_profile_id": "secret-executor-profile",
+                "idempotency_key": "secret-idempotency-key",
+                "lease_id": "secret-running-lease",
+                "lease_token_hash": "secret-running-token",
+            },
+        }
+    )
+
+    response = client.get(
+        "/api/delivery/rd-collaboration-runs/run-attempt-summary/work-items",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    items = {
+        item["id"]: item for item in response.json()["data"]["items"]
+    }
+    assert items["work-blocked"]["active_attempt_count"] == 0
+    assert items["work-running"]["active_attempt_count"] == 1
+    for sensitive in (
+        "attempt-completed",
+        "attempt-running",
+        "secret-completed-lease",
+        "secret-completed-output",
+        "secret-completed-token",
+        "secret-executor-profile",
+        "secret-idempotency-key",
+        "secret-running-lease",
+        "secret-running-token",
+    ):
+        assert sensitive not in response.text
 
 
 def test_collaboration_run_detail_hydrates_allowlisted_git_delivery_evidence() -> None:

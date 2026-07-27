@@ -108,6 +108,14 @@ POST           /api/delivery/decision-requests/{decision_request_id}/answers
 
 权限点分别为 `delivery.rd_roles.manage`、`delivery.rd_ai_employees.manage`、`delivery.rd_executor_profiles.manage`、`delivery.requirement_assessments.read/decide`、`delivery.rd_collaboration.read/plan/work`、`delivery.decision_requests.decide/answer` 和 `delivery.rd_role_experiences.read/decide`；策略继续使用 `delivery.rd_executor_policies.manage`，部署继续使用现有部署权限。岗位、员工档案或席位不会自动授予这些权限。
 
+`GET /api/delivery/rd-collaboration-runs/{run_id}/work-items` 必须先通过既有
+`delivery.rd_collaboration.read` 和运行产品范围校验，再加载该运行的工作项、
+依赖与 attempt 摘要。每个工作项只新增整数 `active_attempt_count`，其值为该工作
+项 `status=running` 的 attempt 数量；没有活动 attempt 时为 `0`。响应不返回
+attempt ID、attempt 序号、租约 ID/Token/Hash、执行器档案、幂等键、输入输出、
+证据、错误、Runner 关联或原始 payload，也不能把工作项表中不存在的
+`attempt_id` 当作无 attempt 证明。
+
 工作项包含 `owner_seat_id/dependencies/input_contract/output_contract/acceptance_criteria/risk_level/status/resume_state/suspended_attempt_id/ai_task_id/reviewer_seat_id/idempotency_key`。依赖满足后才能进入 `ready`，无依赖项可并行；执行 Worker 自动派发 AI 席位的低/中风险工作项。派发前先按冻结席位容量预检，最终 bundle 事务以不加锁查询取得父运行 ID，再严格按 `rd_collaboration_runs FOR UPDATE -> rd_work_items FOR UPDATE` 的统一聚合锁顺序加锁；两把锁均取得后，重验工作项仍属于该运行、状态与 reservation version/到期边界仍有效、父运行仍为 `running/integrating/verifying`，随后才锁定席位并计数运行中工作项。候选保留后父运行进入 `waiting_human`、终态或其他非活动状态，或工作项已被并发取消时，陈旧派发等待既有父运行锁后返回 `409 RD_WORK_ITEM_STATE_INVALID`，不得形成 `40P01` 锁序死锁，任务、Runner、attempt、事件和审计 bundle 全部不写。达到容量时返回 `409 RD_SEAT_CAPACITY_EXHAUSTED`，自动派发把该项保留 `ready` 并列入 `capacity_deferred_work_item_ids`，不创建 AI 任务或 attempt。审核、质量门禁或当前有效 attempt 的编码 Runner 普通执行失败都会保留原 attempt、原子清除工作项租约并进入 `rework_required`；失败任务、attempt、协作事件和审计会作为返工证据保留，下一次领取只能创建新 attempt。`timed_out` 的编码 Runner 还必须按该任务冻结 `autonomy_config.max_iterations` 统计自动恢复次数：达到上限时，同一事务保存失败任务、attempt、事件、审计和 `runner_timeout_recovery` 决策，把工作项置为 `waiting_human/resume_state=ready`，不得再自动派发；指定真人只能选择 `retry_after_human_confirmation`（恢复 `ready`，随后由 Worker 创建新 attempt）或 `cancel_work_item`。策略快照不可变，增加 `timeout_seconds` 只能作用于后续协作代次。范围、依赖或负责人变化则创建新计划版本和替代工作项。`blocked/awaiting_human` 保存平台冻结的恢复目标和解除条件；问题解除或决策完成后只能回到校验后的 `ready/running/rework_required/cancelled`。高风险工作项会原子创建 `high_risk_ai_dispatch` 决策并暂停；只有冻结选项 `approve_dispatch` 被指定真人席位确认后，Worker 才能派发该项。超权限、冲突、预算超限、门禁失败或部署边界同样创建 `decision_requests` 并暂停受影响分支。详情响应聚合 DAG、租约、AI 任务/Runner、审核、返工、门禁、Git、预算和角色反馈。
 
 #### 迭代版本总览：协同入口与安全摘要

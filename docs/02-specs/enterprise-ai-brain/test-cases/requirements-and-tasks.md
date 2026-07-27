@@ -733,11 +733,11 @@
 1. 使用默认 `delivery_target=ready_for_release`，让集成工作项通过 Outbox 完成远程推送并保存分支、local/remote SHA、MR/PR 和对账证据，再完成测试和门禁。
 2. 分别让原生 Runner 用顶层、`result`、`parsed_output` JSON 回写本地交付与测试证据；同时注入伪造 remote SHA、对账和回调字段，并篡改隔离分支、冻结仓库或工作区。
 3. 在 `test_evidence` 的白名单 key 下嵌套 credential/Token/Authorization/Cookie/Secret/raw payload，再提交对象、数组、布尔值、未知状态、负数、浮点数、超限整数和超过 128 字符的 suite；同时读取一条含相同历史脏数据的交付记录。
-4. 真实 E2E 只接受 `task_kind=coding` 且 `runner_id` 等于预检配置的编码 Runner，并要求唯一成功的 `quality_gate` Runner 任务与 Gate ID 对应、使用独立 verification trust domain，聚合门禁含至少一条独立证据、一条已验证证明且 `verifier_trust_isolated=true`。在 implementation Review 批准前读取 DAG，确认 automated-testing 仍为 `blocked` 且没有 AI task/attempt；批准后再观察 Worker 自动派发。
+4. 真实 E2E 只接受 `task_kind=coding` 且 `runner_id` 等于预检配置的编码 Runner，并要求唯一成功的 `quality_gate` Runner 任务与 Gate ID 对应、使用独立 verification trust domain，聚合门禁含至少一条独立证据、一条已验证证明且 `verifier_trust_isolated=true`。在 implementation Review 批准前读取 DAG，确认 automated-testing 仍为 `blocked`、没有 AI task 且 `active_attempt_count=0`；批准后必须先观察 Worker 自动派发时 `active_attempt_count>0`，再等待质量门禁与 Review。另用跨产品账号读取工作项列表，并在 attempt 中注入 ID、租约、Token Hash、执行器、幂等键和原始输出。
 5. 在 Provider 回调前后分别读取协作运行详情：校验 `git_deliveries` 的待对账记录只含本地交付事实且远程字段为空；完成签名 Provider Inbox 对账后校验状态为 `reconciled`、local/remote SHA 相等、对账 ID/验证时间/双证据哈希完整，并确认响应不含 Outbox、工作区/worktree、审批、Runner、回调、凭据、Token 或原始 payload。再用无该产品范围的账号读取同一运行。
 6. 删除或篡改远程 commit/MR/PR 对账证据，重复完成判定。
 
-**预期结果**: P0 集成工作项必须完成最小工作分支隔离、远程 push 或 MR/PR Outbox、版本级集成测试和不可变交付证据。原生 Runner 的三种本地结果形态均可归一化；冻结分支/仓库/工作区不匹配时拒绝，伪造远程、对账和回调字段不落库。测试证据只保留契约内有界标量，嵌套敏感值和非法/超限值在新写入及旧记录公共投影中均不可见。E2E 必须证明指定编码 Runner、独立可信质量门禁和审核前依赖阻塞，不能把缺失任务类型当作编码执行或把提前派发当成正常依赖推进。缺少或不匹配远程证据时不能进入待发布，完成判定不临时执行 push。运行详情只在既有读权限和产品范围内返回按运行过滤的 `git_deliveries`；未对账状态为 `pending`，完整对账状态为 `reconciled`，敏感内部证据不泄漏，跨产品读取返回 `FORBIDDEN`。发布就绪证据记录与目标终结分离；默认策略让产品版本进入并保持 `ready_for_release`，协作运行进入 `completed` 且 `completion_reason=ready_for_release`，不创建部署单，服务不得无条件关闭所有交付目标的运行。
+**预期结果**: P0 集成工作项必须完成最小工作分支隔离、远程 push 或 MR/PR Outbox、版本级集成测试和不可变交付证据。原生 Runner 的三种本地结果形态均可归一化；冻结分支/仓库/工作区不匹配时拒绝，伪造远程、对账和回调字段不落库。测试证据只保留契约内有界标量，嵌套敏感值和非法/超限值在新写入及旧记录公共投影中均不可见。E2E 必须证明指定编码 Runner、独立可信质量门禁和审核前依赖阻塞，不能把缺失任务类型当作编码执行、读取不存在的工作项 `attempt_id`，或把提前派发当成正常依赖推进。工作项列表仅在权限和产品范围内返回 `active_attempt_count`，跨产品读取拒绝且任何 attempt 明细或敏感字段不泄漏。缺少或不匹配远程证据时不能进入待发布，完成判定不临时执行 push。运行详情只在既有读权限和产品范围内返回按运行过滤的 `git_deliveries`；未对账状态为 `pending`，完整对账状态为 `reconciled`，敏感内部证据不泄漏，跨产品读取返回 `FORBIDDEN`。发布就绪证据记录与目标终结分离；默认策略让产品版本进入并保持 `ready_for_release`，协作运行进入 `completed` 且 `completion_reason=ready_for_release`，不创建部署单，服务不得无条件关闭所有交付目标的运行。
 
 ---
 

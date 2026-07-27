@@ -361,6 +361,7 @@ class HappyPathClient(PreflightClient):
         super().__init__()
         self.phase = 0
         self.posts: list[tuple[str, dict[str, object]]] = []
+        self.testing_dispatch_observed = False
 
     @staticmethod
     def _delivery(work_item_id: str, commit: str, *, testing: bool) -> dict[str, object]:
@@ -397,7 +398,9 @@ class HappyPathClient(PreflightClient):
         if path == "/api/requirements/requirement-e2e/assessments/latest":
             return {"id": "assessment-e2e", "version": 4}
         if path == "/api/delivery/rd-collaboration-runs/run-e2e/work-items":
+            testing_running = self.phase == 1 and not self.testing_dispatch_observed
             implementation = {
+                "active_attempt_count": 0,
                 "ai_task_id": "ai-task-implementation",
                 "id": "work-implementation",
                 "status": "reviewing" if self.phase == 0 else "completed",
@@ -405,15 +408,19 @@ class HappyPathClient(PreflightClient):
                 "version": 2,
             }
             testing = {
-                "attempt_id": None,
+                "active_attempt_count": 1 if testing_running else 0,
                 "ai_task_id": "ai-task-testing" if self.phase >= 1 else None,
                 "id": "work-testing",
-                "status": "reviewing" if self.phase == 1 else (
+                "status": "running" if testing_running else (
+                    "reviewing" if self.phase == 1 else (
                     "completed" if self.phase >= 2 else "blocked"
+                    )
                 ),
                 "title": "verify_e2e_artifact",
                 "version": 2,
             }
+            if testing_running:
+                self.testing_dispatch_observed = True
             return {
                 "dependencies": [
                     {
@@ -727,8 +734,8 @@ class PrematureDependentDispatchClient(HappyPathClient):
             testing = next(item for item in items if item["id"] == "work-testing")
             testing.update(
                 {
+                    "active_attempt_count": 1,
                     "ai_task_id": "ai-task-premature",
-                    "attempt_id": "attempt-premature",
                     "status": "running",
                 }
             )
@@ -740,6 +747,48 @@ def test_real_e2e_proves_dependency_is_blocked_before_implementation_review() ->
     with pytest.raises(RegressionError, match="blocked"):
         validate_rd_delivery_e2e(
             PrematureDependentDispatchClient(),
+            "owner@example.com",
+            "owner-secret",
+            valid_config(timeout_seconds=2),
+        )
+
+
+class HiddenActiveAttemptClient(HappyPathClient):
+    def get(self, path: str, query=None, *, headers=None) -> dict[str, object]:
+        response = super().get(path, query, headers=headers)
+        if (
+            path == "/api/delivery/rd-collaboration-runs/run-e2e/work-items"
+            and self.phase == 0
+        ):
+            items = [dict(item) for item in response["items"]]
+            testing = next(item for item in items if item["id"] == "work-testing")
+            testing["active_attempt_count"] = 1
+            return {**response, "items": items}
+        return response
+
+
+class MissingActiveDispatchClient(HappyPathClient):
+    def get(self, path: str, query=None, *, headers=None) -> dict[str, object]:
+        response = super().get(path, query, headers=headers)
+        if path == "/api/delivery/rd-collaboration-runs/run-e2e/work-items":
+            items = [dict(item) for item in response["items"]]
+            testing = next(item for item in items if item["id"] == "work-testing")
+            if testing.get("status") == "running":
+                testing["active_attempt_count"] = 0
+            return {**response, "items": items}
+        return response
+
+
+@pytest.mark.parametrize(
+    "client_type",
+    [HiddenActiveAttemptClient, MissingActiveDispatchClient],
+)
+def test_real_e2e_requires_public_attempt_counts_across_dependency_dispatch(
+    client_type: type[HappyPathClient],
+) -> None:
+    with pytest.raises(RegressionError, match="active attempt"):
+        validate_rd_delivery_e2e(
+            client_type(),
             "owner@example.com",
             "owner-secret",
             valid_config(timeout_seconds=2),

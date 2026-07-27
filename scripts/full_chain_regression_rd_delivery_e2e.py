@@ -760,11 +760,14 @@ def validate_rd_delivery_e2e(
         _items(pre_review_snapshot),
         testing_key,
     )
+    pre_review_active_attempt_count = pre_review_testing.get("active_attempt_count")
     _assert(
         pre_review_testing.get("status") == "blocked"
         and not pre_review_testing.get("ai_task_id")
-        and not pre_review_testing.get("attempt_id"),
-        "Dependent automated-testing work item must remain blocked without dispatch "
+        and isinstance(pre_review_active_attempt_count, int)
+        and not isinstance(pre_review_active_attempt_count, bool)
+        and pre_review_active_attempt_count == 0,
+        "Dependent automated-testing work item must remain blocked without an active attempt "
         "before implementation Review approval",
     )
     persisted_dependencies = [
@@ -809,6 +812,13 @@ def validate_rd_delivery_e2e(
     _assert(
         str(dispatched_testing.get("id")) == testing_id,
         "Worker dispatched a different dependent work item",
+    )
+    dispatched_active_attempt_count = dispatched_testing.get("active_attempt_count")
+    _assert(
+        isinstance(dispatched_active_attempt_count, int)
+        and not isinstance(dispatched_active_attempt_count, bool)
+        and dispatched_active_attempt_count >= 1,
+        "Worker dispatch did not expose an active attempt for automated testing",
     )
     testing = _wait_for_reviewing_item(
         client,

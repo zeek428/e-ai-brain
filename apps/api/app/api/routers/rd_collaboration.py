@@ -154,6 +154,42 @@ def _list(
     )
 
 
+def _work_items_with_active_attempt_counts(
+    current_store: Any,
+    *,
+    run_id: str,
+) -> list[dict[str, Any]]:
+    items = _list(current_store, "rd_work_items", run_id, "list_rd_work_items")
+    repository = getattr(current_store, "repository", None)
+    list_attempts = getattr(repository, "list_rd_work_item_attempts", None)
+    memory_attempts = getattr(current_store, "rd_work_item_attempts", {})
+    memory_attempts = memory_attempts if isinstance(memory_attempts, dict) else {}
+    projected: list[dict[str, Any]] = []
+    for item in items:
+        work_item_id = str(item.get("id") or "")
+        attempts = (
+            list_attempts(work_item_id)
+            if callable(list_attempts)
+            else [
+                attempt
+                for attempt in memory_attempts.values()
+                if attempt.get("work_item_id") == work_item_id
+            ]
+        )
+        active_attempt_count = sum(
+            1
+            for attempt in attempts
+            if isinstance(attempt, dict) and attempt.get("status") == "running"
+        )
+        projected.append(
+            {
+                **item,
+                "active_attempt_count": active_attempt_count,
+            }
+        )
+    return projected
+
+
 def _run_payload(result: dict[str, Any]) -> dict[str, Any]:
     run = dict(result["run"])
     return {
@@ -343,12 +379,16 @@ def list_work_items(
     run_id: str, request: Request, user: dict[str, Any] = CurrentUser
 ) -> dict[str, Any]:
     _require(user, "delivery.rd_collaboration.read")
-    require_run_scope(store(request), user, run_id)
+    current_store = store(request)
+    require_run_scope(current_store, user, run_id)
     return envelope(
         {
-            "items": _list(store(request), "rd_work_items", run_id, "list_rd_work_items"),
+            "items": _work_items_with_active_attempt_counts(
+                current_store,
+                run_id=run_id,
+            ),
             "dependencies": _list(
-                store(request),
+                current_store,
                 "rd_work_item_dependencies",
                 run_id,
                 "list_rd_work_item_dependencies",
