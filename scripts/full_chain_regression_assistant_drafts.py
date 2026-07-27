@@ -33,6 +33,78 @@ def expect_api_error(callable_request: Any, *, status: int, message: str) -> Any
     raise AssertionError(message)
 
 
+def create_disabled_mock_plugin_job_refs(
+    client: Any,
+    *,
+    slug: str,
+) -> dict[str, str]:
+    catalog = client.get("/api/system/scheduled-job-catalog")
+    job_type = next(
+        (
+            item
+        for item in catalog.get("job_types", [])
+            if item.get("value") == "plugin_action_invoke"
+        ),
+        None,
+    )
+    _assert(
+        job_type is not None
+        and job_type.get("allow_create") is True
+        and job_type.get("runnable") is True,
+        f"Safe scheduled-job fixture type is unavailable: {catalog}",
+    )
+    code_suffix = slug.replace("-", "_")
+    plugin = client.post(
+        "/api/system/plugins",
+        {
+            "category": "general",
+            "code": f"assistant_draft_mock_{code_suffix}",
+            "name": f"Assistant draft mock fixture {slug}",
+            "protocol": "http",
+            "status": "active",
+        },
+    )
+    _assert(plugin.get("status") == "active", f"Mock fixture plugin is not active: {plugin}")
+    connection = client.post(
+        "/api/system/plugin-connections",
+        {
+            "auth_type": "none",
+            "endpoint_url": "https://assistant-draft.invalid",
+            "environment": "test",
+            "name": f"Assistant draft mock connection {slug}",
+            "plugin_id": plugin["id"],
+            "status": "active",
+        },
+    )
+    _assert(
+        connection.get("status") == "active",
+        f"Mock fixture connection is not active: {connection}",
+    )
+    action = client.post(
+        "/api/system/plugin-actions",
+        {
+            "action_type": "http_request",
+            "code": f"assistant_draft_mock_action_{code_suffix}",
+            "connection_id": connection["id"],
+            "name": f"Assistant draft mock action {slug}",
+            "plugin_id": plugin["id"],
+            "request_config": {
+                "method": "GET",
+                "mock_response_json": {"records": [{"status": "ok"}]},
+                "path": "/disabled-fixture",
+            },
+            "result_mapping": {"write_target": "scheduled_job_result"},
+            "status": "active",
+        },
+    )
+    _assert(action.get("status") == "active", f"Mock fixture action is not active: {action}")
+    return {
+        "job_type": "plugin_action_invoke",
+        "plugin_action_id": str(action["id"]),
+        "plugin_connection_id": str(connection["id"]),
+    }
+
+
 def validate_assistant_draft_governance(
     client: Any,
     *,
@@ -43,6 +115,7 @@ def validate_assistant_draft_governance(
     results: list[StepResult] = []
     user = client.login(username, password).get("user", {})
     results.append(StepResult("login", f"logged in as {user.get('username') or username}"))
+    safe_job_refs = create_disabled_mock_plugin_job_refs(client, slug=slug)
 
     draft = client.post(
         "/api/assistant/action-drafts",
@@ -56,7 +129,7 @@ def validate_assistant_draft_governance(
             "payload": {
                 "enabled": False,
                 "execution_mode": "deterministic",
-                "job_type": "dashboard_snapshot_refresh",
+                **safe_job_refs,
                 "name": f"全链路草案治理回归 {slug}",
                 "schedule_type": "manual",
                 "source_system": "ai-assistant",
@@ -212,7 +285,7 @@ def validate_assistant_draft_governance(
             "payload": {
                 "enabled": False,
                 "execution_mode": "deterministic",
-                "job_type": "dashboard_snapshot_refresh",
+                **safe_job_refs,
                 "name": f"全链路草案失败重试回归 {slug}",
                 "schedule_type": "cron",
                 "source_system": "ai-assistant",

@@ -18,6 +18,11 @@ from full_chain_regression_rd_fixture import (
 
 _COMPLETION_LOG = {"level": "info", "message": "deterministic v2 regression completed"}
 _COMPLETION_RESULT = {"summary": "deterministic v2 regression output"}
+_CODE_REVIEW_COMPLETION_RESULT = {
+    **_COMPLETION_RESULT,
+    "findings": [],
+    "risk_level": "low",
+}
 
 
 @dataclass(frozen=True)
@@ -136,6 +141,15 @@ def _complete_runner_task(
         f"{safe_report_value(completed, secret_values=tuple(runner_headers.values()))}"
     )
     return completed_task
+
+
+def _completion_result(task: dict[str, Any]) -> dict[str, Any]:
+    input_payload = task.get("input_payload") or {}
+    task_snapshot = input_payload.get("task") or {}
+    task_type = str(task_snapshot.get("task_type") or task.get("task_type") or "").strip()
+    if task_type == "code_review":
+        return dict(_CODE_REVIEW_COMPLETION_RESULT)
+    return dict(_COMPLETION_RESULT)
 
 
 def _claim_runner_task(
@@ -353,15 +367,29 @@ def complete_ai_work_item_via_runner_protocol(
         "R&D work-item attempt id",
     )
     runner_task_ids = [_require_text(first_task.get("id"), "Runner task id")]
+    completion_result = _completion_result(first_task)
     completed_task = _complete_runner_task(
         client,
         runner_headers=session.runner_headers,
         runner_id=session.runner_id,
-        result_json=_COMPLETION_RESULT,
+        result_json=completion_result,
         task=first_task,
     )
 
+    post_coding_task: dict[str, Any] | None = None
     if first_task.get("task_kind") == "coding":
+        post_coding_task = wait_for_value(
+            lambda: client.get(f"/api/ai-tasks/{ai_task_id}"),
+            lambda task: task.get("status") == "waiting_review"
+            or task.get("current_step") == "quality_gate_running",
+            timeout_seconds=timeout_seconds,
+            description="coding AI task selecting review or quality-gate path",
+            secret_values=session_secret_values,
+        )
+    if (
+        post_coding_task is not None
+        and post_coding_task.get("current_step") == "quality_gate_running"
+    ):
         gate_task = _quality_gate_task(
             client,
             ai_task_id=ai_task_id,
@@ -418,12 +446,17 @@ def complete_ai_work_item_via_runner_protocol(
             secret_values=session_secret_values,
         )
 
-    waiting_task = wait_for_value(
-        lambda: client.get(f"/api/ai-tasks/{ai_task_id}"),
-        lambda task: task.get("status") == "waiting_review",
-        timeout_seconds=timeout_seconds,
-        description="AI task waiting for independent review",
-        secret_values=session_secret_values,
+    waiting_task = (
+        post_coding_task
+        if post_coding_task is not None
+        and post_coding_task.get("status") == "waiting_review"
+        else wait_for_value(
+            lambda: client.get(f"/api/ai-tasks/{ai_task_id}"),
+            lambda task: task.get("status") == "waiting_review",
+            timeout_seconds=timeout_seconds,
+            description="AI task waiting for independent review",
+            secret_values=session_secret_values,
+        )
     )
     pending_review = waiting_task.get("pending_review") or {}
     review_id = _require_text(pending_review.get("id"), "Pending review id")
@@ -462,7 +495,7 @@ def complete_ai_work_item_via_runner_protocol(
         runner_task_ids=tuple(runner_task_ids),
         work_item=work_item,
         runner_result={
-            "result_json": _COMPLETION_RESULT,
+            "result_json": completion_result,
             "runner_task_id": completed_task.get("id"),
             "status": completed_task.get("status"),
         },

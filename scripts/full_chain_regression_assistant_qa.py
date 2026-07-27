@@ -3,7 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from full_chain_regression_rd_runner_protocol import (
+    complete_ai_work_item_via_runner_protocol,
+)
 from full_chain_regression_slug import regression_slug
+from full_chain_regression_suites import (
+    create_v2_collaboration_setup,
+    wait_for_ai_work_item,
+)
 from full_chain_regression_version_dashboard import (
     validate_version_dashboard_blocker_actions,
     validate_version_dashboard_delivery_stage_overview,
@@ -29,6 +36,27 @@ def _slug() -> str:
 def _assert(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
+
+
+def _work_item(
+    *,
+    item_id: str,
+    owner_role_code: str,
+    reviewer_role_code: str,
+) -> dict[str, Any]:
+    return {
+        "acceptance_criteria": ["Assistant iteration context is available"],
+        "description": "Prepare deterministic assistant iteration context.",
+        "id": item_id,
+        "input_contract": {},
+        "owner_role_code": owner_role_code,
+        "output_contract": {},
+        "priority": 1,
+        "reviewer_role_code": reviewer_role_code,
+        "risk_level": "low",
+        "title": item_id,
+        "work_item_type": "product_detail_design",
+    }
 
 
 def validate_assistant_qa_quick_regression(
@@ -58,49 +86,57 @@ def validate_assistant_qa_quick_regression(
             "code": f"assistant-qa-{slug}",
             "description": "自动 AI 助手问答快速回归版本。",
             "name": f"AI 助手问答快速回归版本 {slug}",
-            "status": "active",
+            "status": "planning",
         },
     )
-    requirement = client.post(
-        "/api/requirements",
-        {
-            "content": "AI 助手需要能回答迭代版本阻塞项、版本总览和下一步行动。",
-            "priority": "P1",
-            "product_id": product["id"],
-            "source": "product_planning",
-            "title": f"AI 助手问答快速回归需求 {slug}",
-            "version_id": version["id"],
-        },
+    marker = f"assistant-qa-{slug}"
+    ai_role_code = f"simulated-ai-{marker}"
+    human_role_code = f"simulated-reviewer-{marker}"
+    design_id = f"assistant-product-detail-design-{slug}"
+    setup = create_v2_collaboration_setup(
+        client,
+        dependencies=(),
+        marker=marker,
+        owner_user_id=str(user["id"]),
+        product_id=str(product["id"]),
+        repository_id=None,
+        requirement=None,
+        work_items=(
+            _work_item(
+                item_id=design_id,
+                owner_role_code=ai_role_code,
+                reviewer_role_code=human_role_code,
+            ),
+        ),
+        workspace_root=f"/tmp/e-ai-brain-assistant-qa/{slug}",
     )
-    approved = client.post(
-        f"/api/requirements/{requirement['id']}/approve",
-        {"comment": "AI 助手问答快速回归审批通过"},
-    )
+    fixture = setup.fixture
     _assert(
-        approved.get("status") in {"approved", "planned"},
-        f"Assistant QA requirement was not approved: {approved}",
+        fixture.version_id == version["id"],
+        f"Assistant QA collaboration selected another version: {fixture}",
     )
-    task = client.post(f"/api/requirements/{requirement['id']}/generate-task")
-    task_id = str(task["task_id"])
-    started = client.post(
-        f"/api/ai-tasks/{task_id}/start",
-        {
-            "execution_mode": "deterministic",
-            "reason": "assistant QA quick regression prepares progress context",
-        },
+    requirement = {"id": fixture.requirement_id}
+    design_work_item = next(
+        item
+        for item in fixture.work_items
+        if item.get("work_item_type") == "product_detail_design"
     )
-    _assert(
-        started.get("status") == "waiting_review",
-        f"Assistant QA task did not enter waiting_review: {started}",
+    wait_for_ai_work_item(
+        client,
+        run_id=fixture.run_id,
+        status="running",
+        timeout_seconds=30.0,
+        work_item_id=str(design_work_item["id"]),
     )
-    approved_review = client.post(
-        f"/api/reviews/{started['review_id']}/approve",
-        {"version": 1},
+    design_result = complete_ai_work_item_via_runner_protocol(
+        client,
+        setup.session,
+        fixture.run_id,
+        str(design_work_item["id"]),
+        client,
+        30.0,
     )
-    _assert(
-        approved_review.get("task_status") == "completed",
-        f"Assistant QA review did not complete task: {approved_review}",
-    )
+    task_id = design_result.ai_task_id
 
     bug = client.post(
         "/api/bugs",

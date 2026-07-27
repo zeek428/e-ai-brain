@@ -278,7 +278,7 @@ class CodeInspectionReadRepository:
                   %s, %s, %s, %s, %s, %s, %s::timestamptz, %s::timestamptz,
                   %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::jsonb,
                   %s, %s, %s, %s::jsonb, %s::jsonb,
-                  %s::jsonb, %s::jsonb, %s, %s::jsonb, %s::jsonb, %s,
+                  %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::jsonb, %s,
                   COALESCE(%s::timestamptz, now()), COALESCE(%s::timestamptz, now())
                 )
                 ON CONFLICT (id) DO UPDATE SET

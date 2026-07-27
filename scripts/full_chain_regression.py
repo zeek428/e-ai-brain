@@ -28,10 +28,16 @@ from full_chain_regression_permissions import validate_permission_visibility_qui
 from full_chain_regression_rd_collaboration import (  # noqa: E402
     validate_rd_collaboration_quick_regression,
 )
+from full_chain_regression_rd_runner_protocol import (  # noqa: E402
+    complete_ai_work_item_via_runner_protocol,
+)
 from full_chain_regression_slug import regression_slug  # noqa: E402
 from full_chain_regression_suites import (  # noqa: E402
     REGRESSION_TARGETED_SUITE_NAMES,
+    approve_high_risk_dispatch,
+    create_v2_collaboration_setup,
     regression_suite_coverage,
+    wait_for_ai_work_item,
 )
 from full_chain_regression_version_dashboard import (  # noqa: E402
     validate_version_dashboard_blocker_actions,
@@ -261,6 +267,31 @@ def _assert(condition: bool, message: str) -> None:
         raise RegressionError(message)
 
 
+def _v2_work_item(
+    *,
+    input_contract: dict[str, Any] | None = None,
+    item_id: str,
+    owner_role_code: str,
+    priority: int,
+    risk_level: str,
+    reviewer_role_code: str,
+    work_item_type: str,
+) -> dict[str, Any]:
+    return {
+        "acceptance_criteria": ["Regression evidence is recorded"],
+        "description": f"Full-chain v2 work item: {item_id}",
+        "id": item_id,
+        "input_contract": input_contract or {},
+        "owner_role_code": owner_role_code,
+        "output_contract": {},
+        "priority": priority,
+        "reviewer_role_code": reviewer_role_code,
+        "risk_level": risk_level,
+        "title": item_id,
+        "work_item_type": work_item_type,
+    }
+
+
 def _ids(items: list[dict[str, Any]]) -> set[str]:
     return {str(item["id"]) for item in items if item.get("id")}
 
@@ -339,6 +370,100 @@ def find_deposit_for_task(client: ApiClient, task_id: str) -> dict[str, Any] | N
     return None
 
 
+def select_active_knowledge_space(client: ApiClient) -> dict[str, Any]:
+    response = client.get("/api/knowledge/spaces")
+    space = next(
+        (
+            item
+            for item in response.get("items", [])
+            if item.get("status") == "active" and str(item.get("id") or "").strip()
+        ),
+        None,
+    )
+    _assert(space is not None, f"No accessible active knowledge space found: {response}")
+    return space
+
+
+def validate_code_inspection_requirement_coverage(
+    client: ApiClient,
+    *,
+    committer_governance: dict[str, Any],
+    governance_summary: dict[str, Any],
+    product_id: str,
+    report: dict[str, Any],
+) -> set[str]:
+    _assert(
+        int(governance_summary.get("covered_by_requirement_count") or 0) >= 1,
+        f"Governance summary did not count requirement coverage: {governance_summary}",
+    )
+    _assert(
+        int(governance_summary.get("historical_covered_by_task_count") or 0) == 0,
+        f"Governance summary unexpectedly counted direct task coverage: {governance_summary}",
+    )
+    _assert(
+        float(governance_summary.get("requirement_coverage_rate") or 0) == 1.0,
+        f"Governance summary did not close requirement coverage: {governance_summary}",
+    )
+    _assert(
+        int(committer_governance.get("covered_by_requirement_count") or 0) >= 1,
+        f"Committer governance missed requirement coverage: {committer_governance}",
+    )
+    _assert(
+        int(committer_governance.get("historical_covered_by_task_count") or 0) == 0,
+        f"Committer governance unexpectedly counted direct task coverage: {committer_governance}",
+    )
+    requirement_ids = {str(item) for item in report.get("created_requirement_ids") or []}
+    _assert(
+        requirement_ids,
+        f"Code inspection report did not record created requirement ids: {report}",
+    )
+    _assert(
+        not report.get("created_task_ids"),
+        f"Code inspection report unexpectedly created direct remediation tasks: {report}",
+    )
+    requirements = client.get(
+        "/api/requirements",
+        {"page": 1, "page_size": 100, "product_id": product_id},
+    )
+    listed_ids = _ids(requirements.get("items", []))
+    for requirement_id in requirement_ids:
+        _assert_contains(
+            listed_ids,
+            requirement_id,
+            "Code inspection remediation requirement missing from requirement ledger",
+        )
+    return requirement_ids
+
+
+def validate_code_inspection_report_full_chain_requirement(
+    report_full_chain: dict[str, Any],
+    report_requirement_ids: set[str],
+) -> str:
+    requirement_id = str((report_full_chain.get("requirement") or {}).get("id") or "")
+    _assert_contains(
+        report_requirement_ids,
+        requirement_id,
+        "Code inspection report subject did not resolve to its remediation requirement",
+    )
+    return requirement_id
+
+
+def validate_full_team_dashboard_collaboration_task(
+    team_dashboard: dict[str, Any],
+    task_id: str,
+) -> None:
+    summary = team_dashboard.get("summary") or {}
+    _assert(
+        int(summary.get("ai_tasks") or 0) >= 1,
+        f"IT team dashboard missed collaboration AI task: {summary}",
+    )
+    _assert_contains(
+        _ids(team_dashboard.get("latest_tasks", [])),
+        task_id,
+        "Dashboard missed completed collaboration AI task",
+    )
+
+
 def validate_version_dashboard_quick_regression(
     client: ApiClient,
     *,
@@ -368,86 +493,10 @@ def validate_version_dashboard_quick_regression(
             "code": f"dashboard-{slug}",
             "description": "自动版本总览快速回归版本。",
             "name": f"版本总览快速回归版本 {slug}",
-            "status": "active",
+            "status": "planning",
         },
     )
     results.append(StepResult("version_dashboard_product", f"{product['id']} / {version['id']}"))
-
-    requirement = client.post(
-        "/api/requirements",
-        {
-            "content": "版本总览快速回归验证需求、任务、分支和发布阻塞项聚合。",
-            "priority": "P0",
-            "product_id": product["id"],
-            "source": "product_planning",
-            "title": f"版本总览快速回归需求 {slug}",
-            "version_id": version["id"],
-        },
-    )
-    approved = client.post(
-        f"/api/requirements/{requirement['id']}/approve",
-        {"comment": "版本总览快速回归审批通过"},
-    )
-    _assert(
-        approved["status"] in {"approved", "planned"},
-        f"Version dashboard requirement was not approved: {approved}",
-    )
-    task = client.post(f"/api/requirements/{requirement['id']}/generate-task")
-    task_id = str(task["task_id"])
-    results.append(
-        StepResult("version_dashboard_requirement", f"{requirement['id']} / task={task_id}")
-    )
-
-    design_started = client.post(
-        f"/api/ai-tasks/{task_id}/start",
-        {
-            "execution_mode": "deterministic",
-            "reason": "version dashboard quick regression prepares code review context",
-        },
-    )
-    _assert(
-        design_started.get("status") == "waiting_review",
-        f"Version dashboard design task did not enter review: {design_started}",
-    )
-    design_approved = client.post(
-        f"/api/reviews/{design_started['review_id']}/approve",
-        {"version": 1},
-    )
-    _assert(
-        design_approved.get("task_status") == "completed",
-        f"Version dashboard design task was not completed: {design_approved}",
-    )
-    technical_solution = client.post(
-        "/api/ai-tasks",
-        {
-            "input": {"product_detail_design_task_id": task_id},
-            "requirement_id": requirement["id"],
-            "task_type": "technical_solution",
-            "title": f"技术方案：版本总览快速回归 {slug}",
-        },
-    )
-    results.append(
-        StepResult("version_dashboard_solution", str(technical_solution["id"]))
-    )
-    solution_started = client.post(
-        f"/api/ai-tasks/{technical_solution['id']}/start",
-        {
-            "execution_mode": "deterministic",
-            "reason": "version dashboard quick regression prepares code review context",
-        },
-    )
-    _assert(
-        solution_started.get("status") == "waiting_review",
-        f"Version dashboard solution task did not enter review: {solution_started}",
-    )
-    solution_approved = client.post(
-        f"/api/reviews/{solution_started['review_id']}/approve",
-        {"version": 1},
-    )
-    _assert(
-        solution_approved.get("task_status") == "completed",
-        f"Version dashboard solution task was not completed: {solution_approved}",
-    )
 
     repository = client.post(
         f"/api/products/{product['id']}/git-repositories",
@@ -474,43 +523,272 @@ def validate_version_dashboard_quick_regression(
             "working_branch": version_branch,
         },
     )
+
+    marker = f"version-dashboard-{slug}"
+    ai_role_code = f"simulated-ai-{marker}"
+    assessment_role_code = f"simulated-assessor-{marker}"
+    human_role_code = f"simulated-reviewer-{marker}"
+    design_id = f"design-{slug}"
+    solution_id = f"solution-{slug}"
+    snapshot_binding_id = f"snapshot-binding-{slug}"
+    setup = create_v2_collaboration_setup(
+        client,
+        dependencies=(
+            {
+                "predecessor_work_item_id": design_id,
+                "successor_work_item_id": solution_id,
+            },
+            {
+                "predecessor_work_item_id": solution_id,
+                "successor_work_item_id": snapshot_binding_id,
+            },
+        ),
+        marker=marker,
+        matching_task_types=("code_review",),
+        owner_user_id=str(user["id"]),
+        product_id=str(product["id"]),
+        repository_id=str(repository["id"]),
+        requirement=None,
+        work_items=(
+            _v2_work_item(
+                item_id=design_id,
+                owner_role_code=ai_role_code,
+                priority=1,
+                risk_level="low",
+                reviewer_role_code=human_role_code,
+                work_item_type="product_detail_design",
+            ),
+            _v2_work_item(
+                item_id=solution_id,
+                owner_role_code=ai_role_code,
+                priority=2,
+                risk_level="low",
+                reviewer_role_code=human_role_code,
+                work_item_type="technical_solution",
+            ),
+            _v2_work_item(
+                item_id=snapshot_binding_id,
+                owner_role_code=assessment_role_code,
+                priority=3,
+                risk_level="low",
+                reviewer_role_code=human_role_code,
+                work_item_type="documentation",
+            ),
+        ),
+        workspace_root=str(repo_path),
+    )
+    fixture = setup.fixture
+    _assert(
+        fixture.version_id == version["id"],
+        f"Version dashboard collaboration selected another version: {fixture}",
+    )
+    requirement = {"id": fixture.requirement_id}
+    design_work_item = next(
+        item
+        for item in fixture.work_items
+        if item.get("work_item_type") == "product_detail_design"
+    )
+    solution_work_item = next(
+        item
+        for item in fixture.work_items
+        if item.get("work_item_type") == "technical_solution"
+    )
+    snapshot_binding_work_item = next(
+        item
+        for item in fixture.work_items
+        if item.get("work_item_type") == "documentation"
+    )
+    results.append(
+        StepResult(
+            "version_dashboard_requirement",
+            f"{requirement['id']} / run={fixture.run_id}",
+        )
+    )
+
+    wait_for_ai_work_item(
+        client,
+        run_id=fixture.run_id,
+        status="running",
+        timeout_seconds=30.0,
+        work_item_id=str(design_work_item["id"]),
+    )
+    design_result = complete_ai_work_item_via_runner_protocol(
+        client,
+        setup.session,
+        fixture.run_id,
+        str(design_work_item["id"]),
+        client,
+        30.0,
+    )
+    task_id = design_result.ai_task_id
+    results.append(
+        StepResult("version_dashboard_design", design_result.step_detail)
+    )
+    wait_for_ai_work_item(
+        client,
+        run_id=fixture.run_id,
+        status="running",
+        timeout_seconds=30.0,
+        work_item_id=str(solution_work_item["id"]),
+    )
+    solution_result = complete_ai_work_item_via_runner_protocol(
+        client,
+        setup.session,
+        fixture.run_id,
+        str(solution_work_item["id"]),
+        client,
+        30.0,
+    )
+    technical_solution_task_id = solution_result.ai_task_id
+    results.append(
+        StepResult("version_dashboard_solution", solution_result.step_detail)
+    )
+    snapshot_binding_work_item = wait_for_ai_work_item(
+        client,
+        run_id=fixture.run_id,
+        status="ready",
+        timeout_seconds=30.0,
+        work_item_id=str(snapshot_binding_work_item["id"]),
+    )
+    claimed_binding = client.post(
+        f"/api/delivery/rd-work-items/{snapshot_binding_work_item['id']}/claim",
+        {
+            "expected_version": snapshot_binding_work_item["version"],
+            "idempotency_key": (
+                f"claim-snapshot-binding:{marker}:{snapshot_binding_work_item['id']}"
+            ),
+            "lease_seconds": 60,
+        },
+    )
+    binding_attempt = claimed_binding.get("attempt") or {}
+    claimed_binding_item = claimed_binding.get("work_item") or {}
+    binding_lease_token = str(claimed_binding.get("lease_token") or "")
+    _assert(
+        binding_attempt.get("id")
+        and binding_lease_token
+        and claimed_binding_item.get("status") == "running",
+        f"Snapshot-binding work item was not claimed: {claimed_binding}",
+    )
+
     snapshot = client.post(
         f"/api/devops/gitlab/merge-requests/{repository['id']}/7/snapshot",
         {
             "requirement_id": requirement["id"],
-            "technical_solution_task_id": technical_solution["id"],
+            "technical_solution_task_id": technical_solution_task_id,
         },
+    )
+    review_id = f"review-{slug}"
+    replan = client.post(
+        f"/api/delivery/rd-collaboration-runs/{fixture.run_id}/replan",
+        {
+            "dependencies": [],
+            "work_items": [
+                {
+                    **_v2_work_item(
+                        input_contract={"gitlab_mr_snapshot_id": snapshot["id"]},
+                        item_id=review_id,
+                        owner_role_code=ai_role_code,
+                        priority=1,
+                        risk_level="high",
+                        reviewer_role_code=human_role_code,
+                        work_item_type="code_review",
+                    ),
+                    "requirement_id": requirement["id"],
+                }
+            ],
+        },
+    )
+    _assert(
+        int(replan.get("plan_version") or 0) == 2,
+        f"Version dashboard code-review replan did not create plan version 2: {replan}",
+    )
+    code_review_work_item = next(
+        item
+        for item in replan.get("work_items") or []
+        if item.get("work_item_type") == "code_review"
+    )
+    _assert(
+        (code_review_work_item.get("input_contract") or {}).get(
+            "gitlab_mr_snapshot_id"
+        )
+        == snapshot["id"],
+        f"Code-review plan did not freeze the real MR snapshot: {code_review_work_item}",
+    )
+    submitted_binding = client.post(
+        f"/api/delivery/rd-work-items/{snapshot_binding_work_item['id']}/submit",
+        {
+            "attempt_id": binding_attempt["id"],
+            "evidence": {
+                "gitlab_mr_snapshot_id": snapshot["id"],
+                "status": "passed",
+            },
+            "idempotency_key": (
+                f"submit-snapshot-binding:{marker}:{snapshot_binding_work_item['id']}"
+            ),
+            "lease_token": binding_lease_token,
+            "output": {
+                "gitlab_mr_snapshot_id": snapshot["id"],
+                "summary": "Real MR snapshot bound to immutable code-review plan",
+            },
+            "version": claimed_binding_item["version"],
+        },
+    )
+    submitted_binding_item = submitted_binding.get("work_item") or {}
+    _assert(
+        submitted_binding_item.get("status") == "reviewing",
+        f"Snapshot-binding work item did not enter review: {submitted_binding}",
+    )
+    reviewed_binding = client.post(
+        f"/api/delivery/rd-work-items/{snapshot_binding_work_item['id']}/review",
+        {
+            "comment": "MR snapshot binding independently reviewed",
+            "decision": "approve",
+            "idempotency_key": (
+                f"review-snapshot-binding:{marker}:{snapshot_binding_work_item['id']}"
+            ),
+            "version": submitted_binding_item["version"],
+        },
+    )
+    _assert(
+        (reviewed_binding.get("work_item") or {}).get("status") == "completed",
+        f"Snapshot-binding work item did not complete: {reviewed_binding}",
     )
     results.append(
         StepResult("version_dashboard_branch", f"{branch_config['id']} / {version_branch}")
     )
-    code_review_task = client.post(
-        "/api/ai-tasks",
-        {
-            "input": {"gitlab_mr_snapshot_id": snapshot["id"]},
-            "requirement_id": requirement["id"],
-            "task_type": "code_review",
-            "title": f"Code Review：版本总览快速回归 {slug}",
-        },
+    approve_high_risk_dispatch(
+        client,
+        marker=marker,
+        run_id=fixture.run_id,
+        timeout_seconds=30.0,
+        work_item_id=str(code_review_work_item["id"]),
     )
-    code_review_started = client.post(
-        f"/api/ai-tasks/{code_review_task['id']}/start",
-        {
-            "execution_mode": "deterministic",
-            "reason": "version dashboard quick regression validates code review aggregation",
-        },
+    wait_for_ai_work_item(
+        client,
+        run_id=fixture.run_id,
+        status="running",
+        timeout_seconds=30.0,
+        work_item_id=str(code_review_work_item["id"]),
     )
-    _assert(
-        code_review_started.get("status") == "waiting_review",
-        f"Version dashboard code review task did not enter review: {code_review_started}",
+    code_review_result = complete_ai_work_item_via_runner_protocol(
+        client,
+        setup.session,
+        fixture.run_id,
+        str(code_review_work_item["id"]),
+        client,
+        30.0,
     )
+    code_review_task_id = code_review_result.ai_task_id
     code_review_report = client.get(
-        f"/api/ai-tasks/{code_review_task['id']}/code-review-report"
+        f"/api/ai-tasks/{code_review_task_id}/code-review-report"
     )
     results.append(
         StepResult(
             "version_dashboard_code_review",
-            f"{code_review_task['id']} / report={code_review_report['id']}",
+            (
+                f"{code_review_task_id} / report={code_review_report['id']} "
+                f"/ snapshot={snapshot['id']}"
+            ),
         )
     )
 
@@ -530,9 +808,13 @@ def validate_version_dashboard_quick_regression(
         "/api/bugs",
         {
             "description": "版本总览快速回归创建的阻塞 Bug，用于验证版本页集中展示缺陷和发布阻塞。",
-            "evidence": {"regression_suite": "version-dashboard"},
+            "evidence": {
+                "code_review_report_id": code_review_report["id"],
+                "gitlab_mr_snapshot_id": snapshot["id"],
+                "regression_suite": "version-dashboard",
+            },
             "product_id": product["id"],
-            "related_task_id": task_id,
+            "related_task_id": code_review_task_id,
             "requirement_id": requirement["id"],
             "reproduce_steps": ["打开版本总览", "确认 Bug 汇总、列表和阻塞项"],
             "severity": "blocker",
@@ -564,8 +846,8 @@ def validate_version_dashboard_quick_regression(
         "Version dashboard quick check missed code review report summary.",
     )
     _assert(
-        dashboard["summary"].get("pending_code_review_reports", 0) >= 1,
-        "Version dashboard quick check missed pending code review report summary.",
+        dashboard["summary"].get("pending_code_review_reports", 0) == 0,
+        "Version dashboard quick check retained a completed code review as pending.",
     )
     _assert(
         dashboard["summary"].get("bugs", 0) >= 1,
@@ -588,6 +870,16 @@ def validate_version_dashboard_quick_regression(
         _ids(dashboard.get("tasks", [])),
         task_id,
         "Version dashboard quick check missed task row",
+    )
+    _assert_contains(
+        _ids(dashboard.get("tasks", [])),
+        technical_solution_task_id,
+        "Version dashboard quick check missed technical solution task row",
+    )
+    _assert_contains(
+        _ids(dashboard.get("tasks", [])),
+        code_review_task_id,
+        "Version dashboard quick check missed code review task row",
     )
     _assert_contains(
         _ids(dashboard.get("branch_configs", [])),
@@ -645,16 +937,6 @@ def validate_version_dashboard_quick_regression(
     _assert(
         branch_blockers,
         f"Version dashboard quick check missed branch blocker: {dashboard_blockers}",
-    )
-    code_review_blockers = [
-        blocker
-        for blocker in dashboard_blockers
-        if blocker.get("source_type") == "code_review_report"
-        and str(blocker.get("action_target_id")) == code_review_report["id"]
-    ]
-    _assert(
-        code_review_blockers,
-        f"Version dashboard quick check missed pending code review blocker: {dashboard_blockers}",
     )
     bug_blockers = [
         blocker
@@ -731,10 +1013,36 @@ def run_regression(
             "code": f"v-{slug}",
             "description": "自动全链路回归版本。",
             "name": f"全链路回归版本 {slug}",
-            "status": "active",
+            "status": "planning",
         },
     )
     results.append(StepResult("version", f"{version['id']} / {version['code']}"))
+
+    repository = client.post(
+        f"/api/products/{product['id']}/git-repositories",
+        {
+            "default_branch": "main",
+            "git_provider": "github",
+            "name": f"全链路本地扫描仓库 {slug}",
+            "project_path": f"local/{slug}",
+            "remote_url": str(repo_path),
+            "repo_type": "code",
+            "root_path": "/",
+            "status": "active",
+        },
+    )
+    branch_config = client.post(
+        f"/api/product-versions/{version['id']}/branch-configs",
+        {
+            "base_branch": "main",
+            "branch_status": "active",
+            "creation_source": "manual",
+            "description": "全链路回归版本分支。",
+            "repository_id": repository["id"],
+            "working_branch": version_branch,
+        },
+    )
+    results.append(StepResult("version_branch", f"{branch_config['id']} / {version_branch}"))
 
     feedback = client.post(
         "/api/insights/user-feedback",
@@ -756,50 +1064,87 @@ def run_regression(
             "priority": "P0",
             "title": f"全链路回归需求 {slug}",
             "triage_note": "回归脚本确认该反馈可进入产品需求池。",
+            "version_id": version["id"],
         },
     )
     requirement = converted["requirement"]
     _assert(converted["feedback"]["status"] == "linked", "Feedback was not linked after conversion.")
     results.append(StepResult("feedback_to_requirement", f"{feedback['id']} -> {requirement['id']}"))
 
-    approved = client.post(f"/api/requirements/{requirement['id']}/approve", {"comment": "全链路回归审批通过"})
-    _assert(approved["status"] == "approved", "Requirement was not approved.")
-    schedule = client.post(
-        "/api/requirements/batch-schedule",
-        {
-            "product_id": product["id"],
-            "reason": "归入自动回归版本。",
-            "requirement_ids": [requirement["id"]],
-            "version_id": version["id"],
-        },
+    marker = f"full-chain-{slug}"
+    ai_role_code = f"simulated-ai-{marker}"
+    human_role_code = f"simulated-reviewer-{marker}"
+    design_id = f"product-detail-design-{slug}"
+    setup = create_v2_collaboration_setup(
+        client,
+        dependencies=(),
+        marker=marker,
+        owner_user_id=str(user["id"]),
+        product_id=str(product["id"]),
+        repository_id=str(repository["id"]),
+        requirement=requirement,
+        work_items=(
+            _v2_work_item(
+                item_id=design_id,
+                owner_role_code=ai_role_code,
+                priority=1,
+                risk_level="low",
+                reviewer_role_code=human_role_code,
+                work_item_type="product_detail_design",
+            ),
+        ),
+        workspace_root=str(repo_path),
     )
-    _assert(schedule.get("updated_count") == 1, f"Requirement schedule did not update exactly one item: {schedule}")
-    results.append(StepResult("requirement_schedule", f"{requirement['id']} -> {version['id']}"))
-
-    task = client.post(f"/api/requirements/{requirement['id']}/generate-task")
-    task_id = task["task_id"]
-    started = client.post(
-        f"/api/ai-tasks/{task_id}/start",
-        {
-            "execution_mode": task_execution_mode,
-            "reason": "full-chain regression",
-        },
+    fixture = setup.fixture
+    _assert(
+        fixture.requirement_id == requirement["id"]
+        and fixture.version_id == version["id"],
+        f"Full regression collaboration scope drifted: {fixture}",
     )
-    _assert(started.get("status") == "waiting_review", f"AI task did not enter waiting_review: {started}")
-    approved_review = client.post(f"/api/reviews/{started['review_id']}/approve", {"version": 1})
-    _assert(approved_review.get("task_status") == "completed", f"Review did not complete task: {approved_review}")
+    results.append(
+        StepResult(
+            "requirement_schedule",
+            f"{requirement['id']} -> {version['id']} / run={fixture.run_id}",
+        )
+    )
+    design_work_item = next(
+        item
+        for item in fixture.work_items
+        if item.get("work_item_type") == "product_detail_design"
+    )
+    wait_for_ai_work_item(
+        client,
+        run_id=fixture.run_id,
+        status="running",
+        timeout_seconds=30.0,
+        work_item_id=str(design_work_item["id"]),
+    )
+    design_result = complete_ai_work_item_via_runner_protocol(
+        client,
+        setup.session,
+        fixture.run_id,
+        str(design_work_item["id"]),
+        client,
+        30.0,
+    )
+    task_id = design_result.ai_task_id
     results.append(
         StepResult(
             "ai_task_review",
-            f"{task_id} / review {started['review_id']} / mode={task_execution_mode}",
+            f"{design_result.step_detail} / mode=simulated_runner",
         )
     )
 
     deposit = find_deposit_for_task(client, task_id)
     _assert(deposit is not None, f"No pending knowledge deposit found for task {task_id}.")
+    knowledge_space = select_active_knowledge_space(client)
     approved_deposit = client.post(
         f"/api/knowledge/deposits/{deposit['id']}/approve",
-        {"permission_roles": ["admin", "product_owner", "rd_owner"], "title": f"全链路回归知识沉淀 {slug}"},
+        {
+            "knowledge_space_id": knowledge_space["id"],
+            "permission_roles": ["admin", "product_owner", "rd_owner"],
+            "title": f"全链路回归知识沉淀 {slug}",
+        },
     )
     _assert(approved_deposit.get("status") == "approved", f"Knowledge deposit was not approved: {approved_deposit}")
     knowledge_document_id = str(approved_deposit.get("knowledge_document_id") or "")
@@ -807,7 +1152,7 @@ def run_regression(
     results.append(
         StepResult(
             "knowledge_deposit",
-            f"{deposit['id']} -> {knowledge_document_id}",
+            f"{deposit['id']} -> {knowledge_document_id} / space={knowledge_space['id']}",
         )
     )
 
@@ -851,32 +1196,6 @@ def run_regression(
             f"{knowledge_document_id} / chunks={knowledge_health_summary.get('total_chunks')}",
         )
     )
-
-    repository = client.post(
-        f"/api/products/{product['id']}/git-repositories",
-        {
-            "default_branch": "main",
-            "git_provider": "github",
-            "name": f"全链路本地扫描仓库 {slug}",
-            "project_path": f"local/{slug}",
-            "remote_url": str(repo_path),
-            "repo_type": "code",
-            "root_path": "/",
-            "status": "active",
-        },
-    )
-    branch_config = client.post(
-        f"/api/product-versions/{version['id']}/branch-configs",
-        {
-            "base_branch": "main",
-            "branch_status": "active",
-            "creation_source": "manual",
-            "description": "全链路回归版本分支。",
-            "repository_id": repository["id"],
-            "working_branch": version_branch,
-        },
-    )
-    results.append(StepResult("version_branch", f"{branch_config['id']} / {version_branch}"))
 
     scan_config = {
         "async_execution": False,
@@ -961,10 +1280,6 @@ def run_regression(
         int(governance_summary.get("covered_by_bug_count") or 0) >= 1,
         f"Governance summary did not count Bug coverage: {governance_summary}",
     )
-    _assert(
-        int(governance_summary.get("covered_by_task_count") or 0) >= 1,
-        f"Governance summary did not count remediation task coverage: {governance_summary}",
-    )
     inspection_dashboard = client.get(
         "/api/governance/code-inspections/dashboard",
         {"product_id": product["id"], "repository_id": repository["id"]},
@@ -1003,8 +1318,8 @@ def run_regression(
         f"Code inspection governance pressure did not close Bug coverage: {governance_pressure}",
     )
     _assert(
-        int(governance_pressure.get("uncovered_task_finding_count") or 0) == 0,
-        f"Code inspection governance pressure did not close remediation coverage: {governance_pressure}",
+        int(governance_pressure.get("uncovered_requirement_finding_count") or 0) == 0,
+        f"Code inspection governance pressure did not close requirement coverage: {governance_pressure}",
     )
     committer_governance = [
         item
@@ -1028,14 +1343,15 @@ def run_regression(
         int(committer_governance_item.get("covered_by_bug_count") or 0) >= 1,
         f"Code inspection committer governance missed Bug coverage: {committer_governance_item}",
     )
-    _assert(
-        int(committer_governance_item.get("covered_by_task_count") or 0) >= 1,
-        f"Code inspection committer governance missed remediation task coverage: {committer_governance_item}",
-    )
     report_bug_ids = {str(item) for item in report.get("created_bug_ids") or []}
-    report_task_ids = {str(item) for item in report.get("created_task_ids") or []}
     _assert(report_bug_ids, f"Code inspection report did not record created Bug ids: {report}")
-    _assert(report_task_ids, f"Code inspection report did not record created remediation task ids: {report}")
+    report_requirement_ids = validate_code_inspection_requirement_coverage(
+        client,
+        committer_governance=committer_governance_item,
+        governance_summary=governance_summary,
+        product_id=product["id"],
+        report=report,
+    )
     results.append(StepResult("code_inspection", f"{report_id} / findings={len(findings)} / {scan_run['id']}"))
     results.append(
         StepResult(
@@ -1044,7 +1360,8 @@ def run_regression(
                 f"status={governance_pressure.get('status')}, "
                 f"gate_failures={governance_pressure.get('quality_gate_failed_report_count')}, "
                 f"uncovered_bug={governance_pressure.get('uncovered_bug_finding_count')}, "
-                f"uncovered_task={governance_pressure.get('uncovered_task_finding_count')}"
+                "uncovered_requirement="
+                f"{governance_pressure.get('uncovered_requirement_finding_count')}"
             ),
         )
     )
@@ -1059,23 +1376,10 @@ def run_regression(
         all(item.get("evidence", {}).get("code_inspection_report_id") == report_id for item in bug_items if item["id"] in report_bug_ids),
         "Code inspection Bug evidence did not point back to the report.",
     )
-    remediation_tasks = client.get(
-        "/api/ai-tasks",
-        {"product_id": product["id"], "task_type": "code_inspection_remediation"},
-    )
-    remediation_items = remediation_tasks.get("items", [])
-    _assert(len(remediation_items) >= 1, "Code inspection did not create a remediation task.")
-    remediation_task_ids = _ids(remediation_items)
-    for remediation_task_id in report_task_ids:
-        _assert_contains(
-            remediation_task_ids,
-            remediation_task_id,
-            "Code inspection remediation task writeback missing from AI task list",
-        )
     results.append(
         StepResult(
             "inspection_writeback",
-            f"bugs={len(report_bug_ids)}, tasks={len(report_task_ids)}",
+            f"bugs={len(report_bug_ids)}, requirements={len(report_requirement_ids)}",
         )
     )
 
@@ -1291,16 +1595,15 @@ def run_regression(
         "/api/lifecycle/full-chain",
         {"subject_id": report_id, "subject_type": "code_inspection_report"},
     )
-    _assert(
-        report_full_chain["requirement"]["id"] == requirement["id"],
-        "Code inspection report subject did not resolve back to the requirement full-chain.",
+    validate_code_inspection_report_full_chain_requirement(
+        report_full_chain,
+        report_requirement_ids,
     )
     results.append(StepResult("full_chain", f"timeline={len(full_chain.get('timeline', []))}"))
 
     team_dashboard = client.get("/api/dashboard/it-team", {"product_id": product["id"], "refresh": "true", "time_range": "all"})
     dashboard_summary = team_dashboard.get("summary") or {}
     _assert(int(dashboard_summary.get("requirements") or 0) >= 1, f"IT team dashboard missed requirements: {dashboard_summary}")
-    _assert(int(dashboard_summary.get("ai_tasks") or 0) >= 2, f"IT team dashboard missed AI tasks: {dashboard_summary}")
     _assert(int(dashboard_summary.get("bugs") or 0) >= 1, f"IT team dashboard missed Bugs: {dashboard_summary}")
     _assert(
         int(dashboard_summary.get("knowledge_documents") or 0) >= 1,
@@ -1308,9 +1611,7 @@ def run_regression(
     )
     _assert(_status_count(team_dashboard.get("user_feedback_status_counts", []), "linked") >= 1, "Dashboard missed linked feedback count.")
     _assert(_status_count(team_dashboard.get("bug_status_counts", []), "open") >= 1, "Dashboard missed open Bug count.")
-    _assert_contains(_ids(team_dashboard.get("latest_tasks", [])), task_id, "Dashboard missed completed AI task")
-    for remediation_task_id in report_task_ids:
-        _assert_contains(_ids(team_dashboard.get("latest_tasks", [])), remediation_task_id, "Dashboard missed remediation task")
+    validate_full_team_dashboard_collaboration_task(team_dashboard, task_id)
     for bug_id in report_bug_ids:
         _assert_contains(_ids(team_dashboard.get("latest_high_severity_bugs", [])), bug_id, "Dashboard missed severe Bug")
     _assert_contains(
@@ -1640,8 +1941,9 @@ def main() -> int:
         choices=["deterministic", "model_gateway"],
         default=os.getenv("FULL_CHAIN_TASK_EXECUTION_MODE", "deterministic"),
         help=(
-            "AI task execution mode. deterministic keeps the full-chain check stable without "
-            "calling an external model gateway; model_gateway validates the live Chat gateway."
+            "AI task execution mode for tasks created internally by v2 collaboration. "
+            "deterministic keeps the full-chain check stable without calling an external "
+            "model gateway; model_gateway validates the live Chat gateway."
         ),
     )
     parser.add_argument(

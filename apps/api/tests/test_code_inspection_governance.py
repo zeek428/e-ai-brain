@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 from types import SimpleNamespace
 
@@ -157,6 +158,54 @@ def test_code_inspection_report_upsert_accepts_native_scan_metadata():
             }
         },
     )
+
+
+def test_code_inspection_report_upsert_aligns_action_json_and_committer_count_types():
+    class RecordingCursor:
+        query = ""
+        params: tuple = ()
+
+        def execute(self, query: str, params: tuple | None = None) -> None:
+            if "INSERT INTO code_inspection_reports" not in query:
+                return
+            self.query = query
+            self.params = params or ()
+
+    cursor = RecordingCursor()
+    repository = CodeInspectionReadRepository(None)
+    repository.upsert_code_inspection_reports(
+        cursor,
+        {
+            "code_inspection_report_actions": {
+                "committer_count": 2,
+                "committer_summary": [{"committer": "alice"}],
+                "created_bug_ids": ["bug_1"],
+                "created_requirement_ids": ["requirement_1"],
+                "created_task_ids": ["task_1"],
+                "id": "code_inspection_report_actions",
+                "notification_ids": ["notification_1"],
+                "repository": {},
+                "result_actions": [{"action": "create_requirement"}],
+                "source_system": "native-code-scanner",
+            }
+        },
+    )
+
+    insert_sql = cursor.query.split("ON CONFLICT", 1)[0]
+    placeholders = re.findall(r"%s(?:::[a-z]+)?", insert_sql)
+    assert placeholders[42:49] == [
+        "%s::jsonb",
+        "%s::jsonb",
+        "%s::jsonb",
+        "%s::jsonb",
+        "%s::jsonb",
+        "%s",
+        "%s::jsonb",
+    ]
+    assert json.loads(cursor.params[46]) == ["requirement_1"]
+    assert cursor.params[47] == 2
+    assert isinstance(cursor.params[47], int)
+    assert json.loads(cursor.params[48]) == [{"committer": "alice"}]
 
 
 def test_code_inspection_finding_upsert_accepts_suppression_metadata():
