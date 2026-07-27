@@ -405,6 +405,7 @@ class HappyPathClient(PreflightClient):
                 "version": 2,
             }
             testing = {
+                "attempt_id": None,
                 "ai_task_id": "ai-task-testing" if self.phase >= 1 else None,
                 "id": "work-testing",
                 "status": "reviewing" if self.phase == 1 else (
@@ -413,7 +414,16 @@ class HappyPathClient(PreflightClient):
                 "title": "verify_e2e_artifact",
                 "version": 2,
             }
-            return {"items": [implementation, testing]}
+            return {
+                "dependencies": [
+                    {
+                        "predecessor_work_item_id": "work-implementation",
+                        "status": "pending" if self.phase == 0 else "satisfied",
+                        "successor_work_item_id": "work-testing",
+                    }
+                ],
+                "items": [implementation, testing],
+            }
         if path in {
             "/api/ai-tasks/ai-task-implementation",
             "/api/ai-tasks/ai-task-testing",
@@ -422,7 +432,13 @@ class HappyPathClient(PreflightClient):
             return {
                 "id": f"ai-task-{suffix}",
                 "pending_review": {"id": f"review-{suffix}"},
-                "quality_gate": {"id": f"gate-{suffix}", "status": "passed"},
+                "quality_gate": {
+                    "id": f"gate-{suffix}",
+                    "independent_evidence_count": 1,
+                    "status": "passed",
+                    "verified_attestation_count": 1,
+                    "verifier_trust_isolated": True,
+                },
                 "status": "waiting_review",
             }
         if path == "/api/system/ai-executor-tasks":
@@ -433,6 +449,7 @@ class HappyPathClient(PreflightClient):
                     {
                         "ai_task_id": ai_task_id,
                         "id": f"runner-task-{suffix}",
+                        "runner_id": "runner-codex",
                         "status": "succeeded",
                         "task_kind": "coding",
                         "workspace_root": f"/workspace/{suffix}",
@@ -440,6 +457,11 @@ class HappyPathClient(PreflightClient):
                     {
                         "ai_task_id": ai_task_id,
                         "id": f"verifier-task-{suffix}",
+                        "quality_gate_run_id": f"gate-{suffix}",
+                        "request_config": {
+                            "required_trust_domain": "verification",
+                        },
+                        "runner_id": "runner-verifier",
                         "status": "succeeded",
                         "task_kind": "quality_gate",
                         "workspace_root": f"/workspace/{suffix}",
@@ -625,6 +647,103 @@ def test_real_e2e_happy_path_projects_native_runner_gate_delivery_and_no_deploym
         for method, path in client.calls
         if method == "POST"
     )
+
+
+class InvalidRunnerEvidenceClient(HappyPathClient):
+    def __init__(self, fault: str) -> None:
+        super().__init__()
+        self.fault = fault
+
+    def get(self, path: str, query=None, *, headers=None) -> dict[str, object]:
+        response = super().get(path, query, headers=headers)
+        if path == "/api/system/ai-executor-tasks":
+            items = [dict(item) for item in response["items"]]
+            coding = next(item for item in items if item.get("task_kind") == "coding")
+            if self.fault == "missing_coding_kind":
+                coding.pop("task_kind")
+            elif self.fault == "wrong_coding_runner":
+                coding["runner_id"] = "runner-other"
+            elif self.fault == "missing_quality_gate_task":
+                items = [item for item in items if item.get("task_kind") != "quality_gate"]
+            else:
+                verifier = next(
+                    item for item in items if item.get("task_kind") == "quality_gate"
+                )
+                if self.fault == "mismatched_quality_gate":
+                    verifier["quality_gate_run_id"] = "gate-other"
+                elif self.fault == "shared_verifier_runner":
+                    verifier["runner_id"] = "runner-codex"
+                elif self.fault == "wrong_verifier_trust":
+                    verifier["request_config"] = {
+                        "required_trust_domain": "coding",
+                    }
+            return {"items": items}
+        if path.startswith("/api/ai-tasks/") and self.fault == "untrusted_gate":
+            gate = dict(response["quality_gate"])
+            gate.update(
+                {
+                    "independent_evidence_count": 0,
+                    "verified_attestation_count": 0,
+                    "verifier_trust_isolated": False,
+                }
+            )
+            return {**response, "quality_gate": gate}
+        return response
+
+
+@pytest.mark.parametrize(
+    ("fault", "message"),
+    [
+        ("missing_coding_kind", "coding Runner task"),
+        ("wrong_coding_runner", "configured Runner"),
+        ("missing_quality_gate_task", "quality-gate Runner task"),
+        ("mismatched_quality_gate", "does not match"),
+        ("shared_verifier_runner", "not independent"),
+        ("wrong_verifier_trust", "verification trust"),
+        ("untrusted_gate", "trusted isolation"),
+    ],
+)
+def test_real_e2e_rejects_untrusted_or_ambiguous_runner_evidence(
+    fault: str,
+    message: str,
+) -> None:
+    with pytest.raises(RegressionError, match=message):
+        validate_rd_delivery_e2e(
+            InvalidRunnerEvidenceClient(fault),
+            "owner@example.com",
+            "owner-secret",
+            valid_config(timeout_seconds=2),
+        )
+
+
+class PrematureDependentDispatchClient(HappyPathClient):
+    def get(self, path: str, query=None, *, headers=None) -> dict[str, object]:
+        response = super().get(path, query, headers=headers)
+        if (
+            path == "/api/delivery/rd-collaboration-runs/run-e2e/work-items"
+            and self.phase == 0
+        ):
+            items = [dict(item) for item in response["items"]]
+            testing = next(item for item in items if item["id"] == "work-testing")
+            testing.update(
+                {
+                    "ai_task_id": "ai-task-premature",
+                    "attempt_id": "attempt-premature",
+                    "status": "running",
+                }
+            )
+            return {"items": items}
+        return response
+
+
+def test_real_e2e_proves_dependency_is_blocked_before_implementation_review() -> None:
+    with pytest.raises(RegressionError, match="blocked"):
+        validate_rd_delivery_e2e(
+            PrematureDependentDispatchClient(),
+            "owner@example.com",
+            "owner-secret",
+            valid_config(timeout_seconds=2),
+        )
 
 
 def test_real_suite_is_explicit_and_never_part_of_fast_targeted_runs() -> None:

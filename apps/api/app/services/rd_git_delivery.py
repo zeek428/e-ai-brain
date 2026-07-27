@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -27,6 +28,15 @@ _INTEGRATION_WORK_ITEM_TYPES = {
     "integration_test",
     "version_integration",
 }
+_PUBLIC_TEST_EVIDENCE_INTEGER_KEYS = {
+    "duration_ms",
+    "failed_count",
+    "passed_count",
+    "test_count",
+}
+_PUBLIC_TEST_EVIDENCE_MAX_INTEGER = 2_147_483_647
+_PUBLIC_TEST_EVIDENCE_STATUSES = {"failed", "passed", "skipped"}
+_PUBLIC_TEST_EVIDENCE_SUITE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}")
 
 
 def _now() -> str:
@@ -447,15 +457,27 @@ def _materialize_delivery(store: Any, delivery: dict[str, Any]) -> dict[str, Any
 def _public_test_evidence(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
-    allowed_keys = {
-        "duration_ms",
-        "failed_count",
-        "passed_count",
-        "status",
-        "suite",
-        "test_count",
-    }
-    return {key: deepcopy(value[key]) for key in sorted(allowed_keys) if key in value}
+    evidence: dict[str, Any] = {}
+    status = value.get("status")
+    if isinstance(status, str) and status in _PUBLIC_TEST_EVIDENCE_STATUSES:
+        evidence["status"] = status
+    suite = value.get("suite")
+    if isinstance(suite, str) and _PUBLIC_TEST_EVIDENCE_SUITE_PATTERN.fullmatch(suite):
+        evidence["suite"] = suite
+    for key in sorted(_PUBLIC_TEST_EVIDENCE_INTEGER_KEYS):
+        number = value.get(key)
+        if (
+            isinstance(number, int)
+            and not isinstance(number, bool)
+            and 0 <= number <= _PUBLIC_TEST_EVIDENCE_MAX_INTEGER
+        ):
+            evidence[key] = number
+    return evidence
+
+
+def _has_passed_test_evidence(value: Any) -> bool:
+    evidence = _public_test_evidence(value)
+    return evidence.get("status") == "passed" and bool(evidence.get("suite"))
 
 
 def list_run_git_deliveries(
@@ -518,6 +540,7 @@ def record_version_git_delivery(
     """Record local delivery facts and queue, but never synchronously push."""
     run = _run(store, collaboration_run_id)
     item = _work_item(store, work_item_id)
+    sanitized_test_evidence = _public_test_evidence(test_evidence)
     if item.get("collaboration_run_id") != collaboration_run_id:
         raise api_error(409, "RD_DELIVERY_EVIDENCE_INCOMPLETE", "Work item belongs to another run")
     if not repository_id or not provider or not local_commit_sha:
@@ -534,7 +557,7 @@ def record_version_git_delivery(
     else:
         isolation = dict(workspace_isolation or {})
     if _is_integration(item):
-        evidence = dict(test_evidence or {})
+        evidence = sanitized_test_evidence
         if evidence.get("status") != "passed" or not evidence.get("suite"):
             raise api_error(
                 422,
@@ -547,7 +570,7 @@ def record_version_git_delivery(
         "repository_id": repository_id,
         "working_branch": working_branch,
         "local_commit_sha": local_commit_sha,
-        "test_evidence": test_evidence or {},
+        "test_evidence": sanitized_test_evidence,
     }
     delivery_id = _new_id(store, "rd-git-delivery", material)
     existing = next(
@@ -585,7 +608,7 @@ def record_version_git_delivery(
         "local_commit_sha": local_commit_sha,
         "merge_request_id": merge_request_id,
         "pull_request_id": pull_request_id,
-        "test_evidence": deepcopy(test_evidence or {}),
+        "test_evidence": deepcopy(sanitized_test_evidence),
         "source_runner_id": source_runner_id,
         "source_runner_task_id": source_runner_task_id,
         "push_approval": deepcopy(push_approval or {}),
@@ -1077,12 +1100,7 @@ def _assert_trusted_delivery_evidence(store: Any, *, run: dict[str, Any]) -> lis
                 "RD_DELIVERY_EVIDENCE_MISMATCH",
                 "Reconciliation is not bound to the immutable local delivery fact",
             )
-    if not any(
-        isinstance(record.get("test_evidence"), dict)
-        and record["test_evidence"].get("status") == "passed"
-        and record["test_evidence"].get("suite")
-        for record in integration
-    ):
+    if not any(_has_passed_test_evidence(record.get("test_evidence")) for record in integration):
         raise api_error(
             409,
             "RD_DELIVERY_EVIDENCE_INCOMPLETE",
@@ -1099,7 +1117,7 @@ def _delivery_evidence_chain(deliveries: list[dict[str, Any]]) -> list[dict[str,
             "reconciliation_id": record["reconciliation_id"],
             "reconciliation_evidence_hash": record["reconciliation_evidence_hash"],
             "remote_commit_sha": record["remote_commit_sha"],
-            "test_evidence": record.get("test_evidence") or {},
+            "test_evidence": _public_test_evidence(record.get("test_evidence")),
         }
         for record in sorted(deliveries, key=lambda record: str(record["id"]))
     ]

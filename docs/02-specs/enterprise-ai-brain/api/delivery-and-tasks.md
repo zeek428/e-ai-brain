@@ -629,7 +629,14 @@ payload，也不接受客户端提交远程 SHA 或对账状态。
 `working_branch`，以及白名单内的本地 `test_evidence`。仓库、工作区和执行来源
 仍以冻结策略与任务上下文为准。任何层级中自报的 `remote_commit_sha`、对账、
 Provider 回调或签名字段均忽略且不持久化，远程事实仍只能来自签名已验证并已落库
-的 Provider Inbox。
+的 Provider Inbox。`test_evidence` 不允许任意嵌套结构：`status` 仅接受
+`passed | failed | skipped`，`suite` 仅接受不超过 128 字符的
+ASCII 标识符（字母、数字、`.`、`_`、`:`、`/`、`-`），
+`duration_ms/failed_count/passed_count/test_count` 仅接受
+`0..2147483647` 的整数且布尔值不视为整数。对象、数组、超长字符串、未知枚举、
+负数、浮点数、超限值以及不在白名单中的字段在 Runner 写入与历史记录读取投影
+两层均丢弃，不能借白名单字段嵌套凭据、Token、Authorization、Cookie、Secret
+或原始 payload。
 
 #### P1 策略控制的可选部署边界
 

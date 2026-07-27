@@ -407,10 +407,22 @@ def _runner_and_gate_evidence(
     client: Any,
     *,
     ai_task_id: str,
-) -> tuple[dict[str, Any], dict[str, Any], str]:
+    expected_coding_runner_id: str,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], str]:
     task = client.get(f"/api/ai-tasks/{ai_task_id}")
-    gate = task.get("quality_gate") or {}
+    gate = task.get("quality_gate")
+    gate = gate if isinstance(gate, dict) else {}
     _assert(gate.get("status") == "passed" and gate.get("id"), "Independent quality gate failed")
+    _assert(
+        gate.get("verifier_trust_isolated") is True
+        and isinstance(gate.get("verified_attestation_count"), int)
+        and not isinstance(gate.get("verified_attestation_count"), bool)
+        and gate["verified_attestation_count"] >= 1
+        and isinstance(gate.get("independent_evidence_count"), int)
+        and not isinstance(gate.get("independent_evidence_count"), bool)
+        and gate["independent_evidence_count"] >= 1,
+        "Independent quality gate is missing trusted isolation proof",
+    )
     runner_tasks = _items(
         client.get(
             "/api/system/ai-executor-tasks",
@@ -418,13 +430,45 @@ def _runner_and_gate_evidence(
         )
     )
     coding = [
-        item for item in runner_tasks if str(item.get("task_kind") or "coding") == "coding"
+        item for item in runner_tasks if str(item.get("task_kind") or "") == "coding"
     ]
     _assert(len(coding) == 1, "Exactly one successful native coding Runner task is required")
-    _assert(coding[0].get("workspace_root"), "Native Runner workspace evidence is missing")
+    coding_task = coding[0]
+    _assert(
+        coding_task.get("runner_id") == expected_coding_runner_id,
+        "Native coding task did not run on the configured Runner",
+    )
+    _assert(coding_task.get("workspace_root"), "Native Runner workspace evidence is missing")
+    verifier = [
+        item
+        for item in runner_tasks
+        if str(item.get("task_kind") or "") == "quality_gate"
+    ]
+    _assert(
+        len(verifier) == 1,
+        "Exactly one successful quality-gate Runner task is required",
+    )
+    verifier_task = verifier[0]
+    _assert(
+        verifier_task.get("quality_gate_run_id") == gate.get("id"),
+        "Quality-gate Runner task does not match the AI task gate",
+    )
+    verifier_runner_id = str(verifier_task.get("runner_id") or "")
+    _assert(
+        bool(verifier_runner_id) and verifier_runner_id != expected_coding_runner_id,
+        "Quality-gate Runner is not independent from the configured coding Runner",
+    )
+    verifier_request_config = verifier_task.get("request_config")
+    verifier_request_config = (
+        verifier_request_config if isinstance(verifier_request_config, dict) else {}
+    )
+    _assert(
+        verifier_request_config.get("required_trust_domain") == "verification",
+        "Quality-gate Runner task is missing the verification trust boundary",
+    )
     review_id = str((task.get("pending_review") or {}).get("id") or "")
     _assert(review_id, "AI task pending Review is missing")
-    return coding[0], gate, review_id
+    return coding_task, verifier_task, gate, review_id
 
 
 def _approve_item(
@@ -709,9 +753,42 @@ def validate_rd_delivery_e2e(
         title=implementation_key,
         secret_values=secrets,
     )
+    pre_review_snapshot = client.get(
+        f"/api/delivery/rd-collaboration-runs/{run_id}/work-items"
+    )
+    pre_review_testing = _item_by_title(
+        _items(pre_review_snapshot),
+        testing_key,
+    )
+    _assert(
+        pre_review_testing.get("status") == "blocked"
+        and not pre_review_testing.get("ai_task_id")
+        and not pre_review_testing.get("attempt_id"),
+        "Dependent automated-testing work item must remain blocked without dispatch "
+        "before implementation Review approval",
+    )
+    persisted_dependencies = [
+        dependency
+        for dependency in pre_review_snapshot.get("dependencies") or []
+        if isinstance(dependency, dict)
+        and dependency.get("predecessor_work_item_id") == implementation_id
+        and dependency.get("successor_work_item_id") == testing_id
+        and dependency.get("status") == "pending"
+    ]
+    _assert(
+        len(persisted_dependencies) == 1,
+        "Persisted implementation-to-testing dependency is missing before Review",
+    )
     implementation_task_id = str(implementation["ai_task_id"])
-    implementation_runner, implementation_gate, implementation_review_id = (
-        _runner_and_gate_evidence(client, ai_task_id=implementation_task_id)
+    (
+        implementation_runner,
+        implementation_verifier,
+        implementation_gate,
+        implementation_review_id,
+    ) = _runner_and_gate_evidence(
+        client,
+        ai_task_id=implementation_task_id,
+        expected_coding_runner_id=config.runner_id,
     )
     _approve_item(
         client,
@@ -741,9 +818,12 @@ def validate_rd_delivery_e2e(
         secret_values=secrets,
     )
     testing_task_id = str(testing["ai_task_id"])
-    testing_runner, testing_gate, testing_review_id = _runner_and_gate_evidence(
-        client,
-        ai_task_id=testing_task_id,
+    testing_runner, testing_verifier, testing_gate, testing_review_id = (
+        _runner_and_gate_evidence(
+            client,
+            ai_task_id=testing_task_id,
+            expected_coding_runner_id=config.runner_id,
+        )
     )
     _approve_item(
         client,
@@ -812,6 +892,7 @@ def validate_rd_delivery_e2e(
                 (
                     f"work_item={implementation_id} / task={implementation_task_id} / "
                     f"runner_task={implementation_runner.get('id')} / "
+                    f"gate_runner_task={implementation_verifier.get('id')} / "
                     f"gate={implementation_gate.get('id')} / review={implementation_review_id}"
                 ),
             ),
@@ -820,6 +901,7 @@ def validate_rd_delivery_e2e(
                 (
                     f"work_item={testing_id} / task={testing_task_id} / "
                     f"runner_task={testing_runner.get('id')} / "
+                    f"gate_runner_task={testing_verifier.get('id')} / "
                     f"gate={testing_gate.get('id')} / review={testing_review_id}"
                 ),
             ),
