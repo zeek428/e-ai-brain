@@ -19,18 +19,28 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from full_chain_regression_runner import validate_ai_executor_runner_reliability  # noqa: E402
 from full_chain_regression_assistant_drafts import validate_assistant_draft_governance  # noqa: E402
 from full_chain_regression_assistant_qa import validate_assistant_qa_quick_regression  # noqa: E402
-from full_chain_regression_code_inspection import validate_code_inspection_governance_quick_regression  # noqa: E402
-from full_chain_regression_knowledge import validate_knowledge_index_health_quick_regression  # noqa: E402
-from full_chain_regression_permissions import validate_permission_visibility_quick_regression  # noqa: E402
+from full_chain_regression_code_inspection import (  # noqa: E402
+    validate_code_inspection_governance_quick_regression,  # noqa: E402
+)
+from full_chain_regression_knowledge import (  # noqa: E402
+    validate_knowledge_index_health_quick_regression,  # noqa: E402
+)
+from full_chain_regression_permissions import (  # noqa: E402
+    validate_permission_visibility_quick_regression,  # noqa: E402
+)
 from full_chain_regression_rd_collaboration import (  # noqa: E402
     validate_rd_collaboration_quick_regression,
+)
+from full_chain_regression_rd_delivery_e2e import (  # noqa: E402
+    RdDeliveryE2EConfig,
+    validate_rd_delivery_e2e,
 )
 from full_chain_regression_rd_runner_protocol import (  # noqa: E402
     complete_ai_work_item_via_runner_protocol,
 )
+from full_chain_regression_runner import validate_ai_executor_runner_reliability  # noqa: E402
 from full_chain_regression_slug import regression_slug  # noqa: E402
 from full_chain_regression_suites import (  # noqa: E402
     REGRESSION_TARGETED_SUITE_NAMES,
@@ -1924,6 +1934,16 @@ def run_regression_suite(
             )
         )
         return results
+    if suite == "rd-delivery-e2e":
+        results.extend(
+            validate_rd_delivery_e2e(
+                client,
+                username,
+                password,
+                RdDeliveryE2EConfig.from_env(),
+            )
+        )
+        return results
     raise RegressionError(f"Unsupported regression suite: {suite}")
 
 
@@ -1971,6 +1991,7 @@ def main() -> int:
             "knowledge-index-health",
             "permission-visibility",
             "rd-collaboration",
+            "rd-delivery-e2e",
         ],
         default=os.getenv("FULL_CHAIN_SUITE", "full"),
         help=(
@@ -1991,7 +2012,9 @@ def main() -> int:
             "matrix, readable scope names, menu permission gap, and user permission "
             "diagnostic gates; rd-collaboration executes requirement assessment, "
             "compatible-version grouping, a dependency-gated work-item DAG, and "
-            "independent review through public APIs, stopping before delivery or deployment."
+            "independent review through public APIs, stopping before delivery or deployment; "
+            "rd-delivery-e2e is the explicit opt-in real Codex Runner, remote Git, "
+            "independent gate, and ready-for-release suite and never deploys."
         ),
     )
     parser.add_argument(

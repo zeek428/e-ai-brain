@@ -613,6 +613,24 @@ POST /api/delivery/rd-role-experiences/{experience_id}/decide
 
 集成工作项通过 Outbox 推送版本开发分支或创建/更新 MR/PR，并保存 repository/provider、工作分支、版本开发分支、目标分支、local/remote commit SHA、MR/PR ID 和状态、Outbox ID、执行身份、时间、对账状态与质量证据。`record_ready_for_release_evidence` 只验证每个必需仓库已有对账成功的远程证据，不在完成接口内临时执行 push，并把产品版本推进到 `ready_for_release`。随后 `finalize_ready_for_release_target` 按冻结策略分支：`delivery_target=ready_for_release` 时把运行推进为 `completed(completion_reason=ready_for_release)`；`delivery_target=deployed` 时运行保持非终态 `ready_for_release`，等待 P1 部署域继续推进，不写 `completion_reason`、不创建部署单。P0 能力标志关闭时 deployed 策略不能存在，因此 P0 测试只覆盖第一分支，但完成服务不得无条件关闭运行。
 
+`GET /api/delivery/rd-collaboration-runs/{run_id}` 在既有
+`delivery.rd_collaboration.read` 权限和运行产品范围校验通过后，返回
+`git_deliveries={items,total}`。每项只投影可信交付记录的
+`id/work_item_id/work_item_type/repository_id/provider/working_branch/local_commit_sha/remote_commit_sha/reconciliation_id/reconciliation_status/verified_at/evidence_hash/reconciliation_evidence_hash/test_evidence`；
+`reconciliation_status` 仅为 `pending | reconciled`。`pending` 记录的远程
+SHA、对账 ID、对账证据哈希和验证时间为空；`reconciled` 记录来自签名已验证且
+已持久化的 Provider Inbox 事实。响应不返回 Outbox、工作区或 worktree 路径、
+推送审批、Runner 身份、Provider 回调 ID/哈希/上下文、凭据、Token 或原始
+payload，也不接受客户端提交远程 SHA 或对账状态。
+
+原生 Runner 终态结果兼容顶层 JSON 以及安装包写入的 `result` /
+`parsed_output` 包装；平台只从首个含 `git_delivery` 的对象采信
+`local_commit_sha`、严格匹配 `rd/<run-id>/<work-item-id>` 的
+`working_branch`，以及白名单内的本地 `test_evidence`。仓库、工作区和执行来源
+仍以冻结策略与任务上下文为准。任何层级中自报的 `remote_commit_sha`、对账、
+Provider 回调或签名字段均忽略且不持久化，远程事实仍只能来自签名已验证并已落库
+的 Provider Inbox。
+
 #### P1 策略控制的可选部署边界
 
 只有版本已具备上述可信交付证据、协作运行处于 `ready_for_release`、策略快照明确 `delivery_target=deployed`、现有部署资源/权限/回滚/质量门禁均通过且人工发布确认完成时，才可在既有 `POST /api/devops/deployments` 请求中携带可选 `collaboration_run_id`。服务端必须在创建和启动时分别校验 P1 开关、运行的产品/版本、冻结需求集合、可信证据 ID/哈希和运行状态；创建时把运行外键和证据关联写入部署单门禁摘要及审计，启动时将部署请求/运行/步骤/Outbox/需求变更与协作运行、产品版本进入 `deploying` 放在同一持久化事务。客户端、LLM 或协作器都不能跳过已有 `deployment.create`、`deployment.execute`、产品范围和人工门禁。默认不携带该字段的 P0 部署流程不变，本分册不新增第二套部署接口。拒绝、失败、取消或回滚不抹除 P0 交付事实，版本保持或返回 `ready_for_release`，运行也回到 `ready_for_release` 等待处理；部署成功后运行进入 `completed(completion_reason=deployed)`。

@@ -731,9 +731,11 @@
 | 适用阶段 | v2.0 |
 
 1. 使用默认 `delivery_target=ready_for_release`，让集成工作项通过 Outbox 完成远程推送并保存分支、local/remote SHA、MR/PR 和对账证据，再完成测试和门禁。
-2. 删除或篡改远程 commit/MR/PR 对账证据，重复完成判定。
+2. 分别让原生 Runner 用顶层、`result`、`parsed_output` JSON 回写本地交付与测试证据；同时注入伪造 remote SHA、对账和回调字段，并篡改隔离分支、冻结仓库或工作区。
+3. 在 Provider 回调前后分别读取协作运行详情：校验 `git_deliveries` 的待对账记录只含本地交付事实且远程字段为空；完成签名 Provider Inbox 对账后校验状态为 `reconciled`、local/remote SHA 相等、对账 ID/验证时间/双证据哈希完整，并确认响应不含 Outbox、工作区/worktree、审批、Runner、回调、凭据、Token 或原始 payload。再用无该产品范围的账号读取同一运行。
+4. 删除或篡改远程 commit/MR/PR 对账证据，重复完成判定。
 
-**预期结果**: P0 集成工作项必须完成最小工作分支隔离、远程 push 或 MR/PR Outbox、版本级集成测试和不可变交付证据。缺少或不匹配远程证据时不能进入待发布，完成判定不临时执行 push。发布就绪证据记录与目标终结分离；默认策略让产品版本进入并保持 `ready_for_release`，协作运行进入 `completed` 且 `completion_reason=ready_for_release`，不创建部署单，服务不得无条件关闭所有交付目标的运行。
+**预期结果**: P0 集成工作项必须完成最小工作分支隔离、远程 push 或 MR/PR Outbox、版本级集成测试和不可变交付证据。原生 Runner 的三种本地结果形态均可归一化；冻结分支/仓库/工作区不匹配时拒绝，伪造远程、对账和回调字段不落库。缺少或不匹配远程证据时不能进入待发布，完成判定不临时执行 push。运行详情只在既有读权限和产品范围内返回按运行过滤的 `git_deliveries`；未对账状态为 `pending`，完整对账状态为 `reconciled`，敏感内部证据不泄漏，跨产品读取返回 `FORBIDDEN`。发布就绪证据记录与目标终结分离；默认策略让产品版本进入并保持 `ready_for_release`，协作运行进入 `completed` 且 `completion_reason=ready_for_release`，不创建部署单，服务不得无条件关闭所有交付目标的运行。
 
 ---
 

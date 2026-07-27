@@ -1214,7 +1214,7 @@ v2.0 对 `AssistantDraftBuilder` 的覆盖规则：历史 `create_rd_task` key �
 - 运行失败或取消后保持终态不可变，产品版本保持失败时的 active/testing 阶段。restart 仅对最近一代终态运行、无活动运行且范围/策略/仓库/资源重新校验通过时创建 `run_generation+1/supersedes_run_id` 的新运行；只能复用经确定性验证仍兼容的已批准证据，不能复活旧工作项、attempt 或租约。
 - 每个 generation 的 `rd_collaboration_run_requirements` 和 version_resolved 来源在启动后完全冻结。普通范围写入口在存在非终态运行时返回 `RD_SCOPE_FROZEN`；当前运行只允许不改变范围的 `plan_version` 重规划。待发布前范围变化只能提交 `rd_scope_change_requests`：锁定旧运行并创建唯一决策；批准事务先按 generation 撤销租约、收敛非终态工作项/attempt/Review/AI task 和外部 Outbox，再终结旧运行、应用全部类型化 operations、仅递增一次 `scope_version`，迟到结果只进审计/对账，随后由调用方以返回的 `terminal_run_id` 显式 restart；拒绝则只恢复由该请求暂停的原运行阶段且不改范围。进入 `ready_for_release/deploying/released` 或 ready-target 已完成后不得回退或 restart，只能创建必带来源运行、可选旧需求血缘的后续需求并进入新的 planning 版本。
 - 每次运行冻结不可变 `strategy_snapshot`，历史运行不读取后续修改后的策略解释自身。管理列表继续使用 PostgreSQL read model 分页筛选；策略页面升级原入口，不新增“旧策略/新策略”切换。
-- 任务详情展示协作运行、工作项 DAG、岗位席位、真人用户或 AI 数字员工、执行器、预算、决策请求、门禁、返工链和反馈归因。Runner 的 Token、心跳、安装包、日志和健康检测继续由插件管理 / AI 执行器维护。
+- 任务详情展示协作运行、工作项 DAG、岗位席位、真人用户或 AI 数字员工、执行器、预算、决策请求、门禁、返工链和反馈归因。协作运行详情在既有读权限和产品范围校验后，只读投影按运行过滤的可信 Git 交付与对账证据；对账状态使用 `pending | reconciled`，只返回交付/工作项/仓库/分支/local-remote SHA/对账/验证时间/证据哈希和有界测试证据，不返回 Outbox、工作区、审批、Runner、Provider 回调、凭据、Token 或原始 payload。原生 Runner 的顶层、`result` 或 `parsed_output` JSON 只能提供严格匹配冻结运行/工作项/仓库/工作区的本地 commit、隔离分支及白名单测试证据；其中任何远程 SHA、对账或回调自报字段均忽略且不落库。Runner 的 Token、心跳、安装包、日志和健康检测继续由插件管理 / AI 执行器维护。
 - 定时作业继续引用既有 `ai_agents`、`ai_skills` 和作业执行器配置；统一研发执行策略、`rd_role_definitions`、`rd_ai_employees` 与 `rd_executor_profiles` 只服务需求驱动研发，不改变定时作业的创建、触发、调度或运行快照语义。
 
 ### 模块 B3.E: rd_role_experiences

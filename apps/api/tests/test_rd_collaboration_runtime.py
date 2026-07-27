@@ -741,6 +741,14 @@ def test_collaboration_routes_enforce_aggregate_product_scope() -> None:
         "product_version_id": "version-denied",
         "status": "running",
     }
+    app.state.store.rd_git_deliveries = {"denied-delivery": {
+        "id": "denied-delivery",
+        "collaboration_run_id": "run-cross-product",
+        "product_id": "product-denied",
+        "work_item_id": "denied-work-item",
+        "working_branch": "rd/run-cross-product/denied-work-item",
+        "local_commit_sha": "must-not-leak",
+    }}
 
     denied = client.get(
         "/api/delivery/rd-collaboration-runs/run-cross-product",
@@ -749,6 +757,64 @@ def test_collaboration_routes_enforce_aggregate_product_scope() -> None:
 
     assert denied.status_code == 403
     assert denied.json()["detail"]["code"] == "FORBIDDEN"
+    assert "must-not-leak" not in denied.text
+
+
+def test_collaboration_run_detail_hydrates_allowlisted_git_delivery_evidence() -> None:
+    client = TestClient(app)
+    app.state.store.reset()
+    login = client.post(
+        "/api/auth/login",
+        json={"username": "admin@example.com", "password": "admin123"},
+    )
+    headers = {"Authorization": f"Bearer {login.json()['data']['access_token']}"}
+    app.state.store.rd_collaboration_runs["run-with-delivery"] = {
+        "id": "run-with-delivery",
+        "product_id": "product-allowed",
+        "product_version_id": "version-allowed",
+        "status": "verifying",
+    }
+    app.state.store.rd_git_deliveries = {"delivery-allowed": {
+        "id": "delivery-allowed",
+        "collaboration_run_id": "run-with-delivery",
+        "product_id": "product-allowed",
+        "work_item_id": "work-item-allowed",
+        "work_item_type": "implementation",
+        "repository_id": "repository-allowed",
+        "provider": "gitlab",
+        "working_branch": "rd/run-with-delivery/work-item-allowed",
+        "local_commit_sha": "local-sha",
+        "outbox_event_id": "secret-outbox",
+        "workspace_isolation": {"worktree_path": "/tmp/secret-worktree"},
+        "created_at": "2026-07-26T00:00:00+00:00",
+        "evidence_hash": "sha256:delivery",
+    }}
+    app.state.store.rd_git_delivery_reconciliations = {"reconciliation-allowed": {
+        "id": "reconciliation-allowed",
+        "delivery_id": "delivery-allowed",
+        "collaboration_run_id": "run-with-delivery",
+        "product_id": "product-allowed",
+        "local_commit_sha": "local-sha",
+        "remote_commit_sha": "local-sha",
+        "status": "reconciled",
+        "created_at": "2026-07-26T00:01:00+00:00",
+        "evidence_hash": "sha256:reconciliation",
+        "provider_callback_event_id": "secret-callback",
+    }}
+
+    response = client.get(
+        "/api/delivery/rd-collaboration-runs/run-with-delivery",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    deliveries = response.json()["data"]["git_deliveries"]
+    assert deliveries["total"] == 1
+    assert deliveries["items"][0]["reconciliation_status"] == "reconciled"
+    assert deliveries["items"][0]["remote_commit_sha"] == "local-sha"
+    assert "secret-outbox" not in response.text
+    assert "secret-worktree" not in response.text
+    assert "secret-callback" not in response.text
 
 
 def test_decision_request_detail_route_returns_the_versioned_human_choice() -> None:

@@ -25,6 +25,7 @@ from app.services.rd_collaboration_planning import (
     restart_terminal_collaboration_run,
     start_collaboration_run,
 )
+from app.services.rd_git_delivery import list_run_git_deliveries
 from app.services.rd_scope_changes import (
     apply_scope_change_decision,
     create_scope_change_request,
@@ -328,6 +329,10 @@ def get_run(run_id: str, request: Request, user: dict[str, Any] = CurrentUser) -
                 "list_rd_collaboration_run_requirements",
             ),
             "seats": _list(current_store, "rd_run_seats", run_id, "list_rd_run_seats"),
+            "git_deliveries": list_run_git_deliveries(
+                current_store,
+                collaboration_run_id=run_id,
+            ),
         },
         get_trace_id(request),
     )

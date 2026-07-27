@@ -97,6 +97,7 @@ REGRESSION_SUITE_DOMAINS: dict[str, tuple[str, ...]] = {
     "knowledge-index-health": ("knowledge_index_health",),
     "permission-visibility": ("permission_visibility",),
     "rd-collaboration": ("rd_collaboration",),
+    "rd-delivery-e2e": ("rd_collaboration",),
 }
 
 

@@ -444,6 +444,58 @@ def _materialize_delivery(store: Any, delivery: dict[str, Any]) -> dict[str, Any
     return result
 
 
+def _public_test_evidence(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    allowed_keys = {
+        "duration_ms",
+        "failed_count",
+        "passed_count",
+        "status",
+        "suite",
+        "test_count",
+    }
+    return {key: deepcopy(value[key]) for key in sorted(allowed_keys) if key in value}
+
+
+def list_run_git_deliveries(
+    store: Any,
+    *,
+    collaboration_run_id: str,
+) -> dict[str, Any]:
+    """Return a strict read-only projection of one run's immutable Git evidence."""
+    deliveries = [
+        _materialize_delivery(store, record)
+        for record in _records(
+            store,
+            record_type=DELIVERY_RECORD_TYPE,
+            collection="rd_git_deliveries",
+        )
+        if str(record.get("collaboration_run_id") or "") == collaboration_run_id
+    ]
+    deliveries.sort(key=lambda item: (str(item.get("created_at") or ""), str(item.get("id") or "")))
+    items = [
+        {
+            "evidence_hash": delivery.get("evidence_hash"),
+            "id": delivery.get("id"),
+            "local_commit_sha": delivery.get("local_commit_sha"),
+            "provider": delivery.get("provider"),
+            "reconciliation_evidence_hash": delivery.get("reconciliation_evidence_hash"),
+            "reconciliation_id": delivery.get("reconciliation_id"),
+            "reconciliation_status": delivery.get("reconciliation_status"),
+            "remote_commit_sha": delivery.get("remote_commit_sha"),
+            "repository_id": delivery.get("repository_id"),
+            "test_evidence": _public_test_evidence(delivery.get("test_evidence")),
+            "verified_at": delivery.get("verified_at"),
+            "work_item_id": delivery.get("work_item_id"),
+            "work_item_type": delivery.get("work_item_type"),
+            "working_branch": delivery.get("working_branch"),
+        }
+        for delivery in deliveries
+    ]
+    return {"items": items, "total": len(items)}
+
+
 def record_version_git_delivery(
     store: Any,
     *,
@@ -563,9 +615,22 @@ def record_version_git_delivery_from_runner(
     Remote truth is intentionally absent here and can only arrive later via a
     verified provider Inbox callback.
     """
-    result = runner_task.get("result_json")
-    result = result if isinstance(result, dict) else {}
-    reported = result.get("git_delivery") if isinstance(result.get("git_delivery"), dict) else {}
+    result_json = runner_task.get("result_json")
+    result_json = result_json if isinstance(result_json, dict) else {}
+    local_result: dict[str, Any] = {}
+    for candidate in (
+        result_json,
+        result_json.get("result"),
+        result_json.get("parsed_output"),
+    ):
+        if isinstance(candidate, dict) and isinstance(candidate.get("git_delivery"), dict):
+            local_result = candidate
+            break
+    reported = (
+        local_result.get("git_delivery")
+        if isinstance(local_result.get("git_delivery"), dict)
+        else {}
+    )
     if not reported:
         return None
     input_payload = (
@@ -657,9 +722,7 @@ def record_version_git_delivery_from_runner(
         ),
         local_commit_sha=local_commit_sha,
         workspace_isolation=isolation,
-        test_evidence=(
-            result.get("test_evidence") if isinstance(result.get("test_evidence"), dict) else None
-        ),
+        test_evidence=_public_test_evidence(local_result.get("test_evidence")) or None,
         source_runner_id=str(runner_task.get("runner_id") or ""),
         source_runner_task_id=str(runner_task.get("id") or ""),
         push_approval=(
