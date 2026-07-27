@@ -168,6 +168,45 @@ def test_rd_collaboration_regression_is_a_declared_targeted_suite() -> None:
     assert coverage["is_complete_chain"] is False
 
 
+def test_cli_rejects_false_model_gateway_task_execution_mode(
+    monkeypatch,
+) -> None:
+    regression = _load_module(
+        "full_chain_regression_cli_execution_mode_under_test",
+        "scripts/full_chain_regression.py",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "full_chain_regression.py",
+            "--task-execution-mode",
+            "model_gateway",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        regression.main()
+
+    assert exc_info.value.code == 2
+
+
+def test_cli_rejects_false_model_gateway_task_execution_mode_from_environment(
+    monkeypatch,
+) -> None:
+    regression = _load_module(
+        "full_chain_regression_cli_execution_mode_env_under_test",
+        "scripts/full_chain_regression.py",
+    )
+    monkeypatch.setenv("FULL_CHAIN_TASK_EXECUTION_MODE", "model_gateway")
+    monkeypatch.setattr(sys, "argv", ["full_chain_regression.py"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        regression.main()
+
+    assert exc_info.value.code == 2
+
+
 def test_v2_setup_separates_human_assessment_from_ai_delivery_and_approves_workspace(
     monkeypatch,
 ) -> None:
@@ -374,7 +413,6 @@ def test_rd_collaboration_suite_dispatches_to_its_dedicated_public_api_regressio
     results = regression.run_regression_suite(
         sentinel_client,
         suite="rd-collaboration",
-        task_execution_mode="deterministic",
         username="admin@example.com",
         password="secret",
     )
@@ -431,7 +469,7 @@ class _RegressionEntrypointTraceClient:
         if path == "/api/knowledge/index-health":
             raise _TraceBoundaryReached
         if path.endswith("/code-review-report"):
-            return {"id": "code-review-report-1"}
+            return {"id": "code-review-report-1", "status": "approved"}
         if path == "/api/delivery/rd-collaboration-runs/run-1/work-items":
             return {
                 "items": [
@@ -668,7 +706,6 @@ def test_v2_regression_suites_never_call_legacy_task_entrypoints(
         regression.run_regression_suite(
             client,
             suite=suite,
-            task_execution_mode="deterministic",
             username="admin@example.com",
             password="secret",
         )
@@ -773,7 +810,6 @@ def test_full_suite_selects_real_knowledge_space_for_deposit_approval(
         regression.run_regression_suite(
             client,
             suite="full",
-            task_execution_mode="deterministic",
             username="admin@example.com",
             password="secret",
         )

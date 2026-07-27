@@ -154,6 +154,14 @@ def validate_login_credentials(username: str | None, password: str | None) -> tu
     return str(username).strip(), str(password)
 
 
+def parse_task_execution_mode(value: str) -> str:
+    if value != "simulated_runner":
+        raise argparse.ArgumentTypeError(
+            "only simulated_runner is supported by the full-chain regression suites"
+        )
+    return value
+
+
 class ApiClient:
     def __init__(self, base_url: str, *, timeout: float = 60.0):
         self.base_url = base_url.rstrip("/")
@@ -782,6 +790,13 @@ def validate_version_dashboard_quick_regression(
     code_review_report = client.get(
         f"/api/ai-tasks/{code_review_task_id}/code-review-report"
     )
+    _assert(
+        code_review_report.get("status") == "approved",
+        (
+            "Version dashboard persisted Code Review report was not approved: "
+            f"{code_review_report}"
+        ),
+    )
     results.append(
         StepResult(
             "version_dashboard_code_review",
@@ -980,7 +995,6 @@ def validate_version_dashboard_quick_regression(
 def run_regression(
     client: ApiClient,
     *,
-    task_execution_mode: str,
     username: str,
     password: str,
 ) -> list[StepResult]:
@@ -1802,7 +1816,6 @@ def run_regression_suite(
     client: ApiClient,
     *,
     suite: str,
-    task_execution_mode: str,
     username: str,
     password: str,
 ) -> list[StepResult]:
@@ -1811,7 +1824,6 @@ def run_regression_suite(
         results.extend(
             run_regression(
                 client,
-                task_execution_mode=task_execution_mode,
                 username=username,
                 password=password,
             )
@@ -1822,7 +1834,6 @@ def run_regression_suite(
             child_results = run_regression_suite(
                 client,
                 suite=targeted_suite,
-                task_execution_mode=task_execution_mode,
                 username=username,
                 password=password,
             )
@@ -1938,12 +1949,13 @@ def main() -> int:
     )
     parser.add_argument(
         "--task-execution-mode",
-        choices=["deterministic", "model_gateway"],
-        default=os.getenv("FULL_CHAIN_TASK_EXECUTION_MODE", "deterministic"),
+        choices=["simulated_runner"],
+        default=os.getenv("FULL_CHAIN_TASK_EXECUTION_MODE", "simulated_runner"),
+        type=parse_task_execution_mode,
         help=(
             "AI task execution mode for tasks created internally by v2 collaboration. "
-            "deterministic keeps the full-chain check stable without calling an external "
-            "model gateway; model_gateway validates the live Chat gateway."
+            "Only simulated_runner is supported by these regression suites; it validates "
+            "the public Runner protocol without calling an external model gateway."
         ),
     )
     parser.add_argument(
@@ -2006,7 +2018,6 @@ def main() -> int:
         results = run_regression_suite(
             client,
             suite=args.suite,
-            task_execution_mode=args.task_execution_mode,
             username=username,
             password=password,
         )

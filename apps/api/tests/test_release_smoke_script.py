@@ -62,7 +62,12 @@ def test_web_page_smoke_fails_on_network_4xx_or_5xx_responses():
 def test_full_chain_regression_script_covers_public_api_workflow():
     script_path = REPO_ROOT / "scripts" / "full_chain_regression.py"
     code_inspection_path = REPO_ROOT / "scripts" / "full_chain_regression_code_inspection.py"
+    rd_fixture_path = REPO_ROOT / "scripts" / "full_chain_regression_rd_fixture.py"
+    rd_protocol_path = (
+        REPO_ROOT / "scripts" / "full_chain_regression_rd_runner_protocol.py"
+    )
     runner_path = REPO_ROOT / "scripts" / "full_chain_regression_runner.py"
+    suites_path = REPO_ROOT / "scripts" / "full_chain_regression_suites.py"
     version_dashboard_path = REPO_ROOT / "scripts" / "full_chain_regression_version_dashboard.py"
     assert script_path.exists()
     assert script_path.stat().st_mode & 0o111
@@ -72,7 +77,13 @@ def test_full_chain_regression_script_covers_public_api_workflow():
         + "\n"
         + code_inspection_path.read_text(encoding="utf-8")
         + "\n"
+        + rd_fixture_path.read_text(encoding="utf-8")
+        + "\n"
+        + rd_protocol_path.read_text(encoding="utf-8")
+        + "\n"
         + runner_path.read_text(encoding="utf-8")
+        + "\n"
+        + suites_path.read_text(encoding="utf-8")
         + "\n"
         + version_dashboard_path.read_text(encoding="utf-8")
     )
@@ -80,10 +91,11 @@ def test_full_chain_regression_script_covers_public_api_workflow():
         "http.client",
         "/api/insights/user-feedback",
         "convert-requirement",
-        "/api/requirements/batch-schedule",
-        "/api/ai-tasks/{task_id}/start",
-        "execution_mode",
-        "deterministic",
+        "/api/requirements/{requirement_id}/assessments",
+        "/api/delivery/rd-collaboration-runs/{run_id}/plan",
+        "/api/delivery/rd-collaboration-runs/{fixture.run_id}/replan",
+        "complete_ai_work_item_via_runner_protocol(",
+        "approve_high_risk_dispatch(",
         "native_full_scan",
         "quality_gate",
         "quality_gate_failed_count",
@@ -92,7 +104,7 @@ def test_full_chain_regression_script_covers_public_api_workflow():
         "quality_gate_failed_report_count",
         "quality_gate_violation_count",
         "uncovered_bug_finding_count",
-        "uncovered_task_finding_count",
+        "uncovered_requirement_finding_count",
         "code_inspection_governance_pressure",
         "Code inspection dashboard missed governance pressure summary",
         "/api/knowledge/index-health",
@@ -117,7 +129,8 @@ def test_full_chain_regression_script_covers_public_api_workflow():
         "severe_finding_delta",
         "active_severe_finding_count",
         "covered_by_bug_count",
-        "covered_by_task_count",
+        "covered_by_requirement_count",
+        "created_requirement_ids",
         "action_label",
         "action_target_type",
         "resolution_hint",
@@ -444,7 +457,7 @@ def test_full_chain_regression_report_includes_suite_coverage():
         status="passed",
         steps=[module.StepResult("suite", "full")],
         suite="full",
-        task_execution_mode="deterministic",
+        task_execution_mode="simulated_runner",
     )
 
     coverage = report["coverage"]
@@ -454,6 +467,7 @@ def test_full_chain_regression_report_includes_suite_coverage():
     assert "assistant_draft_governance" in coverage["covered_keys"]
     assert "permission_visibility" in coverage["covered_keys"]
     assert coverage["covered_domain_count"] == coverage["objective_domain_count"]
+    assert report["task_execution_mode"] == "simulated_runner"
 
     dashboard_coverage = module.regression_suite_coverage("version-dashboard")
     assert dashboard_coverage["is_complete_chain"] is False
@@ -564,7 +578,6 @@ def test_full_chain_regression_all_targeted_suite_aggregates_fast_suite_results(
     results = module.run_regression_suite(
         FakeClient(),
         suite="all-targeted",
-        task_execution_mode="deterministic",
         username="admin@example.com",
         password="admin123",
     )
@@ -737,14 +750,14 @@ def test_full_chain_regression_script_supports_version_dashboard_suite():
         "pending_code_review_reports",
         "Version dashboard missed pending-scan branch quality summary",
         "Version dashboard quick check missed code review report",
-        "Version dashboard quick check missed pending code review blocker",
+        "Version dashboard persisted Code Review report was not approved",
+        "Version dashboard quick check retained a completed code review as pending",
         "Version dashboard quick check missed Bug summary",
         "Version dashboard quick check missed Bug row",
         "Version dashboard quick check missed open Bug status count",
         "Version dashboard quick check missed Bug blocker",
         "Version dashboard next actions should prioritize blocker Bug",
         "bug_status_counts",
-        'source_type") == "code_review_report"',
         'source_type") == "bug"',
         "release_evidence_blockers",
     ]:
