@@ -27,6 +27,7 @@ RD_E2E_SCENARIOS = (
     "cancel-resume",
     "timeout-recovery",
     "high-risk-dispatch",
+    "experience-reuse",
 )
 _ATTEMPT_CHAIN_FIELDS = {
     "ai_task_id",
@@ -80,6 +81,18 @@ class GovernanceScenarioOutcome:
 
 
 @dataclass(frozen=True)
+class ExperienceReuseEvidence:
+    approved_status: str
+    experience_id: str
+    experience_version: int
+    mismatched_run_reference_ids: tuple[str, ...]
+    pending_status: str
+    second_run_evidence_refs: tuple[dict[str, Any], ...]
+    second_run_reference_ids: tuple[str, ...]
+    source_feedback_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class RdDeliveryE2EConfig:
     product_id: str
     repository_id: str
@@ -89,6 +102,13 @@ class RdDeliveryE2EConfig:
     ai_tester_id: str
     reviewer_username: str
     reviewer_password: str = field(repr=False)
+    experience_reviewer_username: str | None = None
+    experience_reviewer_password: str | None = field(default=None, repr=False)
+    experience_source_work_item_id: str | None = None
+    experience_compatible_run_id: str | None = None
+    experience_compatible_work_item_id: str | None = None
+    experience_mismatched_run_id: str | None = None
+    experience_mismatched_work_item_id: str | None = None
     artifact_dir: str = "/private/tmp/ai-brain-rd-e2e"
     review_channel: str = "api"
     timeout_seconds: int = 2400
@@ -135,6 +155,29 @@ class RdDeliveryE2EConfig:
             ai_tester_id=required("RD_E2E_AI_TESTER_ID"),
             artifact_dir=artifact_dir,
             executor_profile_id=required("RD_E2E_EXECUTOR_PROFILE_ID"),
+            experience_compatible_run_id=(
+                str(source.get("RD_E2E_EXPERIENCE_COMPATIBLE_RUN_ID") or "").strip() or None
+            ),
+            experience_compatible_work_item_id=(
+                str(source.get("RD_E2E_EXPERIENCE_COMPATIBLE_WORK_ITEM_ID") or "").strip()
+                or None
+            ),
+            experience_mismatched_run_id=(
+                str(source.get("RD_E2E_EXPERIENCE_MISMATCHED_RUN_ID") or "").strip() or None
+            ),
+            experience_mismatched_work_item_id=(
+                str(source.get("RD_E2E_EXPERIENCE_MISMATCHED_WORK_ITEM_ID") or "").strip()
+                or None
+            ),
+            experience_reviewer_password=(
+                str(source.get("RD_E2E_EXPERIENCE_REVIEWER_PASSWORD") or "").strip() or None
+            ),
+            experience_reviewer_username=(
+                str(source.get("RD_E2E_EXPERIENCE_REVIEWER_USERNAME") or "").strip() or None
+            ),
+            experience_source_work_item_id=(
+                str(source.get("RD_E2E_EXPERIENCE_SOURCE_WORK_ITEM_ID") or "").strip() or None
+            ),
             product_id=required("RD_E2E_PRODUCT_ID"),
             repository_id=required("RD_E2E_REPOSITORY_ID"),
             review_channel=review_channel,
@@ -145,6 +188,20 @@ class RdDeliveryE2EConfig:
         )
         if config.ai_developer_id == config.ai_tester_id:
             raise RegressionError("AI developer and tester identifiers must be distinct")
+        configured_experience_fields = (
+            config.experience_compatible_run_id,
+            config.experience_compatible_work_item_id,
+            config.experience_mismatched_run_id,
+            config.experience_mismatched_work_item_id,
+            config.experience_reviewer_password,
+            config.experience_reviewer_username,
+            config.experience_source_work_item_id,
+        )
+        _assert(
+            not any(configured_experience_fields) or all(configured_experience_fields),
+            "Experience-reuse configuration must provide every experience identifier "
+            "and reviewer credential",
+        )
         return config
 
 
@@ -553,6 +610,199 @@ def _item_by_title(items: list[dict[str, Any]], title: str) -> dict[str, Any]:
     matches = [item for item in items if item.get("title") == title]
     _assert(len(matches) == 1, f"Work item {title} was not persisted exactly once")
     return matches[0]
+
+
+def _item_by_id(items: list[dict[str, Any]], work_item_id: str) -> dict[str, Any]:
+    matches = [item for item in items if str(item.get("id") or "") == work_item_id]
+    _assert(len(matches) == 1, f"Work item {work_item_id} was not persisted exactly once")
+    return matches[0]
+
+
+def _approved_experience_context(item: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    contract = item.get("input_contract")
+    _assert(isinstance(contract, dict), "Work item input contract is invalid")
+    raw_context = contract.get("approved_role_experience_context") or []
+    _assert(isinstance(raw_context, list), "Approved experience context is invalid")
+    context = tuple(entry for entry in raw_context if isinstance(entry, dict))
+    _assert(len(context) == len(raw_context), "Approved experience context entry is invalid")
+    return context
+
+
+def validate_experience_reuse_evidence(
+    client: Any,
+    *,
+    compatible_run_id: str,
+    compatible_work_item_id: str,
+    experience_reviewer_password: str,
+    experience_reviewer_username: str,
+    marker: str,
+    mismatched_run_id: str,
+    mismatched_work_item_id: str,
+    source_reviewer_role_code: str,
+    source_reviewer_password: str,
+    source_reviewer_username: str,
+    source_work_item_id: str,
+) -> ExperienceReuseEvidence:
+    """Approve one feedback-derived experience and prove its frozen reuse scope.
+
+    The helper deliberately reads and decides through the published role-experience
+    endpoints.  The compatible and mismatched runs are already-created public
+    collaboration projections, which keeps this evidence check read-only after
+    the single governed approval.
+    """
+    _assert(
+        experience_reviewer_username.strip().casefold()
+        != source_reviewer_username.strip().casefold(),
+        "Experience reviewer must be independent from the feedback producer",
+    )
+    _assert(
+        bool(source_reviewer_role_code.strip()),
+        "Experience source reviewer role is required",
+    )
+    pending = _items(
+        client.get(
+            "/api/delivery/rd-role-experiences",
+            {"evidence_subject_id": source_work_item_id, "status": "pending"},
+        )
+    )
+    _assert(len(pending) == 1, "Exactly one pending experience for source work item is required")
+    candidate = pending[0]
+    experience_id = str(candidate.get("id") or "")
+    review_version = candidate.get("review_version")
+    _assert(
+        experience_id
+        and candidate.get("status") == "pending"
+        and candidate.get("role_code") == source_reviewer_role_code
+        and isinstance(review_version, int)
+        and not isinstance(review_version, bool)
+        and review_version > 0,
+        "Pending experience is not independently reviewable",
+    )
+    detail = client.get(f"/api/delivery/rd-role-experiences/{experience_id}")
+    raw_sources = detail.get("sources")
+    _assert(isinstance(raw_sources, list) and raw_sources, "Experience source evidence is missing")
+    source_feedback_ids = tuple(
+        str(source.get("feedback_record_id") or "")
+        for source in raw_sources
+        if isinstance(source, dict)
+    )
+    _assert(
+        len(source_feedback_ids) == len(raw_sources) and all(source_feedback_ids),
+        "Experience source feedback identifiers are invalid",
+    )
+    reviewer = (
+        client.login(experience_reviewer_username, experience_reviewer_password).get("user")
+        or {}
+    )
+    _assert(reviewer.get("id"), "Experience reviewer login did not return a user id")
+    approved = client.post(
+        f"/api/delivery/rd-role-experiences/{experience_id}/decide",
+        {
+            "comment": "Independent approval for controlled reuse regression",
+            "decision": "approve",
+            "idempotency_key": f"rd-e2e-experience-approval:{marker}:{experience_id}",
+            "version": review_version,
+        },
+    )
+    _assert(
+        approved.get("id") == experience_id and approved.get("status") == "approved",
+        "Independent experience approval did not persist",
+    )
+    source_reviewer = (
+        client.login(source_reviewer_username, source_reviewer_password).get("user") or {}
+    )
+    _assert(source_reviewer.get("id"), "Source reviewer login did not return a user id")
+    compatible_item = _item_by_id(_work_items(client, compatible_run_id), compatible_work_item_id)
+    compatible_context = _approved_experience_context(compatible_item)
+    reference_ids = tuple(str(entry.get("experience_id") or "") for entry in compatible_context)
+    _assert(
+        reference_ids == (experience_id,),
+        "Compatible run did not receive exactly the approved experience",
+    )
+    experience_version = compatible_context[0].get("version")
+    _assert(
+        isinstance(experience_version, int)
+        and not isinstance(experience_version, bool)
+        and experience_version > 0,
+        "Compatible run experience version is invalid",
+    )
+    evidence_refs = compatible_context[0].get("evidence_refs")
+    _assert(
+        isinstance(evidence_refs, list) and evidence_refs,
+        "Compatible run lacks cited experience evidence",
+    )
+    mismatched_item = _item_by_id(_work_items(client, mismatched_run_id), mismatched_work_item_id)
+    mismatched_context = _approved_experience_context(mismatched_item)
+    mismatched_ids = tuple(str(entry.get("experience_id") or "") for entry in mismatched_context)
+    _assert(not mismatched_ids, "Mismatched trust-domain run received an experience reference")
+    return ExperienceReuseEvidence(
+        approved_status=str(approved["status"]),
+        experience_id=experience_id,
+        experience_version=experience_version,
+        mismatched_run_reference_ids=mismatched_ids,
+        pending_status=str(candidate["status"]),
+        second_run_evidence_refs=tuple(
+            dict(entry) for entry in evidence_refs if isinstance(entry, dict)
+        ),
+        second_run_reference_ids=reference_ids,
+        source_feedback_ids=source_feedback_ids,
+    )
+
+
+def validate_experience_reuse_scenario(
+    client: Any,
+    *,
+    config: RdDeliveryE2EConfig,
+) -> list[StepResult]:
+    required = {
+        "RD_E2E_EXPERIENCE_COMPATIBLE_RUN_ID": config.experience_compatible_run_id,
+        "RD_E2E_EXPERIENCE_COMPATIBLE_WORK_ITEM_ID": config.experience_compatible_work_item_id,
+        "RD_E2E_EXPERIENCE_MISMATCHED_RUN_ID": config.experience_mismatched_run_id,
+        "RD_E2E_EXPERIENCE_MISMATCHED_WORK_ITEM_ID": config.experience_mismatched_work_item_id,
+        "RD_E2E_EXPERIENCE_REVIEWER_PASSWORD": config.experience_reviewer_password,
+        "RD_E2E_EXPERIENCE_REVIEWER_USERNAME": config.experience_reviewer_username,
+        "RD_E2E_EXPERIENCE_SOURCE_WORK_ITEM_ID": config.experience_source_work_item_id,
+    }
+    missing = [name for name, value in required.items() if not value]
+    _assert(not missing, f"Experience-reuse scenario requires: {', '.join(missing)}")
+    _assert(
+        config.experience_reviewer_username != config.reviewer_username,
+        "Experience reviewer must be distinct from the P0 feedback producer",
+    )
+    evidence = validate_experience_reuse_evidence(
+        client,
+        compatible_run_id=str(config.experience_compatible_run_id),
+        compatible_work_item_id=str(config.experience_compatible_work_item_id),
+        experience_reviewer_password=str(config.experience_reviewer_password),
+        experience_reviewer_username=str(config.experience_reviewer_username),
+        marker=f"rd-delivery-experience-{regression_slug()}",
+        mismatched_run_id=str(config.experience_mismatched_run_id),
+        mismatched_work_item_id=str(config.experience_mismatched_work_item_id),
+        source_reviewer_role_code="reviewer",
+        source_reviewer_password=config.reviewer_password,
+        source_reviewer_username=config.reviewer_username,
+        source_work_item_id=str(config.experience_source_work_item_id),
+    )
+    return [
+        StepResult(
+            "rd_delivery_experience_reuse",
+            (
+                f"experience={evidence.experience_id}:v{evidence.experience_version} / "
+                f"source_feedback={','.join(evidence.source_feedback_ids)} / "
+                f"compatible_refs={','.join(evidence.second_run_reference_ids)} / "
+                f"mismatched_refs={','.join(evidence.mismatched_run_reference_ids) or 'none'}"
+            ),
+            evidence={
+                "approved_status": evidence.approved_status,
+                "experience_id": evidence.experience_id,
+                "experience_version": evidence.experience_version,
+                "mismatched_run_reference_ids": list(evidence.mismatched_run_reference_ids),
+                "second_run_evidence_refs": list(evidence.second_run_evidence_refs),
+                "second_run_reference_ids": list(evidence.second_run_reference_ids),
+                "source_feedback_ids": list(evidence.source_feedback_ids),
+            },
+        )
+    ]
 
 
 def _wait_for_reviewing_item(
@@ -1338,6 +1588,8 @@ def validate_rd_delivery_e2e(
         scenario in RD_E2E_SCENARIOS,
         f"Unsupported R&D delivery E2E scenario: {scenario}",
     )
+    if scenario == "experience-reuse":
+        return validate_experience_reuse_scenario(client, config=config)
     secrets = (owner_password, config.reviewer_password)
     preflight = preflight_rd_delivery_e2e(
         client,

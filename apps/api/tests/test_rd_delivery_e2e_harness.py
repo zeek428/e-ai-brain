@@ -1193,6 +1193,7 @@ SCENARIOS = (
     "cancel-resume",
     "timeout-recovery",
     "high-risk-dispatch",
+    "experience-reuse",
 )
 
 
@@ -1206,6 +1207,137 @@ def test_rd_e2e_cli_exposes_exact_scenario_choices() -> None:
 
     assert tuple(action.choices or ()) == SCENARIOS
     assert action.default == "happy-path"
+
+
+class ExperienceReuseClient:
+    def __init__(self) -> None:
+        self.approved = False
+        self.calls: list[tuple[str, str, dict[str, object]]] = []
+
+    def get(self, path: str, query=None, *, headers=None) -> dict[str, object]:
+        del headers
+        self.calls.append(("GET", path, dict(query or {})))
+        if path == "/api/delivery/rd-role-experiences":
+            assert query == {"evidence_subject_id": "work-source", "status": "pending"}
+            return {
+                "items": [
+                    {
+                        "id": "experience-1",
+                        "review_version": 3,
+                        "role_code": "reviewer",
+                        "status": "pending",
+                    }
+                ]
+            }
+        if path == "/api/delivery/rd-role-experiences/experience-1":
+            return {
+                "id": "experience-1",
+                "sources": [{"feedback_record_id": "feedback-source"}],
+            }
+        if path == "/api/delivery/rd-collaboration-runs/run-compatible/work-items":
+            return {
+                "items": [
+                    {
+                        "id": "work-compatible",
+                        "input_contract": {
+                            "approved_role_experience_context": [
+                                {
+                                    "evidence_refs": [
+                                        {"id": "gate-source", "kind": "quality_gate"}
+                                    ],
+                                    "experience_id": "experience-1",
+                                    "version": 1,
+                                }
+                            ]
+                        },
+                    }
+                ]
+            }
+        if path == "/api/delivery/rd-collaboration-runs/run-mismatched/work-items":
+            return {
+                "items": [
+                    {"id": "work-mismatched", "input_contract": {}}
+                ]
+            }
+        raise AssertionError(f"unexpected GET {path} {query}")
+
+    def login(self, username: str, password: str) -> dict[str, object]:
+        if (username, password) == ("experience-reviewer@example.com", "experience-secret"):
+            return {"user": {"id": "experience-reviewer", "username": username}}
+        assert (username, password) == ("source-reviewer@example.com", "source-secret")
+        return {"user": {"id": "source-reviewer", "username": username}}
+
+    def post(self, path: str, body=None, *, headers=None) -> dict[str, object]:
+        del headers
+        payload = dict(body or {})
+        self.calls.append(("POST", path, payload))
+        assert path == "/api/delivery/rd-role-experiences/experience-1/decide"
+        assert payload == {
+            "comment": "Independent approval for controlled reuse regression",
+            "decision": "approve",
+            "version": 3,
+        } | {"idempotency_key": payload["idempotency_key"]}
+        assert payload["idempotency_key"].startswith("rd-e2e-experience-approval:")
+        assert payload["idempotency_key"].endswith(":experience-1")
+        self.approved = True
+        return {"id": "experience-1", "review_version": 4, "status": "approved"}
+
+
+def test_experience_reuse_requires_independent_approval_and_trust_match() -> None:
+    evidence = rd_delivery_e2e.validate_experience_reuse_evidence(
+        ExperienceReuseClient(),
+        experience_reviewer_password="experience-secret",
+        experience_reviewer_username="experience-reviewer@example.com",
+        marker="marker",
+        source_reviewer_role_code="reviewer",
+        source_reviewer_password="source-secret",
+        source_reviewer_username="source-reviewer@example.com",
+        source_work_item_id="work-source",
+        compatible_run_id="run-compatible",
+        compatible_work_item_id="work-compatible",
+        mismatched_run_id="run-mismatched",
+        mismatched_work_item_id="work-mismatched",
+    )
+
+    assert evidence.pending_status == "pending"
+    assert evidence.approved_status == "approved"
+    assert evidence.source_feedback_ids == ("feedback-source",)
+    assert evidence.experience_id == "experience-1"
+    assert evidence.experience_version == 1
+    assert evidence.second_run_reference_ids == ("experience-1",)
+    assert evidence.second_run_evidence_refs == ({"id": "gate-source", "kind": "quality_gate"},)
+    assert evidence.mismatched_run_reference_ids == ()
+
+
+def test_experience_reuse_is_an_explicit_read_only_scenario() -> None:
+    results = validate_rd_delivery_e2e(
+        ExperienceReuseClient(),
+        "owner@example.com",
+        "owner-secret",
+        valid_config(
+            experience_compatible_run_id="run-compatible",
+            experience_compatible_work_item_id="work-compatible",
+            experience_mismatched_run_id="run-mismatched",
+            experience_mismatched_work_item_id="work-mismatched",
+            experience_reviewer_password="experience-secret",
+            experience_reviewer_username="experience-reviewer@example.com",
+            experience_source_work_item_id="work-source",
+            reviewer_password="source-secret",
+            reviewer_username="source-reviewer@example.com",
+        ),
+        scenario="experience-reuse",
+    )
+
+    assert results[0].name == "rd_delivery_experience_reuse"
+    assert results[0].evidence == {
+        "approved_status": "approved",
+        "experience_id": "experience-1",
+        "experience_version": 1,
+        "mismatched_run_reference_ids": [],
+        "second_run_evidence_refs": [{"id": "gate-source", "kind": "quality_gate"}],
+        "second_run_reference_ids": ["experience-1"],
+        "source_feedback_ids": ["feedback-source"],
+    }
 
 
 def test_regression_report_keeps_attempt_chain_machine_readable() -> None:
