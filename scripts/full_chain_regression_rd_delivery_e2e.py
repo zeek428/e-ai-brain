@@ -560,6 +560,80 @@ def _wait_for(
     )
 
 
+def wait_for_internal_ai_assessment_opinions(
+    client: Any,
+    *,
+    assessment: dict[str, Any],
+    requirement_id: str,
+    timeout_seconds: int,
+    secret_values: tuple[str, ...],
+) -> dict[str, Any]:
+    """Wait for the internal execution path to complete every frozen AI opinion."""
+    assessment_id = str(assessment.get("id") or "")
+    opinion_round = int(assessment.get("opinion_round") or 1)
+    frozen_opinions = assessment.get("opinions") or []
+    _assert(assessment_id, "Assessment id is missing")
+    _assert(frozen_opinions, "Assessment did not freeze any required opinions")
+
+    frozen_assignments: dict[str, tuple[str, str]] = {}
+    for opinion in frozen_opinions:
+        opinion_id = str(opinion.get("id") or "")
+        role_code = str(opinion.get("role_code") or "")
+        assigned_ai_employee_id = str(opinion.get("assigned_ai_employee_id") or "")
+        _assert(
+            int(opinion.get("opinion_round") or 1) == opinion_round,
+            "Assessment opinion round does not match the frozen assessment",
+        )
+        _assert(opinion_id and role_code, "Frozen assessment opinion identity is missing")
+        _assert(
+            opinion.get("assigned_subject_type") == "ai_employee"
+            and assigned_ai_employee_id,
+            (
+                "Real R&D delivery E2E requires AI-only frozen assessment opinions; "
+                "human opinions require the exact frozen user"
+            ),
+        )
+        frozen_assignments[opinion_id] = (role_code, assigned_ai_employee_id)
+    _assert(
+        len(frozen_assignments) == len(frozen_opinions),
+        "Frozen assessment opinion ids are not unique",
+    )
+
+    def completed(latest: Any) -> bool:
+        if not isinstance(latest, dict):
+            return False
+        if str(latest.get("id") or "") != assessment_id:
+            return False
+        if int(latest.get("opinion_round") or 1) != opinion_round:
+            return False
+        current_opinions = latest.get("opinions") or []
+        if {
+            str(opinion.get("id") or "") for opinion in current_opinions
+        } != set(frozen_assignments):
+            return False
+        for opinion in current_opinions:
+            expected = frozen_assignments[str(opinion["id"])]
+            if (
+                opinion.get("assigned_subject_type") != "ai_employee"
+                or (
+                    str(opinion.get("role_code") or ""),
+                    str(opinion.get("assigned_ai_employee_id") or ""),
+                )
+                != expected
+                or not opinion.get("conclusion_json")
+            ):
+                return False
+        return True
+
+    return _wait_for(
+        lambda: client.get(f"/api/requirements/{requirement_id}/assessments/latest"),
+        completed,
+        description="Internal AI assessment opinions",
+        timeout_seconds=timeout_seconds,
+        secret_values=secret_values,
+    )
+
+
 def validate_delivery_records(
     records: list[dict[str, Any]],
     *,
@@ -1671,24 +1745,13 @@ def validate_rd_delivery_e2e(
         assessment_id and assessment.get("initial_strategy_snapshot_id"),
         "Assessment did not freeze the active policy",
     )
-    for role_code in preflight.policy.get("team_config", {}).get(
-        "required_role_codes",
-        [],
-    ):
-        opinion = client.post(
-            f"/api/requirement-assessments/{assessment_id}/opinions",
-            {
-                "conclusion_json": {"recommendation": "accept", "scope": artifact_path},
-                "confidence": 0.99,
-                "evidence_refs": [{"artifact_path": artifact_path}],
-                "idempotency_key": f"rd-e2e-opinion:{marker}:{role_code}",
-                "risk_level": "low",
-                "risk_summary": {"deployment": "prohibited", "risk_level": "low"},
-                "role_code": role_code,
-            },
-        )
-        _assert(opinion.get("id"), f"Assessment opinion for {role_code} was not recorded")
-    latest = client.get(f"/api/requirements/{requirement_id}/assessments/latest")
+    latest = wait_for_internal_ai_assessment_opinions(
+        client,
+        assessment=assessment,
+        requirement_id=requirement_id,
+        timeout_seconds=config.timeout_seconds,
+        secret_values=secrets,
+    )
     accepted = client.post(
         f"/api/requirement-assessments/{assessment_id}/decisions",
         {

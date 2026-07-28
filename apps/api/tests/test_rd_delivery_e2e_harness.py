@@ -334,6 +334,11 @@ class PreflightClient:
                         "role_codes": ["tester"],
                         "status": "active",
                     },
+                    {
+                        "id": "ai-product-manager",
+                        "role_codes": ["product_manager"],
+                        "status": "active",
+                    },
                 ]
             }
         if path == "/api/delivery/rd-task-executor-policies":
@@ -372,10 +377,17 @@ class PreflightClient:
                                 "role_code": "reviewer",
                                 "status": "active",
                             },
+                            {
+                                "actor_mode": "ai",
+                                "candidate_ai_employee_ids": ["ai-product-manager"],
+                                "primary_executor_profile_id": "profile-codex",
+                                "role_code": "product_manager",
+                                "status": "active",
+                            },
                         ],
                         "status": "active",
                         "team_config": {
-                            "required_role_codes": ["developer", "tester", "reviewer"]
+                            "required_role_codes": ["product_manager"]
                         },
                     }
                 ]
@@ -533,6 +545,7 @@ def test_validator_never_uses_legacy_or_fabricated_side_effect_endpoints() -> No
 class HappyPathClient(PreflightClient):
     def __init__(self) -> None:
         super().__init__()
+        self.assessment_poll_count = 0
         self.phase = 0
         self.posts: list[tuple[str, dict[str, object]]] = []
         self.testing_dispatch_observed = False
@@ -570,7 +583,26 @@ class HappyPathClient(PreflightClient):
             return super().get(path, query, headers=headers)
         self.calls.append(("GET", path))
         if path == "/api/requirements/requirement-e2e/assessments/latest":
-            return {"id": "assessment-e2e", "version": 4}
+            self.assessment_poll_count += 1
+            return {
+                "id": "assessment-e2e",
+                "opinion_round": 1,
+                "opinions": [
+                    {
+                        "assigned_ai_employee_id": "ai-product-manager",
+                        "assigned_subject_type": "ai_employee",
+                        "conclusion_json": {
+                            "recommendation": "accept",
+                            "scope": "docs/e2e/rd-collaboration.md",
+                        },
+                        "id": "opinion-product-manager",
+                        "opinion_round": 1,
+                        "role_code": "product_manager",
+                    }
+                ],
+                "status": "waiting_human",
+                "version": 4,
+            }
         if path == "/api/delivery/rd-collaboration-runs/run-e2e/work-items":
             testing_running = self.phase == 1 and not self.testing_dispatch_observed
             implementation_attempt = {
@@ -751,9 +783,21 @@ class HappyPathClient(PreflightClient):
             return {
                 "id": "assessment-e2e",
                 "initial_strategy_snapshot_id": "snapshot-e2e",
+                "opinions": [
+                    {
+                        "assigned_ai_employee_id": "ai-product-manager",
+                        "assigned_subject_type": "ai_employee",
+                        "conclusion_json": {},
+                        "id": "opinion-product-manager",
+                        "opinion_round": 1,
+                        "role_code": "product_manager",
+                    }
+                ],
             }
         if path.startswith("/api/requirement-assessments/assessment-e2e/opinions"):
-            return {"id": f"opinion-{payload['role_code']}"}
+            raise AssertionError(
+                "frozen AI opinions must complete through the internal execution path"
+            )
         if path == "/api/requirement-assessments/assessment-e2e/decisions":
             return {
                 "grouping": {
@@ -975,6 +1019,11 @@ def test_real_e2e_happy_path_projects_native_runner_gate_delivery_and_no_deploym
     report = repr(results)
     assert "owner-secret" not in report
     assert "reviewer-secret" not in report
+    assert client.assessment_poll_count >= 1
+    assert not any(
+        path.startswith("/api/requirement-assessments/assessment-e2e/opinions")
+        for path, _payload in client.posts
+    )
     requirement_payload = next(
         payload for path, payload in client.posts if path == "/api/requirements"
     )
