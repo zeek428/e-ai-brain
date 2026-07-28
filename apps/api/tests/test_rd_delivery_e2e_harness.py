@@ -44,6 +44,7 @@ def valid_config(**changes: object) -> RdDeliveryE2EConfig:
 
 def test_real_e2e_requires_every_identifier_and_only_timeout_has_a_default() -> None:
     config = RdDeliveryE2EConfig.from_env(ENV)
+    assert config.review_channel == "api"
     assert config.timeout_seconds == 2400
     assert "reviewer-secret" not in repr(config)
 
@@ -55,6 +56,178 @@ def test_real_e2e_requires_every_identifier_and_only_timeout_has_a_default() -> 
 
     with pytest.raises(RegressionError, match="positive"):
         RdDeliveryE2EConfig.from_env({**ENV, "RD_E2E_TIMEOUT_SECONDS": "0"})
+
+
+def test_browser_review_channel_is_validated_and_uses_an_external_artifact_dir() -> None:
+    config = RdDeliveryE2EConfig.from_env(
+        {
+            **ENV,
+            "RD_E2E_ARTIFACT_DIR": "/private/tmp/rd-e2e-browser",
+            "RD_E2E_REVIEW_CHANNEL": "browser",
+        }
+    )
+
+    assert config.review_channel == "browser"
+    assert config.artifact_dir == "/private/tmp/rd-e2e-browser"
+
+    with pytest.raises(RegressionError, match="api or browser"):
+        RdDeliveryE2EConfig.from_env({**ENV, "RD_E2E_REVIEW_CHANNEL": "manual"})
+    with pytest.raises(RegressionError, match="outside the repository"):
+        RdDeliveryE2EConfig.from_env(
+            {
+                **ENV,
+                "RD_E2E_ARTIFACT_DIR": str(Path(__file__).resolve().parents[3] / "artifacts"),
+                "RD_E2E_REVIEW_CHANNEL": "browser",
+            }
+        )
+
+
+def test_browser_review_adapter_uses_checked_in_command_and_non_secret_argv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def run_process(argv, **kwargs):
+        captured["argv"] = list(argv)
+        captured.update(kwargs)
+        return type(
+            "Completed",
+            (),
+            {"returncode": 0, "stderr": "", "stdout": "browser smoke passed"},
+        )()
+
+    monkeypatch.setattr(rd_delivery_e2e.subprocess, "run", run_process)
+    monkeypatch.setenv("RD_E2E_REVIEWER_USERNAME", "inherited-reviewer@example.com")
+    monkeypatch.setenv("RD_E2E_REVIEWER_PASSWORD", "inherited-reviewer-secret")
+    config = valid_config(
+        artifact_dir="/private/tmp/rd-e2e-browser",
+        review_channel="browser",
+        reviewer_password="inherited-reviewer-secret",
+        reviewer_username="inherited-reviewer@example.com",
+    )
+
+    rd_delivery_e2e.run_browser_review(
+        config,
+        decision_request_id="decision-1",
+        run_id="run-1",
+        task_id="task-1",
+        version_id="version-1",
+    )
+
+    assert captured["argv"] == ["npm", "run", "test:e2e:rd-collaboration"]
+    assert captured["cwd"] == Path(__file__).resolve().parents[3] / "apps" / "web"
+    child_env = captured["env"]
+    assert isinstance(child_env, dict)
+    assert child_env["RD_E2E_VERSION_ID"] == "version-1"
+    assert child_env["RD_E2E_RUN_ID"] == "run-1"
+    assert child_env["RD_E2E_TASK_ID"] == "task-1"
+    assert child_env["RD_E2E_DECISION_REQUEST_ID"] == "decision-1"
+    assert child_env["RD_E2E_ARTIFACT_DIR"] == "/private/tmp/rd-e2e-browser"
+    assert child_env["RD_E2E_REVIEWER_USERNAME"] == "inherited-reviewer@example.com"
+    assert child_env["RD_E2E_REVIEWER_PASSWORD"] == "inherited-reviewer-secret"
+    assert "reviewer-secret" not in repr(captured["argv"])
+
+
+def test_browser_review_adapter_requires_matching_inherited_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process_calls: list[list[str]] = []
+
+    def run_process(argv, **kwargs):
+        del kwargs
+        process_calls.append(list(argv))
+        return type(
+            "Completed",
+            (),
+            {"returncode": 0, "stderr": "", "stdout": "browser smoke passed"},
+        )()
+
+    monkeypatch.setattr(rd_delivery_e2e.subprocess, "run", run_process)
+    monkeypatch.setenv("RD_E2E_REVIEWER_USERNAME", "different-reviewer@example.com")
+    monkeypatch.setenv("RD_E2E_REVIEWER_PASSWORD", "different-reviewer-secret")
+    config = valid_config(
+        artifact_dir="/private/tmp/rd-e2e-browser",
+        review_channel="browser",
+    )
+
+    with pytest.raises(RegressionError, match="inherited reviewer credentials"):
+        rd_delivery_e2e.run_browser_review(
+            config,
+            decision_request_id="decision-1",
+            run_id="run-1",
+            task_id="task-1",
+            version_id="version-1",
+        )
+    assert process_calls == []
+
+
+def test_browser_review_adapter_fails_closed_without_leaking_child_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def run_process(argv, **kwargs):
+        del argv, kwargs
+        return type(
+            "Completed",
+            (),
+            {
+                "returncode": 7,
+                "stderr": "Authorization: Bearer reviewer-secret",
+                "stdout": "reviewer@example.com",
+            },
+        )()
+
+    monkeypatch.setattr(rd_delivery_e2e.subprocess, "run", run_process)
+    monkeypatch.setenv("RD_E2E_REVIEWER_USERNAME", "reviewer@example.com")
+    monkeypatch.setenv("RD_E2E_REVIEWER_PASSWORD", "reviewer-secret")
+    config = valid_config(
+        artifact_dir="/private/tmp/rd-e2e-browser",
+        review_channel="browser",
+    )
+
+    with pytest.raises(RegressionError, match="browser review failed") as exc_info:
+        rd_delivery_e2e.run_browser_review(
+            config,
+            run_id="run-1",
+            task_id="task-1",
+            version_id="version-1",
+        )
+
+    assert "reviewer-secret" not in str(exc_info.value)
+    assert "reviewer@example.com" not in str(exc_info.value)
+
+
+def test_browser_review_adapter_rejects_secret_bearing_success_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def run_process(argv, **kwargs):
+        del argv, kwargs
+        return type(
+            "Completed",
+            (),
+            {
+                "returncode": 0,
+                "stderr": "",
+                "stdout": "browser smoke passed for reviewer@example.com",
+            },
+        )()
+
+    monkeypatch.setattr(rd_delivery_e2e.subprocess, "run", run_process)
+    monkeypatch.setenv("RD_E2E_REVIEWER_USERNAME", "reviewer@example.com")
+    monkeypatch.setenv("RD_E2E_REVIEWER_PASSWORD", "reviewer-secret")
+    config = valid_config(
+        artifact_dir="/private/tmp/rd-e2e-browser",
+        review_channel="browser",
+    )
+
+    with pytest.raises(RegressionError, match="browser review failed") as exc_info:
+        rd_delivery_e2e.run_browser_review(
+            config,
+            run_id="run-1",
+            task_id="task-1",
+            version_id="version-1",
+        )
+
+    assert "reviewer@example.com" not in str(exc_info.value)
 
 
 def test_real_e2e_rejects_unsafe_identity_target_and_branch_boundaries() -> None:
@@ -650,6 +823,98 @@ class HappyPathClient(PreflightClient):
             self.phase = 2
             return {"work_item": {"id": "work-testing", "status": "completed"}}
         raise AssertionError(f"unexpected POST {path}")
+
+
+class BrowserApprovalClient:
+    def __init__(self, *, final_work_item_version: int = 3) -> None:
+        self.browser_completed = False
+        self.calls: list[tuple[str, str]] = []
+        self.final_work_item_version = final_work_item_version
+
+    def get(self, path: str, query=None, *, headers=None) -> dict[str, object]:
+        del query, headers
+        self.calls.append(("GET", path))
+        if path == "/api/reviews/review-browser":
+            return {
+                "ai_task_id": "ai-task-browser",
+                "id": "review-browser",
+                "status": "approved" if self.browser_completed else "pending",
+                "version": 5 if self.browser_completed else 4,
+            }
+        if path == "/api/delivery/rd-collaboration-runs/run-browser/work-items":
+            return {
+                "dependencies": [],
+                "items": [
+                    {
+                        "id": "work-browser",
+                        "status": "completed" if self.browser_completed else "reviewing",
+                        "version": (
+                            self.final_work_item_version
+                            if self.browser_completed
+                            else 2
+                        ),
+                    }
+                ],
+            }
+        raise AssertionError(f"unexpected GET {path}")
+
+    def login(self, username: str, password: str) -> dict[str, object]:
+        del password
+        self.calls.append(("LOGIN", username))
+        return {"user": {"id": "owner-user", "username": username}}
+
+    def post(self, path: str, body=None, *, headers=None) -> dict[str, object]:
+        del body, headers
+        raise AssertionError(f"browser review must not POST through Python: {path}")
+
+
+def test_browser_review_waits_for_durable_review_and_work_item_versions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = BrowserApprovalClient()
+    browser_calls: list[dict[str, object]] = []
+
+    def complete_browser_review(config, **identifiers):
+        browser_calls.append({"config": config, **identifiers})
+        client.browser_completed = True
+
+    monkeypatch.setattr(rd_delivery_e2e, "run_browser_review", complete_browser_review)
+    config = valid_config(
+        artifact_dir="/private/tmp/rd-e2e-browser",
+        review_channel="browser",
+        timeout_seconds=2,
+    )
+
+    approved = rd_delivery_e2e._approve_item(
+        client,
+        config=config,
+        item={"ai_task_id": "ai-task-browser", "id": "work-browser", "version": 2},
+        marker="browser-marker",
+        owner_password="owner-secret",
+        owner_username="owner@example.com",
+        review_id="review-browser",
+        run_id="run-browser",
+        task_id="ai-task-browser",
+        version_id="version-browser",
+    )
+
+    assert approved == {"id": "work-browser", "status": "completed", "version": 3}
+    assert browser_calls == [
+        {
+            "config": config,
+            "decision_request_id": None,
+            "run_id": "run-browser",
+            "task_id": "ai-task-browser",
+            "version_id": "version-browser",
+        }
+    ]
+    assert ("GET", "/api/reviews/review-browser") in client.calls
+    assert (
+        "GET",
+        "/api/delivery/rd-collaboration-runs/run-browser/work-items",
+    ) in client.calls
+    assert not any(method == "POST" for method, _ in client.calls)
+    assert client.calls[-1] == ("LOGIN", "owner@example.com")
 
 
 def test_real_e2e_happy_path_projects_native_runner_gate_delivery_and_no_deployment() -> None:
@@ -1369,7 +1634,7 @@ class GovernanceScenarioClient:
                 "id": "decision-high-risk",
                 "options_json": [
                     {"code": "approve_dispatch"},
-                    {"code": "reject_dispatch"},
+                    {"code": "cancel_work_item"},
                 ],
                 "status": "pending",
                 "version": 1,
@@ -1481,6 +1746,76 @@ class GovernanceScenarioClient:
                 "next_state": "ready",
             }
         raise AssertionError(f"unexpected POST {path}")
+
+
+class BrowserHighRiskScenarioClient(GovernanceScenarioClient):
+    def __init__(self) -> None:
+        super().__init__("high-risk-dispatch")
+        self.browser_completed = False
+
+    def get(self, path: str, query=None, *, headers=None) -> dict[str, object]:
+        if path == "/api/delivery/decision-requests/decision-high-risk":
+            self.calls.append(("GET", path))
+            return {
+                "decision_type": "high_risk_ai_dispatch",
+                "id": "decision-high-risk",
+                "options_json": [
+                    {"code": "approve_dispatch"},
+                    {"code": "cancel_work_item"},
+                ],
+                "selected_option_code": (
+                    "approve_dispatch" if self.browser_completed else None
+                ),
+                "status": "approved" if self.browser_completed else "pending",
+                "version": 2 if self.browser_completed else 1,
+            }
+        return super().get(path, query, headers=headers)
+
+
+def test_browser_high_risk_decision_uses_only_safe_option_and_polls_durable_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = BrowserHighRiskScenarioClient()
+    browser_calls: list[dict[str, object]] = []
+
+    def complete_browser_decision(config, **identifiers):
+        browser_calls.append({"config": config, **identifiers})
+        client.browser_completed = True
+        client.phase = 1
+
+    monkeypatch.setattr(rd_delivery_e2e, "run_browser_review", complete_browser_decision)
+    config = valid_config(
+        artifact_dir="/private/tmp/rd-e2e-browser",
+        review_channel="browser",
+        timeout_seconds=2,
+    )
+
+    outcome = rd_delivery_e2e.validate_governance_scenario(
+        client,
+        scenario="high-risk-dispatch",
+        config=config,
+        marker="high-risk-browser",
+        owner_password="owner-secret",
+        owner_username="owner@example.com",
+        run_id="run-scenario",
+        version_id="version-scenario",
+        work_item_id="work-scenario",
+    )
+
+    assert outcome.observed_states == ("waiting_human", "running", "reviewing")
+    assert browser_calls == [
+        {
+            "config": config,
+            "decision_request_id": "decision-high-risk",
+            "run_id": "run-scenario",
+            "task_id": None,
+            "version_id": "version-scenario",
+        }
+    ]
+    assert not any(
+        method == "POST" and path.endswith("/decision-high-risk/decide")
+        for method, path in client.calls
+    )
 
 
 @pytest.mark.parametrize(

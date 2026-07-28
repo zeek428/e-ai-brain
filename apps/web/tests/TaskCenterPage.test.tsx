@@ -23,6 +23,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   window.localStorage.clear();
+  window.history.pushState({}, '', '/');
   void message.destroy();
   notification.destroy();
   Modal.destroyAll();
@@ -118,20 +119,40 @@ describe('TaskCenterPage', () => {
           },
         });
       }
+      if (path === '/api/ai-tasks/task_viewer') {
+        return jsonResponse({
+          data: {
+            current_step: 'executor_completed',
+            id: 'task_viewer',
+            input: {
+              requirement_snapshot: { title: 'Viewer 可读协作需求' },
+            },
+            output_summary: 'Viewer 可以核对任务详情，但不能处理待确认。',
+            pending_review: { id: 'review_viewer' },
+            product_id: 'product_api',
+            requirement_id: 'requirement_api',
+            status: 'waiting_review',
+            task_type: 'technical_solution',
+            title: 'Viewer 只读任务',
+          },
+        });
+      }
       if (path.startsWith('/api/ai-tasks?page=1&page_size=10')) {
         return jsonResponse({
           data: {
             items: [
               {
+                collaboration_run_id: 'run-viewer',
                 created_at: '2026-06-04T09:00:00+00:00',
-                current_step: 'completed',
+                current_step: 'executor_completed',
                 id: 'task_viewer',
                 product_id: 'product_api',
                 product_name: 'AI Brain 产品',
                 requirement_id: 'requirement_api',
-                status: 'completed',
+                status: 'waiting_review',
                 task_type: 'technical_solution',
                 title: 'Viewer 只读任务',
+                work_item_id: 'work-viewer',
               },
             ],
             page: 1,
@@ -164,9 +185,12 @@ describe('TaskCenterPage', () => {
 
     fireEvent.click(within(taskRow as HTMLElement).getByRole('button', { name: '操作' }));
     const operationDialog = await screen.findByTestId('task-operation-dialog');
-    expect(within(operationDialog).getByRole('button', { name: '查看详情' })).toBeInTheDocument();
     expect(within(operationDialog).queryByRole('button', { name: '模拟 Issue' })).not.toBeInTheDocument();
     expect(within(operationDialog).queryByRole('button', { name: '生成开发计划' })).not.toBeInTheDocument();
+    fireEvent.click(within(operationDialog).getByRole('button', { name: '查看详情' }));
+    expect(await screen.findByText('Viewer 可以核对任务详情，但不能处理待确认。')).toBeInTheDocument();
+    expect(screen.getByText('review_viewer')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '处理待确认' })).not.toBeInTheDocument();
   });
 
   it('opens a Code Review report with a requirement full-chain link', async () => {
@@ -704,6 +728,162 @@ describe('TaskCenterPage', () => {
     ]);
   });
 
+  it('opens task-scoped review actions from a collaboration task detail', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    let approveCallCount = 0;
+    let reviewApproved = false;
+    let releaseApproval: (() => void) | undefined;
+    const approvalGate = new Promise<void>((resolve) => {
+      releaseApproval = resolve;
+    });
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer token-admin' });
+      if (path === '/api/reviews/review_collaboration_detail/approve') {
+        expect(init?.method).toBe('POST');
+        expect(init?.body).toBe(JSON.stringify({ version: 1 }));
+        approveCallCount += 1;
+        await approvalGate;
+        reviewApproved = true;
+        return jsonResponse({
+          data: { review_status: 'approved', task_status: 'completed' },
+        });
+      }
+      if (path.startsWith('/api/reviews/pending')) {
+        return jsonResponse({
+          data: path.includes('ai_task_id=task_collaboration_detail') && !reviewApproved
+            ? {
+                items: [
+                  {
+                    ai_task_id: 'task_collaboration_detail',
+                    content: { summary: '迭代版本总览协同与经验展示方案' },
+                    id: 'review_collaboration_detail',
+                    stage: 'product_detail_design',
+                    status: 'pending',
+                    version: 1,
+                  },
+                ],
+                page: 1,
+                page_size: 20,
+                total: 1,
+              }
+            : { items: [], page: 1, page_size: 20, total: 0 },
+        });
+      }
+      if (
+        path === '/api/products?active_only=true' ||
+        path === '/api/products?active_only=true&page_size=100' ||
+        path.startsWith('/api/product-versions?')
+      ) {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/ai-tasks/task_collaboration_detail') {
+        return jsonResponse({
+          data: {
+            created_at: '2026-07-16T01:02:00+00:00',
+            current_step: 'executor_completed',
+            id: 'task_collaboration_detail',
+            input: {
+              requirement_snapshot: { title: 'AI Brain 2.0：展示研发协同与岗位经验' },
+            },
+            output_summary: '迭代版本总览协同与经验展示方案',
+            pending_review: reviewApproved ? null : { id: 'review_collaboration_detail' },
+            product_id: 'product_api',
+            requirement_id: 'requirement_api',
+            status: reviewApproved ? 'completed' : 'waiting_review',
+            task_type: 'product_detail_design',
+            title: '协同任务详情确认入口',
+            updated_at: reviewApproved ? '2026-07-16T03:04:00+00:00' : '2026-07-16T02:03:00+00:00',
+          },
+        });
+      }
+      if (path.startsWith('/api/ai-tasks')) {
+        return jsonResponse({
+          data: {
+            items: [
+              {
+                collaboration_run_id: 'rd_collaboration_run_004',
+                created_by: 'user_admin',
+                id: 'task_collaboration_detail',
+                product_id: 'product_api',
+                requirement_id: 'requirement_api',
+                status: reviewApproved ? 'completed' : 'waiting_review',
+                task_type: 'product_detail_design',
+                title: '协同任务详情确认入口',
+                work_item_id: 'work_item_detail',
+              },
+            ],
+            page: 1,
+            page_size: 10,
+            total: 1,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<TaskCenterPage />);
+
+    const taskRow = (await screen.findByText('协同任务详情确认入口')).closest('tr');
+    expect(taskRow).not.toBeNull();
+    fireEvent.click(within(taskRow as HTMLElement).getByRole('button', { name: '操作' }));
+    const operationDialog = await screen.findByTestId('task-operation-dialog');
+    expect(
+      within(operationDialog).getByRole('link', { name: '前往研发协同工作项' }),
+    ).toHaveAttribute(
+      'href',
+      '/delivery/rd-collaboration?run_id=rd_collaboration_run_004&work_item_id=work_item_detail',
+    );
+    expect(
+      within(operationDialog).queryByRole('button', { name: '启动任务' }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(operationDialog).queryByRole('button', { name: '重试任务' }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(operationDialog).queryByRole('button', { name: '取消任务' }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(within(operationDialog).getByRole('button', { name: '查看详情' }));
+
+    const detailReviewActions = await screen.findByTestId('task-detail-pending-review-actions');
+    expect(detailReviewActions).toHaveTextContent('review_collaboration_detail');
+    expect(screen.getAllByText('创建时间')).toHaveLength(2);
+    expect(screen.getByText('更新时间')).toBeInTheDocument();
+    expect(screen.getByText('2026-07-16 09:02')).toBeInTheDocument();
+    expect(screen.getByText('2026-07-16 10:03')).toBeInTheDocument();
+    fireEvent.click(within(detailReviewActions).getByRole('button', { name: '处理待确认' }));
+
+    expect(await screen.findByText('确认输出：协同任务详情确认入口')).toBeInTheDocument();
+    const approveButton = screen.getByRole('button', { name: '确认通过' });
+    fireEvent.click(approveButton);
+    fireEvent.click(approveButton);
+    await waitFor(() => expect(approveCallCount).toBe(1));
+    releaseApproval?.();
+    expect(
+      await screen.findByText('任务详情：协同任务详情确认入口'),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByTestId('task-detail-pending-review-actions')).not.toBeInTheDocument();
+    });
+    expect(screen.getByText('2026-07-16 11:04')).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.filter(([path]) => path === '/api/ai-tasks/task_collaboration_detail'),
+    ).toHaveLength(2);
+    expect(
+      fetchMock.mock.calls.filter(([path]) => String(path).startsWith('/api/ai-tasks?')),
+    ).toHaveLength(2);
+    expect(fetchMock.mock.calls.map(([path, init]) => [path, init?.method ?? 'GET'])).toContainEqual([
+      expect.stringMatching(/^\/api\/reviews\/pending\?.*ai_task_id=task_collaboration_detail/),
+      'GET',
+    ]);
+  });
+
   it('filters task center tasks by product and time range', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {
@@ -976,6 +1156,63 @@ describe('TaskCenterPage', () => {
       expect(relevantCalls).toContainEqual(['/api/reviews/pending', 'GET']);
       expect(relevantCalls).toContainEqual(['/api/ai-tasks/task_detail_api', 'GET']);
     });
+  });
+
+  it('opens the supplied task detail from the task_id deep link', async () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (input) => {
+      const path = String(input);
+      if (path.startsWith('/api/reviews/pending')) {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (
+        path.startsWith('/api/products?') ||
+        path.startsWith('/api/product-versions?')
+      ) {
+        return jsonResponse({ data: { items: [], total: 0 } });
+      }
+      if (path === '/api/ai-tasks/task_deep_link') {
+        return jsonResponse({
+          data: {
+            current_step: 'executor_completed',
+            id: 'task_deep_link',
+            input: { requirement_snapshot: { title: '深链需求' } },
+            output_summary: '深链任务详情已加载',
+            pending_review: { id: 'review_deep_link' },
+            product_id: 'product_api',
+            requirement_id: 'requirement_api',
+            status: 'waiting_review',
+            task_type: 'technical_solution',
+            title: '浏览器指定任务',
+          },
+        });
+      }
+      if (path.startsWith('/api/ai-tasks?')) {
+        return jsonResponse({
+          data: {
+            items: [],
+            page: 1,
+            page_size: 10,
+            total: 0,
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch call: ${path}`);
+    }));
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    window.history.pushState({}, '', '/delivery/rd-tasks?task_id=task_deep_link');
+
+    render(<TaskCenterPage />);
+
+    expect(
+      await screen.findByText('任务详情：浏览器指定任务'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('深链任务详情已加载')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '处理待确认' })).toBeEnabled();
   });
 
   it('submits edit-approved review decisions from the task center dialog', async () => {

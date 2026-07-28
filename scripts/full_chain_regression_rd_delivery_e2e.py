@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import os
+import re
+import subprocess
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from full_chain_regression_rd_fixture import safe_report_value
@@ -86,6 +89,8 @@ class RdDeliveryE2EConfig:
     ai_tester_id: str
     reviewer_username: str
     reviewer_password: str = field(repr=False)
+    artifact_dir: str = "/private/tmp/ai-brain-rd-e2e"
+    review_channel: str = "api"
     timeout_seconds: int = 2400
 
     @classmethod
@@ -108,12 +113,31 @@ class RdDeliveryE2EConfig:
             raise RegressionError("RD_E2E_TIMEOUT_SECONDS must be a positive integer") from exc
         if timeout_seconds <= 0:
             raise RegressionError("RD_E2E_TIMEOUT_SECONDS must be positive")
+        review_channel = str(source.get("RD_E2E_REVIEW_CHANNEL") or "api").strip().lower()
+        if review_channel not in {"api", "browser"}:
+            raise RegressionError("RD_E2E_REVIEW_CHANNEL must be api or browser")
+        artifact_dir = str(
+            source.get("RD_E2E_ARTIFACT_DIR") or "/private/tmp/ai-brain-rd-e2e"
+        ).strip()
+        if review_channel == "browser":
+            artifact_path = Path(artifact_dir).expanduser()
+            repository_root = Path(__file__).resolve().parents[1]
+            if (
+                not artifact_path.is_absolute()
+                or artifact_path == repository_root
+                or repository_root in artifact_path.parents
+            ):
+                raise RegressionError(
+                    "RD_E2E_ARTIFACT_DIR must be an absolute path outside the repository"
+                )
         config = cls(
             ai_developer_id=required("RD_E2E_AI_DEVELOPER_ID"),
             ai_tester_id=required("RD_E2E_AI_TESTER_ID"),
+            artifact_dir=artifact_dir,
             executor_profile_id=required("RD_E2E_EXECUTOR_PROFILE_ID"),
             product_id=required("RD_E2E_PRODUCT_ID"),
             repository_id=required("RD_E2E_REPOSITORY_ID"),
+            review_channel=review_channel,
             reviewer_password=required("RD_E2E_REVIEWER_PASSWORD"),
             reviewer_username=required("RD_E2E_REVIEWER_USERNAME"),
             runner_id=required("RD_E2E_RUNNER_ID"),
@@ -138,6 +162,105 @@ class RdDeliveryPreflight:
 def _assert(condition: bool, message: str) -> None:
     if not condition:
         raise RegressionError(message)
+
+
+def _browser_identifier(value: str | None, *, name: str, required: bool) -> str | None:
+    normalized = str(value or "").strip()
+    if not normalized:
+        if required:
+            raise RegressionError(f"{name} is required for browser review")
+        return None
+    if len(normalized) > 160 or re.fullmatch(r"[A-Za-z0-9._:/-]+", normalized) is None:
+        raise RegressionError(f"{name} is invalid for browser review")
+    return normalized
+
+
+def _browser_output_contains_secret(
+    output: str,
+    *,
+    config: RdDeliveryE2EConfig,
+) -> bool:
+    lowered = output.casefold()
+    secret_values = (
+        config.reviewer_password,
+        config.reviewer_username,
+    )
+    return any(value and value.casefold() in lowered for value in secret_values) or bool(
+        re.search(
+            r"(authorization\s*:|bearer\s+[a-z0-9._~-]+|"
+            r"(?:access|refresh)[_-]?token\s*[:=]|password\s*[:=])",
+            lowered,
+        )
+    )
+
+
+def run_browser_review(
+    config: RdDeliveryE2EConfig,
+    *,
+    version_id: str,
+    run_id: str,
+    task_id: str | None = None,
+    decision_request_id: str | None = None,
+) -> None:
+    """Run the checked-in browser review without putting identifiers in argv."""
+    if config.review_channel != "browser":
+        raise RegressionError("Browser review command requires review_channel=browser")
+    identifiers = {
+        "RD_E2E_DECISION_REQUEST_ID": _browser_identifier(
+            decision_request_id,
+            name="RD_E2E_DECISION_REQUEST_ID",
+            required=False,
+        ),
+        "RD_E2E_RUN_ID": _browser_identifier(
+            run_id,
+            name="RD_E2E_RUN_ID",
+            required=True,
+        ),
+        "RD_E2E_TASK_ID": _browser_identifier(
+            task_id,
+            name="RD_E2E_TASK_ID",
+            required=False,
+        ),
+        "RD_E2E_VERSION_ID": _browser_identifier(
+            version_id,
+            name="RD_E2E_VERSION_ID",
+            required=True,
+        ),
+    }
+    child_env = dict(os.environ)
+    for name in identifiers:
+        child_env.pop(name, None)
+    child_env.update(
+        {
+            name: value
+            for name, value in identifiers.items()
+            if isinstance(value, str) and value
+        }
+    )
+    child_env["RD_E2E_ARTIFACT_DIR"] = config.artifact_dir
+    child_env["RD_E2E_REVIEW_CHANNEL"] = "browser"
+    if (
+        child_env.get("RD_E2E_REVIEWER_PASSWORD") != config.reviewer_password
+        or child_env.get("RD_E2E_REVIEWER_USERNAME") != config.reviewer_username
+    ):
+        raise RegressionError("Browser review requires matching inherited reviewer credentials")
+    try:
+        completed = subprocess.run(
+            ["npm", "run", "test:e2e:rd-collaboration"],
+            capture_output=True,
+            check=False,
+            cwd=Path(__file__).resolve().parents[1] / "apps" / "web",
+            env=child_env,
+            text=True,
+            timeout=config.timeout_seconds,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RegressionError("R&D collaboration browser review failed to execute") from exc
+    output = f"{completed.stdout or ''}\n{completed.stderr or ''}"
+    if completed.returncode != 0 or _browser_output_contains_secret(output, config=config):
+        raise RegressionError(
+            f"R&D collaboration browser review failed (exit={completed.returncode})"
+        )
 
 
 def _items(response: dict[str, Any]) -> list[dict[str, Any]]:
@@ -750,6 +873,7 @@ def validate_governance_scenario(
     owner_username: str,
     run_id: str,
     work_item_id: str,
+    version_id: str | None = None,
 ) -> GovernanceScenarioOutcome:
     _assert(
         scenario in set(RD_E2E_SCENARIOS) - {"happy-path"},
@@ -758,6 +882,7 @@ def validate_governance_scenario(
     secrets = (owner_password, config.reviewer_password)
     observed_states: list[str] = []
     transition_evidence: list[dict[str, Any]] = []
+    browser_transition_item: dict[str, Any] | None = None
 
     initial = _scenario_work_item(
         client,
@@ -941,31 +1066,94 @@ def validate_governance_scenario(
             _assert(
                 decision.get("decision_type") == "high_risk_ai_dispatch"
                 and _decision_options(decision)
-                == {"approve_dispatch", "reject_dispatch"},
+                == {"approve_dispatch", "cancel_work_item"},
                 "High-risk dispatch decision options are unsafe",
             )
             selected_option = "approve_dispatch"
 
-        client.login(config.reviewer_username, config.reviewer_password)
         payload = {
             "comment": f"Approve isolated {scenario} E2E recovery",
             "idempotency_key": f"rd-e2e-decision:{marker}:{decision_id}",
             "selected_option": selected_option,
             "version": decision["version"],
         }
-        decided = client.post(
-            f"/api/delivery/decision-requests/{decision_id}/decide",
-            payload,
-        )
-        if scenario == "high-risk-dispatch":
-            replay = client.post(
+        if scenario == "high-risk-dispatch" and config.review_channel == "browser":
+            _assert(version_id is not None, "Browser decision requires the product version")
+            initial_version = initial.get("version")
+            decision_version = decision.get("version")
+            _assert(
+                isinstance(initial_version, int)
+                and not isinstance(initial_version, bool)
+                and isinstance(decision_version, int)
+                and not isinstance(decision_version, bool),
+                "Browser decision target versions are invalid",
+            )
+            run_browser_review(
+                config,
+                decision_request_id=decision_id,
+                run_id=run_id,
+                task_id=None,
+                version_id=version_id,
+            )
+
+            def durable_decision_state() -> dict[str, Any]:
+                current_decision = client.get(
+                    f"/api/delivery/decision-requests/{decision_id}"
+                )
+                current_item = _scenario_work_item(
+                    client,
+                    run_id=run_id,
+                    work_item_id=work_item_id,
+                )
+                return {"decision": current_decision, "work_item": current_item}
+
+            durable = _wait_for(
+                durable_decision_state,
+                lambda state: (
+                    (state.get("decision") or {}).get("id") == decision_id
+                    and (state.get("decision") or {}).get("status") == "approved"
+                    and (state.get("decision") or {}).get("selected_option_code")
+                    == "approve_dispatch"
+                    and isinstance(
+                        (state.get("decision") or {}).get("version"),
+                        int,
+                    )
+                    and (state.get("decision") or {}).get("version")
+                    > decision_version
+                    and (state.get("work_item") or {}).get("id") == work_item_id
+                    and (state.get("work_item") or {}).get("status")
+                    in {"ready", "running", "reviewing"}
+                    and isinstance(
+                        (state.get("work_item") or {}).get("version"),
+                        int,
+                    )
+                    and (state.get("work_item") or {}).get("version")
+                    > initial_version
+                ),
+                description="browser high-risk decision becoming durable",
+                timeout_seconds=config.timeout_seconds,
+                secret_values=secrets,
+            )
+            browser_transition_item = dict(durable["work_item"])
+            decided = {
+                "decision_request": durable["decision"],
+                "next_state": "ready",
+            }
+        else:
+            client.login(config.reviewer_username, config.reviewer_password)
+            decided = client.post(
                 f"/api/delivery/decision-requests/{decision_id}/decide",
                 payload,
             )
-            _assert(
-                replay.get("idempotent_replay") is True,
-                "High-risk approval replay was not idempotent",
-            )
+            if scenario == "high-risk-dispatch":
+                replay = client.post(
+                    f"/api/delivery/decision-requests/{decision_id}/decide",
+                    payload,
+                )
+                _assert(
+                    replay.get("idempotent_replay") is True,
+                    "High-risk approval replay was not idempotent",
+                )
         client.login(owner_username, owner_password)
         _assert(
             decided.get("next_state") == "ready",
@@ -973,35 +1161,50 @@ def validate_governance_scenario(
         )
         observed_states.append("ready")
         if scenario == "high-risk-dispatch":
-            running = _wait_for(
+            running = browser_transition_item
+            if running is None or running.get("status") not in {"running", "reviewing"}:
+                running = _wait_for(
+                    lambda: _scenario_work_item(
+                        client,
+                        run_id=run_id,
+                        work_item_id=work_item_id,
+                    ),
+                    lambda item: item.get("status") == "running"
+                    and item.get("active_attempt_count") == 1,
+                    description="approved high-risk work item dispatching exactly once",
+                    timeout_seconds=config.timeout_seconds,
+                    secret_values=secrets,
+                )
+            running_chain = _attempt_chain(running, secret_values=secrets)
+            _assert(
+                len(running_chain) == 1
+                and (
+                    (
+                        running.get("status") == "running"
+                        and running.get("active_attempt_count") == 1
+                    )
+                    or (
+                        running.get("status") == "reviewing"
+                        and running.get("active_attempt_count") == 0
+                    )
+                ),
+                "High-risk approval did not create exactly one attempt",
+            )
+            observed_states[-1] = "running"
+        if browser_transition_item and browser_transition_item.get("status") == "reviewing":
+            final = browser_transition_item
+        else:
+            final = _wait_for(
                 lambda: _scenario_work_item(
                     client,
                     run_id=run_id,
                     work_item_id=work_item_id,
                 ),
-                lambda item: item.get("status") == "running"
-                and item.get("active_attempt_count") == 1,
-                description="approved high-risk work item dispatching exactly once",
+                lambda item: item.get("status") == "reviewing",
+                description=f"{scenario} recovery reaching Review",
                 timeout_seconds=config.timeout_seconds,
                 secret_values=secrets,
             )
-            running_chain = _attempt_chain(running, secret_values=secrets)
-            _assert(
-                len(running_chain) == 1,
-                "High-risk approval did not create exactly one attempt",
-            )
-            observed_states[-1] = "running"
-        final = _wait_for(
-            lambda: _scenario_work_item(
-                client,
-                run_id=run_id,
-                work_item_id=work_item_id,
-            ),
-            lambda item: item.get("status") == "reviewing",
-            description=f"{scenario} recovery reaching Review",
-            timeout_seconds=config.timeout_seconds,
-            secret_values=secrets,
-        )
 
     observed_states.append("reviewing")
     attempt_chain = _attempt_chain(final, secret_values=secrets)
@@ -1040,7 +1243,66 @@ def _approve_item(
     marker: str,
     owner_password: str,
     owner_username: str,
+    review_id: str,
+    run_id: str,
+    task_id: str,
+    version_id: str,
 ) -> dict[str, Any]:
+    if config.review_channel == "browser":
+        review = client.get(f"/api/reviews/{review_id}")
+        review_version = review.get("version")
+        _assert(
+            review.get("id") == review_id
+            and review.get("ai_task_id") == task_id
+            and review.get("status") == "pending"
+            and isinstance(review_version, int)
+            and not isinstance(review_version, bool),
+            "Browser Review target is stale or does not match the current task",
+        )
+        work_item_version = item.get("version")
+        _assert(
+            isinstance(work_item_version, int)
+            and not isinstance(work_item_version, bool),
+            "Browser Review work-item version is invalid",
+        )
+        run_browser_review(
+            config,
+            decision_request_id=None,
+            run_id=run_id,
+            task_id=task_id,
+            version_id=version_id,
+        )
+
+        def durable_review_state() -> dict[str, Any]:
+            current_review = client.get(f"/api/reviews/{review_id}")
+            current_item = _scenario_work_item(
+                client,
+                run_id=run_id,
+                work_item_id=str(item["id"]),
+            )
+            return {"review": current_review, "work_item": current_item}
+
+        durable = _wait_for(
+            durable_review_state,
+            lambda state: (
+                (state.get("review") or {}).get("id") == review_id
+                and (state.get("review") or {}).get("ai_task_id") == task_id
+                and (state.get("review") or {}).get("status") == "approved"
+                and isinstance((state.get("review") or {}).get("version"), int)
+                and (state.get("review") or {}).get("version") > review_version
+                and (state.get("work_item") or {}).get("id") == item["id"]
+                and (state.get("work_item") or {}).get("status")
+                in {"approved", "completed"}
+                and isinstance((state.get("work_item") or {}).get("version"), int)
+                and (state.get("work_item") or {}).get("version") > work_item_version
+            ),
+            description="browser Review becoming durable",
+            timeout_seconds=config.timeout_seconds,
+            secret_values=(owner_password, config.reviewer_password),
+        )
+        client.login(owner_username, owner_password)
+        return dict(durable["work_item"])
+
     reviewer = client.login(config.reviewer_username, config.reviewer_password).get("user") or {}
     _assert(
         str(reviewer.get("username") or "").casefold() == config.reviewer_username.casefold(),
@@ -1329,6 +1591,7 @@ def validate_rd_delivery_e2e(
             owner_password=owner_password,
             owner_username=owner_username,
             run_id=run_id,
+            version_id=version_id,
             work_item_id=implementation_id,
         )
         implementation = _scenario_work_item(
@@ -1387,6 +1650,10 @@ def validate_rd_delivery_e2e(
         marker=marker,
         owner_password=owner_password,
         owner_username=owner_username,
+        review_id=implementation_review_id,
+        run_id=run_id,
+        task_id=implementation_task_id,
+        version_id=version_id,
     )
     dispatched_testing = _wait_for(
         lambda: _item_by_title(_work_items(client, run_id), testing_key),
@@ -1429,6 +1696,10 @@ def validate_rd_delivery_e2e(
         marker=marker,
         owner_password=owner_password,
         owner_username=owner_username,
+        review_id=testing_review_id,
+        run_id=run_id,
+        task_id=testing_task_id,
+        version_id=version_id,
     )
 
     final_run = _wait_for(

@@ -15,7 +15,7 @@ import {
   Typography,
   message,
 } from 'antd';
-import { type Key, useCallback, useEffect, useMemo, useState } from 'react';
+import { type Key, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ManagementBatchResultModal, type ManagementBatchResult } from '../../components/ManagementBatchResultModal';
 import {
@@ -104,6 +104,17 @@ function isV2CollaborationTask(task: TaskCenterTaskRecord) {
   return Boolean(task.collaborationRunId || task.workItemId);
 }
 
+function collaborationWorkItemHref(task: TaskCenterTaskRecord) {
+  if (!task.collaborationRunId) {
+    return undefined;
+  }
+  const params = new URLSearchParams({ run_id: task.collaborationRunId });
+  if (task.workItemId) {
+    params.set('work_item_id', task.workItemId);
+  }
+  return `/delivery/rd-collaboration?${params.toString()}`;
+}
+
 export default function TaskCenterPage() {
   const [editApproveForm] = Form.useForm<EditApproveFormValues>();
   const [rejectReviewForm] = Form.useForm<RejectReviewFormValues>();
@@ -145,6 +156,9 @@ export default function TaskCenterPage() {
     selectedCodeReviewRepository?.provider === 'github' ? 'GitHub PR' : 'GitLab MR';
   const [taskDetailDialog, setTaskDetailDialog] = useState<TaskDetailDialogState>();
   const [agentTakeoverLoading, setAgentTakeoverLoading] = useState(false);
+  const openedTaskDeepLinkIdRef = useRef<string | undefined>(undefined);
+  const approvingReviewIdRef = useRef<string | undefined>(undefined);
+  const [approvingReviewId, setApprovingReviewId] = useState<string>();
   const [actionDialog, setActionDialog] = useState<{
     task: TaskCenterTaskRecord;
   }>();
@@ -189,6 +203,10 @@ export default function TaskCenterPage() {
   });
   const [currentUser, setCurrentUser] = useState<CurrentUserResponse | undefined>(() => getStoredCurrentUser());
   const canOperateTasks = useMemo(() => hasTaskOperationRole(currentUser), [currentUser]);
+  const taskDeepLinkId = useMemo(
+    () => new URLSearchParams(window.location.search).get('task_id')?.trim() || undefined,
+    [],
+  );
   const loadPendingReviews = useCallback(
     () =>
       fetchTaskCenterPendingReviews({
@@ -472,15 +490,30 @@ export default function TaskCenterPage() {
   }, [reloadTaskCenter, selectedBatchRetryableTasks, showTaskBatchResult]);
 
   const handleApproveReview = useCallback(async (review: TaskCenterReviewRecord) => {
+    if (approvingReviewIdRef.current) {
+      return;
+    }
+    approvingReviewIdRef.current = review.id;
+    setApprovingReviewId(review.id);
+    const reviewTask = reviewDialog?.task;
     try {
       await approveTaskCenterReview(review.id, review.version);
       message.success('确认已提交，任务已完成');
       setReviewDialog(undefined);
-      await reloadTaskCenter();
+      const [detail] = await Promise.all([
+        reviewTask ? fetchTaskCenterTaskDetail(reviewTask.id) : Promise.resolve(undefined),
+        reloadTaskCenter(),
+      ]);
+      if (reviewTask && detail) {
+        setTaskDetailDialog({ detail, loading: false, task: reviewTask });
+      }
     } catch (reviewError) {
       message.error(formatMutationError(reviewError));
+    } finally {
+      approvingReviewIdRef.current = undefined;
+      setApprovingReviewId(undefined);
     }
-  }, [reloadTaskCenter]);
+  }, [reloadTaskCenter, reviewDialog?.task]);
 
   const openRequestMoreInfoDialog = useCallback((review: TaskCenterReviewRecord) => {
     requestMoreInfoForm.resetFields();
@@ -786,6 +819,39 @@ export default function TaskCenterPage() {
       message.error(formatMutationError(taskError));
     }
   }, []);
+
+  useEffect(() => {
+    if (
+      !taskDeepLinkId ||
+      taskRowsState.status !== 'ready' ||
+      openedTaskDeepLinkIdRef.current === taskDeepLinkId
+    ) {
+      return;
+    }
+    const task = taskRowsState.rows.find((row) => row.id === taskDeepLinkId);
+    openedTaskDeepLinkIdRef.current = taskDeepLinkId;
+    if (task) {
+      const timer = globalThis.setTimeout(() => void handleOpenTaskDetail(task), 0);
+      return () => globalThis.clearTimeout(timer);
+    }
+    void fetchTaskCenterTaskDetail(taskDeepLinkId)
+      .then((detail) => {
+        setTaskDetailDialog({ detail, loading: false, task: detail });
+      })
+      .catch((taskError: unknown) => {
+        message.error(formatMutationError(taskError));
+      });
+    return undefined;
+  }, [handleOpenTaskDetail, taskDeepLinkId, taskRowsState.rows, taskRowsState.status]);
+
+  const handleOpenTaskPendingReview = useCallback(() => {
+    const dialog = taskDetailDialog;
+    if (!dialog?.detail?.pendingReviewId) {
+      return;
+    }
+    setTaskDetailDialog(undefined);
+    openReviewDialog(dialog.task);
+  }, [openReviewDialog, taskDetailDialog]);
 
   const handleRequestAgentTakeover = useCallback(async () => {
     const task = taskDetailDialog?.task;
@@ -1109,7 +1175,12 @@ export default function TaskCenterPage() {
         render: (_, row) =>
           canOperateTasks ? (
             <Space className="task-review-actions" size={4} wrap={false}>
-              <Button onClick={() => handleApproveReview(row)} type="link">
+              <Button
+                disabled={Boolean(approvingReviewId)}
+                loading={approvingReviewId === row.id}
+                onClick={() => handleApproveReview(row)}
+                type="link"
+              >
                 确认通过
               </Button>
               <Button onClick={() => openEditApproveDialog(row)} type="link">
@@ -1128,6 +1199,7 @@ export default function TaskCenterPage() {
     ],
     [
       canOperateTasks,
+      approvingReviewId,
       handleApproveReview,
       openEditApproveDialog,
       openRejectReviewDialog,
@@ -1395,6 +1467,25 @@ export default function TaskCenterPage() {
                 <Tag>{selectedActionTask.owner}</Tag>
               </Space>
             </div>
+            {isV2CollaborationTask(selectedActionTask) ? (
+              <Alert
+                action={
+                  collaborationWorkItemHref(selectedActionTask) ? (
+                    <Button
+                      href={collaborationWorkItemHref(selectedActionTask)}
+                      size="small"
+                      type="primary"
+                    >
+                      前往研发协同工作项
+                    </Button>
+                  ) : null
+                }
+                description="启动、重试、取消和批量操作由研发协同工作项统一推进。"
+                showIcon
+                title="此任务属于研发协同运行"
+                type="info"
+              />
+            ) : null}
             <div
               aria-label="可执行操作"
               className="task-operation-actions"
@@ -1417,6 +1508,7 @@ export default function TaskCenterPage() {
       <TaskDetailModal
         dialog={taskDetailDialog}
         onClose={() => setTaskDetailDialog(undefined)}
+        onOpenPendingReview={canOperateTasks ? handleOpenTaskPendingReview : undefined}
         onRequestAgentTakeover={handleRequestAgentTakeover}
         takeoverLoading={agentTakeoverLoading}
         taskStatusLabels={taskStatusLabels}

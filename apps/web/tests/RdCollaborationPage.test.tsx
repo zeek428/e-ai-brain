@@ -33,11 +33,12 @@ describe('RdCollaborationPage', () => {
     expect(screen.queryByLabelText('范围版本')).not.toBeInTheDocument();
   });
 
-  it('shows work-item dependencies and resolves a frozen human decision without deployment', async () => {
+  it('shows work-item dependencies and resolves a work-item high-risk decision without deployment', async () => {
     window.history.pushState({}, '', '/delivery/rd-collaboration?run_id=run_001');
     window.localStorage.setItem('ai_brain_access_token', 'token-admin');
     vi.spyOn(message, 'success').mockImplementation(() => null as never);
     const decisionBodies: unknown[] = [];
+    let decisionFetchCount = 0;
     vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (input, init) => {
       const url = new URL(String(input), 'http://localhost');
       const method = init?.method ?? 'GET';
@@ -62,17 +63,29 @@ describe('RdCollaborationPage', () => {
             dependencies: [{ predecessor_work_item_id: 'work_design', status: 'active', successor_work_item_id: 'work_test' }],
             items: [
               { id: 'work_design', status: 'completed', title: '完成技术设计', version: 2 },
-              { id: 'work_test', risk_level: 'medium', status: 'waiting_human', title: '修复测试阻塞', version: 1 },
+              {
+                id: 'work_test',
+                risk_level: 'high',
+                status: 'waiting_human',
+                suspended_decision_request_id: 'decision_001',
+                title: '修复测试阻塞',
+                version: 1,
+              },
             ],
           },
         });
       }
       if (url.pathname === '/api/delivery/decision-requests/decision_001' && method === 'GET') {
+        decisionFetchCount += 1;
         return jsonResponse({
           data: {
             id: 'decision_001',
-            options_json: [{ code: 'continue', label: '批准继续' }],
-            prompt: '测试环境需要人工确认。',
+            decision_type: 'high_risk_ai_dispatch',
+            options_json: [
+              { code: 'approve_dispatch' },
+              { code: 'cancel_work_item' },
+            ],
+            prompt: '高风险 AI 派发需要人工确认。',
             status: 'pending',
             version: 4,
           },
@@ -89,13 +102,21 @@ describe('RdCollaborationPage', () => {
 
     expect(await screen.findByText('完成技术设计')).toBeInTheDocument();
     expect(screen.getByText('前置工作项：完成技术设计')).toBeInTheDocument();
+    expect(screen.getByText('snapshot_001')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '工作项 DAG（1/2）' })).toBeInTheDocument();
     expect(screen.getByText('远程提交后待发布')).toBeInTheDocument();
+    expect(
+      screen.getByText(/此工作台不提供部署操作/),
+    ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '部署' })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('tab', { name: '人工决策' }));
-    fireEvent.click(await screen.findByRole('button', { name: '批准继续' }));
+    expect(await screen.findByText('来源工作项：修复测试阻塞')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'approve_dispatch' })).toBeInTheDocument();
+    expect(decisionFetchCount).toBe(1);
+    fireEvent.click(await screen.findByRole('button', { name: 'approve_dispatch' }));
     await waitFor(() => expect(decisionBodies).toHaveLength(1));
-    expect(decisionBodies[0]).toMatchObject({ selected_option: 'continue', version: 4 });
+    expect(decisionBodies[0]).toMatchObject({ selected_option: 'approve_dispatch', version: 4 });
   });
 
   it('lets an operator resume a cancelled work item as a new rework attempt', async () => {

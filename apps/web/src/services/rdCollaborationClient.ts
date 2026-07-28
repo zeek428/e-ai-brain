@@ -192,6 +192,7 @@ export type RdWorkItem = {
   priority?: string;
   risk_level?: string;
   status: string;
+  suspended_decision_request_id?: string | null;
   title: string;
   version: number;
 };

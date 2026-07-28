@@ -21,6 +21,7 @@
 - 修复钉钉 AI 表格动作在连接未配置 Base ID 时字段不可输入的问题，支持动作级兜底输入并保留连接级自动带出。
 
 ### Changed
+- 研发协同真实 E2E 新增可选 `api|browser` 人工确认通道：受控浏览器脚本通过真实登录页数学安全校验，从迭代版本总览进入指定协同运行，并只对精确匹配、仍待处理且带版本锁的任务 Review 或高风险 `approve_dispatch` 决策执行一次确认；Python 适配器随后以公共 API 轮询 Review、工作项和决策的持久状态。高风险派发决策从对应工作项的挂起决策读取，前端合并去重运行级和工作项级决策并展示来源，选项标签缺失时回退显示冻结 code，生产选项统一为 `approve_dispatch` 与 `cancel_work_item`。研发任务页支持 `task_id` 精确深链、详情内待确认入口、协同工作项跳转，以及来自后端 `created_at/updated_at` 的创建/更新时间；确认后会刷新详情时间，缺失值显示 `-`。v2 任务继续禁止直接启动、重试或取消。浏览器证据只写仓库外目录并脱敏，流程仍停在 `ready_for_release`，不触发部署；帮助中心同步补充任务时间字段说明，无需替换现有真实截图。
 - 修复研发协同编码 Runner 失败回写：当前有效 attempt 的 `failed/dead_letter` 结果会与 AI 任务、attempt、协作事件和审计原子投影为 `rework_required`，同时释放工作项租约；`timed_out` 还会受冻结 `max_iterations` 约束，达到上限后原子创建 `runner_timeout_recovery` 人工决策并暂停为 `waiting_human`，不会无限自动重试。确认重试仅恢复为 `ready`，由 Worker 创建新 attempt；超时配置只能在后续协作代次的统一策略中调整。未改变定时作业或部署行为。
 - Codex Runner 安装包和命令归一化现在强制追加 `exec --disable code_mode_host --ephemeral`：本地执行不会继承桌面端当前会话，只读取冻结工作项输入，也不会留下可被后续任务续接的执行会话；不改变定时作业或部署行为。
 - 研发协同 Runner 现在把冻结工作项的目标、需求摘要、输入/输出契约和验收标准同时写入指令与结构化输入；质量验证任务继承当前 attempt 的不可变标识，仓库白名单可受限覆盖本仓库 `.ai-brain-worktrees` 隔离目录，避免验证失败或迟到结果误投影到旧 attempt。未改变定时作业或部署行为。

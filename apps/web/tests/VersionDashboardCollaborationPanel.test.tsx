@@ -75,7 +75,9 @@ describe('VersionDashboardCollaborationPanel', () => {
     expect(screen.getByText('4 个')).toBeInTheDocument();
     expect(screen.getAllByText('1 个')).toHaveLength(3);
 
-    fireEvent.click(screen.getByRole('button', { name: '继续研发协同' }));
+    const continueButton = screen.getByRole('button', { name: '继续研发协同' });
+    expect(continueButton).toBeEnabled();
+    fireEvent.click(continueButton);
     expect(onAction).toHaveBeenCalledWith({
       label: '继续研发协同',
       runId: 'run_001',

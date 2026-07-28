@@ -1,4 +1,4 @@
-import { Descriptions, Input, Modal, Space, Tabs, Typography } from 'antd';
+import { Button, Descriptions, Input, Modal, Space, Tabs, Typography } from 'antd';
 
 import { AgentLoopTimeline } from '../../../components/AgentLoopTimeline';
 import { ExecutionContextManifest } from '../../../components/ExecutionContextManifest';
@@ -26,6 +26,7 @@ export type TaskDetailDialogState = {
 type TaskDetailModalProps = {
   dialog?: TaskDetailDialogState;
   onClose: () => void;
+  onOpenPendingReview?: () => void;
   onRequestAgentTakeover?: () => Promise<void> | void;
   takeoverLoading?: boolean;
   taskStatusLabels: Record<string, StatusLabel>;
@@ -76,6 +77,7 @@ function hasCodeInspectionContext(input: Record<string, unknown>) {
 export function TaskDetailModal({
   dialog,
   onClose,
+  onOpenPendingReview,
   onRequestAgentTakeover,
   takeoverLoading,
   taskStatusLabels,
@@ -98,6 +100,8 @@ export function TaskDetailModal({
           />
         </Descriptions.Item>
         <Descriptions.Item label="当前步骤">{detail.currentStep}</Descriptions.Item>
+        <Descriptions.Item label="创建时间">{detail.createdAt}</Descriptions.Item>
+        <Descriptions.Item label="更新时间">{detail.updatedAt}</Descriptions.Item>
         <Descriptions.Item label="产品">{detail.productName}</Descriptions.Item>
         <Descriptions.Item label="版本">{detail.versionName}</Descriptions.Item>
         <Descriptions.Item label="模块">{detail.moduleName}</Descriptions.Item>
@@ -105,6 +109,20 @@ export function TaskDetailModal({
         <Descriptions.Item label="待确认">{detail.pendingReviewId ?? '-'}</Descriptions.Item>
         <Descriptions.Item label="Graph Runs">{detail.graphRunIds.join(', ') || '-'}</Descriptions.Item>
       </Descriptions>
+      {detail.pendingReviewId && onOpenPendingReview ? (
+        <section className="task-detail-output-section" data-testid="task-detail-pending-review-actions">
+          <div className="task-detail-output-header">
+            <Text strong>人工评审确认</Text>
+            <Text type="secondary">先核对 AI 输出，再选择通过、修改后通过、拒绝或要求补充</Text>
+          </div>
+          <Space wrap>
+            <Text type="secondary">确认编号：{detail.pendingReviewId}</Text>
+            <Button onClick={onOpenPendingReview} type="primary">
+              处理待确认
+            </Button>
+          </Space>
+        </section>
+      ) : null}
       {showCodeInspectionContext ? (
         <section className="task-detail-output-section" data-testid="task-code-inspection-context">
           <div className="task-detail-output-header">

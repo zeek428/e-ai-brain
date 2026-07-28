@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Descriptions, message, Spin, Tabs, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Descriptions, message, Space, Spin, Tabs, Tag, Typography } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
@@ -60,6 +60,25 @@ export default function RdCollaborationPage() {
     () => items.filter((item) => item.status === 'completed').length,
     [items],
   );
+
+  const suspendedDecisions = useMemo(() => {
+    const decisions = new Map<string, { id: string; sourceWorkItemTitles: string[] }>();
+    const addDecision = (decisionRequestId?: string | null, sourceWorkItemTitle?: string) => {
+      const id = decisionRequestId?.trim();
+      if (!id) {
+        return;
+      }
+      const decision = decisions.get(id) ?? { id, sourceWorkItemTitles: [] };
+      if (sourceWorkItemTitle && !decision.sourceWorkItemTitles.includes(sourceWorkItemTitle)) {
+        decision.sourceWorkItemTitles.push(sourceWorkItemTitle);
+      }
+      decisions.set(id, decision);
+    };
+
+    addDecision(run?.suspended_decision_request_id);
+    items.forEach((item) => addDecision(item.suspended_decision_request_id, item.title));
+    return Array.from(decisions.values());
+  }, [items, run?.suspended_decision_request_id]);
 
   const resumeCancelledWorkItem = useCallback(async (item: RdWorkItem) => {
     setResumingWorkItemId(item.id);
@@ -131,7 +150,25 @@ export default function RdCollaborationPage() {
                     {
                       key: 'decision',
                       label: '人工决策',
-                      children: <DecisionPanel decisionRequestId={run.suspended_decision_request_id} onDecided={() => void reload()} />,
+                      children: suspendedDecisions.length ? (
+                        <Space orientation="vertical" size={12} style={{ width: '100%' }}>
+                          {suspendedDecisions.map((decision) => (
+                            <section key={decision.id}>
+                              {decision.sourceWorkItemTitles.length ? (
+                                <Typography.Text type="secondary">
+                                  来源工作项：{decision.sourceWorkItemTitles.join('、')}
+                                </Typography.Text>
+                              ) : null}
+                              <DecisionPanel
+                                decisionRequestId={decision.id}
+                                onDecided={() => void reload()}
+                              />
+                            </section>
+                          ))}
+                        </Space>
+                      ) : (
+                        <DecisionPanel onDecided={() => void reload()} />
+                      ),
                     },
                   ]}
                 />

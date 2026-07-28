@@ -1416,7 +1416,11 @@ describe('IterationVersionsPage', () => {
     expect(await screen.findByText('版本总览 · 2026-dashboard')).toBeInTheDocument();
     expect(screen.getAllByText('研发协同').length).toBeGreaterThan(0);
     expect(screen.getAllByText('开发员工、测试员工').length).toBeGreaterThan(0);
-    expect(screen.getAllByRole('button', { name: '继续研发协同' }).length).toBeGreaterThan(0);
+    const continueButtons = screen.getAllByRole('button', { name: '继续研发协同' });
+    expect(continueButtons.length).toBeGreaterThan(0);
+    for (const button of continueButtons) {
+      expect(button).toBeEnabled();
+    }
     expect(screen.getByText('下一步行动')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /推进到测试中/ }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole('button', { name: /查看需求/ }).length).toBeGreaterThan(0);

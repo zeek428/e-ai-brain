@@ -148,6 +148,7 @@ export type TaskCenterTaskDetailRecord = TaskCenterTaskRecord & {
   productName: string;
   qualityGate?: Record<string, unknown>;
   requirementTitle: string;
+  updatedAt: string;
   versionName: string;
 };
 
@@ -453,8 +454,8 @@ export async function fetchTaskCenterTaskDetail(
 
   return {
     agentLoop: normalizeObjectRecord(detail.agent_loop),
-    createdAt: formatListDate(detail.created_at ?? detail.updated_at),
-    createdAtValue: detail.created_at ?? detail.updated_at,
+    createdAt: formatListDate(detail.created_at),
+    createdAtValue: detail.created_at,
     currentStep: formatUnknownValue(detail.current_step),
     executionContextManifest: normalizeObjectRecord(detail.execution_context_manifest),
     graphRunIds,
@@ -479,6 +480,7 @@ export async function fetchTaskCenterTaskDetail(
     ),
     status: detail.status ?? '-',
     type: detail.task_type ?? '-',
+    updatedAt: formatListDate(detail.updated_at),
     versionName: formatUnknownValue(version.name ?? version.code ?? detail.version_id),
   };
 }
