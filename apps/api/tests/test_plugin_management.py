@@ -1,5 +1,7 @@
 import base64
+import hashlib
 import json
+import subprocess
 import sys
 import zipfile
 from copy import deepcopy
@@ -3760,7 +3762,18 @@ def test_ai_executor_runner_agent_executes_configured_command_with_stdin(
     assert "runner-probe-started" in complete_payload["result_json"]["output_preview"]
     assert complete_payload["result_json"]["workspace_root"] == str(tmp_path)
     proof = complete_payload["result_json"]["execution_attestation"]
-    assert proof["payload"] == {"runner_task_id": "runner_task_probe"}
+    unsigned_result = {
+        key: value
+        for key, value in complete_payload["result_json"].items()
+        if key != "execution_attestation"
+    }
+    assert proof["payload"] == {
+        "result_sha256": hashlib.sha256(
+            namespace["_canonical_attestation_payload"](unsigned_result)
+        ).hexdigest(),
+        "runner_task_id": "runner_task_probe",
+        "status": "succeeded",
+    }
     Ed25519PublicKey.from_public_bytes(
         base64.b64decode(namespace["_attestation_public_key"]()),
     ).verify(
@@ -3854,6 +3867,342 @@ def test_ai_executor_runner_agent_executes_configured_command_with_stdin(
     approved_payload = approved_complete_requests[0]["payload"]
     assert approved_payload["status"] == "succeeded"
     assert approved_payload["error_code"] is None
+
+
+def test_ai_executor_runner_grants_codex_linked_worktree_git_metadata_access(
+    tmp_path,
+    monkeypatch,
+):
+    """A Codex task in a linked worktree must be able to create Git metadata locks."""
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    primary_repository = tmp_path / "primary-repository"
+    primary_repository.mkdir()
+    subprocess.run(
+        ["git", "init", str(primary_repository)], check=True, capture_output=True, text=True
+    )
+    subprocess.run(
+        ["git", "-C", str(primary_repository), "config", "user.email", "runner@example.com"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(primary_repository), "config", "user.name", "Runner Test"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    (primary_repository / "README.md").write_text("runner fixture\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(primary_repository), "add", "README.md"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(primary_repository), "commit", "-m", "runner fixture"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    repository = tmp_path / "repository"
+    subprocess.run(
+        ["git", "-C", str(primary_repository), "worktree", "add", str(repository)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    captured_args = tmp_path / "codex-args.json"
+    fake_codex = tmp_path / "codex"
+    fake_codex.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "import json",
+                "import os",
+                "import sys",
+                "from pathlib import Path",
+                "Path(os.environ['AI_BRAIN_TEST_CODEX_ARGS']).write_text(",
+                "    json.dumps(sys.argv[1:]), encoding='utf-8'",
+                ")",
+                "print('codex-args-captured')",
+            ],
+        ),
+        encoding="utf-8",
+    )
+    fake_codex.chmod(0o755)
+    created_runner = client.post(
+        "/api/system/ai-executor-runners",
+        json={
+            "endpoint_url": "http://127.0.0.1:8000/api/system/ai-executor-runners",
+            "executor_types": ["codex"],
+            "metadata": {"executor_commands": {"codex": f'"{fake_codex}" exec'}},
+            "name": "Codex worktree metadata runner",
+            "protocol": "runner_polling",
+            "runner_token": "runner-secret",
+            "workspace_roots": [str(repository)],
+        },
+        headers=admin_headers,
+    )
+    assert created_runner.status_code == 200
+    runner = created_runner.json()["data"]
+    package_response = client.get(
+        f"/api/system/ai-executor-runners/{runner['id']}/install-package"
+        "?target_os=manual&arch=universal&install_mode=manual",
+        headers=admin_headers,
+    )
+    assert package_response.status_code == 200
+    with zipfile.ZipFile(BytesIO(package_response.content)) as archive:
+        runner_agent_text = archive.read("runner_agent.py").decode("utf-8")
+        runner_config_text = archive.read("runner_config.json").decode("utf-8")
+
+    config_path = tmp_path / "runner_config.json"
+    config_path.write_text(runner_config_text, encoding="utf-8")
+    monkeypatch.setenv("AI_BRAIN_RUNNER_ID", runner["id"])
+    monkeypatch.setenv("AI_BRAIN_RUNNER_TOKEN", "runner-secret")
+    monkeypatch.setenv(
+        "AI_BRAIN_ENDPOINT",
+        "http://127.0.0.1:8000/api/system/ai-executor-runners",
+    )
+    monkeypatch.setenv("AI_BRAIN_RUNNER_CONFIG", str(config_path))
+    monkeypatch.setenv("AI_BRAIN_BYPASS_PROXY", "1")
+    monkeypatch.setenv("AI_BRAIN_TEST_CODEX_ARGS", str(captured_args))
+    namespace: dict[str, object] = {"__name__": "ai_brain_codex_worktree_runner"}
+    exec(compile(runner_agent_text, "runner_agent.py", "exec"), namespace)
+
+    complete_payloads: list[dict] = []
+
+    def fake_request_json(
+        method: str,
+        url: str,
+        payload: dict | None = None,
+        *,
+        timeout_seconds: int | None = None,
+    ) -> dict:
+        if url.endswith("/complete"):
+            complete_payloads.append(payload or {})
+        return {"data": {"task": {"status": "running"}}}
+
+    namespace["_request_json"] = fake_request_json
+    namespace["_run_task"](
+        {
+            "executor_type": "codex",
+            "id": "runner_task_codex_git_metadata",
+            "instruction": "create a commit for this isolated worktree",
+            "request_config": {},
+            "timeout_seconds": 5,
+            "workspace_root": str(repository),
+        },
+    )
+
+    assert len(complete_payloads) == 1
+    result_json = complete_payloads[0]["result_json"]
+    isolation = result_json["workspace_isolation"]
+    worktree_path = isolation["worktree_path"]
+    worktree_git_file = (
+        tmp_path
+        / ".ai-brain-worktrees"
+        / repository.name
+        / "runner_task_codex_git_metadata"
+        / ".git"
+    )
+    gitdir_line = worktree_git_file.read_text(encoding="utf-8")
+    worktree_git_dir = gitdir_line.removeprefix("gitdir: ").strip()
+    common_git_dir = str(primary_repository / ".git")
+    try:
+        args = json.loads(captured_args.read_text(encoding="utf-8"))
+        add_dirs = [
+            args[index + 1]
+            for index, value in enumerate(args[:-1])
+            if value == "--add-dir"
+        ]
+
+        assert result_json["execution_workspace_root"] == worktree_path
+        assert add_dirs == [worktree_git_dir, common_git_dir]
+    finally:
+        namespace["_discard_isolated_workspace"](isolation)
+
+
+def test_ai_executor_runner_verifies_frozen_file_contains_acceptance_case(
+    tmp_path,
+    monkeypatch,
+):
+    """The independent Runner must emit evidence for frozen acceptance checks."""
+    app.state.store.reset()
+    admin_headers = auth_headers()
+    repository = tmp_path / "repository"
+    artifact = repository / "docs" / "e2e" / "delivery.md"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("delivery\nACCEPTANCE-MARKER\n", encoding="utf-8")
+    subprocess.run(["git", "init", str(repository)], check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "runner@example.com"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.name", "Runner Test"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repository), "add", "docs/e2e/delivery.md"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repository), "commit", "-m", "acceptance fixture"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    created_runner = client.post(
+        "/api/system/ai-executor-runners",
+        json={
+            "endpoint_url": "http://127.0.0.1:8000/api/system/ai-executor-runners",
+            "executor_types": ["codex"],
+            "name": "Acceptance verification runner",
+            "protocol": "runner_polling",
+            "runner_token": "runner-secret",
+            "workspace_roots": [str(repository)],
+        },
+        headers=admin_headers,
+    )
+    assert created_runner.status_code == 200
+    runner = created_runner.json()["data"]
+    package_response = client.get(
+        f"/api/system/ai-executor-runners/{runner['id']}/install-package"
+        "?target_os=manual&arch=universal&install_mode=manual",
+        headers=admin_headers,
+    )
+    assert package_response.status_code == 200
+    with zipfile.ZipFile(BytesIO(package_response.content)) as archive:
+        runner_agent_text = archive.read("runner_agent.py").decode("utf-8")
+        runner_config_text = archive.read("runner_config.json").decode("utf-8")
+
+    config_path = tmp_path / "runner_config.json"
+    config_path.write_text(runner_config_text, encoding="utf-8")
+    monkeypatch.setenv("AI_BRAIN_RUNNER_ID", runner["id"])
+    monkeypatch.setenv("AI_BRAIN_RUNNER_TOKEN", "runner-secret")
+    monkeypatch.setenv(
+        "AI_BRAIN_ENDPOINT",
+        "http://127.0.0.1:8000/api/system/ai-executor-runners",
+    )
+    monkeypatch.setenv("AI_BRAIN_RUNNER_CONFIG", str(config_path))
+    monkeypatch.setenv("AI_BRAIN_BYPASS_PROXY", "1")
+    namespace: dict[str, object] = {"__name__": "ai_brain_acceptance_quality_runner"}
+    exec(compile(runner_agent_text, "runner_agent.py", "exec"), namespace)
+
+    completed: list[dict] = []
+
+    def fake_request_json(
+        method: str,
+        url: str,
+        payload: dict | None = None,
+        *,
+        timeout_seconds: int | None = None,
+    ) -> dict:
+        if url.endswith("/complete"):
+            completed.append(payload or {})
+        return {"data": {"task": {"status": "running"}}}
+
+    namespace["_request_json"] = fake_request_json
+    namespace["_run_quality_gate_task"](
+        {
+            "id": "runner_task_quality_acceptance",
+            "input_payload": {
+                "acceptance_cases": [
+                    {
+                        "case_id": "acceptance_case_001",
+                        "verification": {
+                            "path": "docs/e2e/delivery.md",
+                            "required_text": ["ACCEPTANCE-MARKER"],
+                            "type": "file_contains",
+                        },
+                    }
+                ],
+                "checks": [{"catalog_code": "", "required": True, "type": "secret_scan"}],
+            },
+            "timeout_seconds": 5,
+            "workspace_root": str(repository),
+        }
+    )
+
+    assert len(completed) == 1
+    assert completed[0]["status"] == "succeeded"
+    acceptance_results = completed[0]["result_json"]["acceptance_results"]
+    assert acceptance_results[0]["case_id"] == "acceptance_case_001"
+    assert acceptance_results[0]["status"] == "passed"
+    assert acceptance_results[0]["artifact_ref"].startswith(
+        f"runner://{runner['id']}/runner_task_quality_acceptance/acceptance:"
+    )
+    assert acceptance_results[0]["commit_sha"]
+
+    artifact.write_text("delivery\nUNCOMMITTED-MARKER\n", encoding="utf-8")
+    namespace["_run_quality_gate_task"](
+        {
+            "id": "runner_task_quality_uncommitted_acceptance",
+            "input_payload": {
+                "acceptance_cases": [
+                    {
+                        "case_id": "acceptance_case_002",
+                        "verification": {
+                            "path": "docs/e2e/delivery.md",
+                            "required_text": ["UNCOMMITTED-MARKER"],
+                            "type": "file_contains",
+                        },
+                    }
+                ],
+                "checks": [{"catalog_code": "", "required": True, "type": "secret_scan"}],
+            },
+            "timeout_seconds": 5,
+            "workspace_root": str(repository),
+        }
+    )
+
+    uncommitted_results = completed[1]["result_json"]["acceptance_results"]
+    assert uncommitted_results[0]["status"] == "failed"
+    assert uncommitted_results[0]["commit_sha"] == acceptance_results[0]["commit_sha"]
+
+
+def test_acceptance_case_validation_returns_a_client_error() -> None:
+    app.state.store.reset()
+    app.state.store.products["product_acceptance"] = {"id": "product_acceptance"}
+    app.state.store.requirements["requirement_acceptance"] = {
+        "id": "requirement_acceptance",
+        "product_id": "product_acceptance",
+    }
+    headers = auth_headers()
+    plan_response = client.post(
+        "/api/requirements/requirement_acceptance/acceptance-test-plans",
+        json={"product_id": "product_acceptance", "title": "验收计划"},
+        headers=headers,
+    )
+    assert plan_response.status_code == 200
+    plan_id = plan_response.json()["data"]["id"]
+
+    invalid = client.post(
+        f"/api/acceptance-test-plans/{plan_id}/cases",
+        json={
+            "case_code": "acceptance.invalid_path",
+            "criterion": "验证文件路径",
+            "title": "非法文件路径",
+            "verification": {
+                "path": "../outside.txt",
+                "required_text": ["marker"],
+                "type": "file_contains",
+            },
+        },
+        headers=headers,
+    )
+
+    assert invalid.status_code == 400
+    assert invalid.json()["detail"]["code"] == "VALIDATION_ERROR"
 
 
 def test_ai_executor_runner_token_rotation_logs_cancel_and_timeout_controls():

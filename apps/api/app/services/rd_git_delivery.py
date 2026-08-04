@@ -17,6 +17,7 @@ from typing import Any
 
 from app.api.deps import api_error
 from app.services.operational_records import read_memory_dict
+from app.services.rd_git_branches import rd_work_item_branch_name
 
 DELIVERY_RECORD_TYPE = "rd_git_delivery"
 RECONCILIATION_RECORD_TYPE = "rd_git_delivery_reconciliation"
@@ -36,7 +37,9 @@ _PUBLIC_TEST_EVIDENCE_INTEGER_KEYS = {
 }
 _PUBLIC_TEST_EVIDENCE_MAX_INTEGER = 2_147_483_647
 _PUBLIC_TEST_EVIDENCE_STATUSES = {"failed", "passed", "skipped"}
-_PUBLIC_TEST_EVIDENCE_SUITE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}")
+_PUBLIC_TEST_EVIDENCE_SUITE_PATTERN = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9 ._+:/-]{0,127}"
+)
 
 
 def _now() -> str:
@@ -404,6 +407,113 @@ def _delivery_outbox(store: Any, *, delivery: dict[str, Any]) -> dict[str, Any]:
     return event
 
 
+def _git_push_instruction(delivery: dict[str, Any]) -> str:
+    return (
+        "Run git push for the already-created frozen local commit to the configured "
+        "remote repository. Do not amend, reset, rebase, merge, deploy, or report a "
+        "remote SHA as trusted evidence. "
+        f"Commit: {delivery['local_commit_sha']}; branch: {delivery['working_branch']}."
+    )
+
+
+def _git_push_approval_request_id(delivery_id: str) -> str:
+    digest = hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()[:32]
+    return f"rd-git-push-approval:{digest}"
+
+
+def _git_push_approval_request(
+    store: Any,
+    *,
+    delivery: dict[str, Any],
+    source: dict[str, Any],
+) -> dict[str, Any]:
+    approval_request_id = _git_push_approval_request_id(str(delivery["id"]))
+    repository = _repository(store)
+    get_request = getattr(repository, "get_ai_executor_approval_request", None)
+    existing = get_request(approval_request_id) if callable(get_request) else None
+    if existing is None:
+        existing = read_memory_dict(store, "ai_executor_approval_requests").get(
+            approval_request_id
+        )
+    if isinstance(existing, dict):
+        return dict(existing)
+    from app.services.ai_executor_runner_approvals import (
+        save_pending_ai_executor_approval_request,
+    )
+    from app.services.ai_executor_runner_safety import runner_task_safety_snapshot
+
+    instruction = _git_push_instruction(delivery)
+    safety = runner_task_safety_snapshot(instruction=instruction, request_config={})
+    snapshot = {
+        **dict(safety.get("approval_request") or {}),
+        "ai_task_id": source.get("ai_task_id"),
+        "approval_request_id": approval_request_id,
+        "executor_type": source.get("executor_type"),
+        "rd_git_delivery_id": delivery["id"],
+        "runner_id": source.get("runner_id"),
+        "source": "rd_git_delivery",
+        "workspace_root": source.get("workspace_root"),
+    }
+    return save_pending_ai_executor_approval_request(
+        store,
+        approval_request=snapshot,
+        requested_by=str(source.get("created_by") or "system"),
+        safety_snapshot=safety,
+    )
+
+
+def requeue_git_delivery_after_approval(
+    store: Any,
+    *,
+    approval_request: dict[str, Any],
+) -> int:
+    snapshot = (
+        approval_request.get("approval_request")
+        if isinstance(approval_request.get("approval_request"), dict)
+        else {}
+    )
+    if snapshot.get("source") != "rd_git_delivery" or approval_request.get(
+        "status"
+    ) != "approved":
+        return 0
+    delivery_id = str(snapshot.get("rd_git_delivery_id") or "")
+    if not delivery_id:
+        return 0
+    repository = _repository(store)
+    list_events = getattr(repository, "list_execution_outbox_events", None)
+    events = (
+        list_events(aggregate_id=delivery_id, aggregate_type="rd_git_delivery", status=None)
+        if callable(list_events)
+        else [
+            event
+            for event in read_memory_dict(store, "execution_outbox_events").values()
+            if event.get("aggregate_type") == "rd_git_delivery"
+            and event.get("aggregate_id") == delivery_id
+        ]
+    )
+    count = 0
+    for candidate in events:
+        event = dict(candidate)
+        if event.get("event_type") != "rd.git_delivery.push_requested" or event.get(
+            "status"
+        ) in {"completed", "cancelled"}:
+            continue
+        event.update(
+            {
+                "attempt_count": 0,
+                "available_at": _now(),
+                "last_error": None,
+                "lease_owner": None,
+                "lease_until": None,
+                "status": "pending",
+                "updated_at": _now(),
+            }
+        )
+        _save_outbox(store, event)
+        count += 1
+    return count
+
+
 def _reconciliation_for_delivery(
     store: Any,
     *,
@@ -717,7 +827,7 @@ def record_version_git_delivery_from_runner(
             "RD_DELIVERY_EVIDENCE_MISMATCH",
             "Frozen delivery repository is not configured for the product version",
         )
-    working_branch = f"rd/{run_id}/{work_item_id}"
+    working_branch = rd_work_item_branch_name(run_id, work_item_id)
     if str(reported.get("working_branch") or "") != working_branch:
         raise api_error(
             409,
@@ -981,6 +1091,26 @@ def dispatch_rd_git_delivery_push_from_outbox(
             "RD_DELIVERY_EVIDENCE_INCOMPLETE",
             "Frozen source Runner task is unavailable for the Git push",
         )
+    approval = (
+        dict(delivery.get("push_approval") or {})
+        if isinstance(delivery.get("push_approval"), dict)
+        else {}
+    )
+    if not approval.get("approved"):
+        approval_request = _git_push_approval_request(
+            store,
+            delivery=delivery,
+            source=source,
+        )
+        if approval_request.get("status") != "approved" or not isinstance(
+            approval_request.get("approval"), dict
+        ):
+            return {
+                "approval_request": approval_request,
+                "delivery": _materialize_delivery(store, delivery),
+                "waiting_human": True,
+            }
+        approval = dict(approval_request["approval"])
     idempotency_key = f"rd-git-push:{delivery_id}"
     existing = next(
         (
@@ -1011,14 +1141,11 @@ def dispatch_rd_git_delivery_push_from_outbox(
             "workspace_root": workspace_root,
         },
         instruction=(
-            "Run git push for the already-created frozen local commit to the configured "
-            "remote repository. Do not amend, reset, rebase, merge, deploy, or report a "
-            "remote SHA as trusted evidence. "
-            f"Commit: {delivery['local_commit_sha']}; branch: {delivery['working_branch']}."
+            _git_push_instruction(delivery)
         ),
         plugin_invocation_log_id=None,
         request_config={
-            "ai_executor_approval": delivery.get("push_approval") or {},
+            "ai_executor_approval": approval,
             "outbox_idempotency_key": idempotency_key,
             "rd_git_delivery_id": delivery_id,
             "source_runner_task_id": source_runner_task_id,
@@ -1053,13 +1180,22 @@ def _evidence_is_fresh(run: dict[str, Any], delivery: dict[str, Any]) -> bool:
 
 
 def _assert_trusted_delivery_evidence(store: Any, *, run: dict[str, Any]) -> list[dict[str, Any]]:
-    deliveries = [
+    all_deliveries = [
         _materialize_delivery(store, record)
         for record in _records(
             store, record_type=DELIVERY_RECORD_TYPE, collection="rd_git_deliveries"
         )
         if record.get("collaboration_run_id") == run["id"]
     ]
+    canonical: dict[str, dict[str, Any]] = {}
+    for delivery in all_deliveries:
+        work_item_id = str(delivery.get("work_item_id") or "")
+        current = canonical.get(work_item_id)
+        if current is None or (
+            str(delivery.get("created_at") or ""), str(delivery.get("id") or "")
+        ) > (str(current.get("created_at") or ""), str(current.get("id") or "")):
+            canonical[work_item_id] = delivery
+    deliveries = list(canonical.values())
     coding = [
         record for record in deliveries if record.get("work_item_type") in _CODING_WORK_ITEM_TYPES
     ]
@@ -1107,6 +1243,114 @@ def _assert_trusted_delivery_evidence(store: Any, *, run: dict[str, Any]) -> lis
             "A passed version-level integration test is required",
         )
     return deliveries
+
+
+def reconcile_rd_git_delivery_control_plane(store: Any) -> dict[str, int]:
+    """Recover post-commit delivery projection and retry only canonical outboxes."""
+    repository = _repository(store)
+    list_tasks = getattr(repository, "list_ai_executor_tasks", None)
+    tasks = (
+        [dict(task) for task in list_tasks()]
+        if callable(list_tasks)
+        else [
+            dict(task)
+            for task in read_memory_dict(store, "ai_executor_tasks").values()
+        ]
+    )
+    load_ai_tasks = getattr(repository, "load_ai_tasks", None)
+    loaded_ai_tasks = (
+        load_ai_tasks()
+        if callable(load_ai_tasks)
+        else read_memory_dict(store, "ai_tasks")
+    )
+    ai_tasks = (
+        loaded_ai_tasks.get("ai_tasks", {})
+        if isinstance(loaded_ai_tasks, dict)
+        and isinstance(loaded_ai_tasks.get("ai_tasks"), dict)
+        else loaded_ai_tasks
+    )
+    deliveries = _records(
+        store,
+        record_type=DELIVERY_RECORD_TYPE,
+        collection="rd_git_deliveries",
+    )
+    source_task_ids = {
+        str(delivery.get("source_runner_task_id") or "") for delivery in deliveries
+    }
+    delivery_count = 0
+    for task in tasks:
+        if (
+            task.get("task_kind") not in {None, "", "coding"}
+            or task.get("status") != "succeeded"
+            or str(task.get("id") or "") in source_task_ids
+        ):
+            continue
+        ai_task = ai_tasks.get(str(task.get("ai_task_id") or ""))
+        if (
+            not isinstance(ai_task, dict)
+            or ai_task.get("status") != "completed"
+            or not ai_task.get("collaboration_run_id")
+        ):
+            continue
+        work_item_id = str(ai_task.get("work_item_id") or "")
+        if not work_item_id:
+            continue
+        try:
+            work_item = _work_item(store, work_item_id)
+        except Exception:  # noqa: BLE001 - stale task without a current aggregate.
+            continue
+        if work_item.get("ai_task_id") and work_item.get("ai_task_id") != ai_task.get("id"):
+            continue
+        try:
+            recorded = record_version_git_delivery_from_runner(
+                store,
+                ai_task=dict(ai_task),
+                runner_task=task,
+            )
+        except Exception:  # noqa: BLE001 - isolate stale historical task evidence.
+            continue
+        if recorded is not None:
+            delivery_count += 1
+    deliveries = _records(
+        store,
+        record_type=DELIVERY_RECORD_TYPE,
+        collection="rd_git_deliveries",
+    )
+    latest: dict[tuple[str, str], dict[str, Any]] = {}
+    for delivery in deliveries:
+        key = (
+            str(delivery.get("collaboration_run_id") or ""),
+            str(delivery.get("work_item_id") or ""),
+        )
+        current = latest.get(key)
+        if current is None or (
+            str(delivery.get("created_at") or ""), str(delivery.get("id") or "")
+        ) > (str(current.get("created_at") or ""), str(current.get("id") or "")):
+            latest[key] = delivery
+    outbox_requeue_count = 0
+    for delivery in latest.values():
+        if _reconciliation_for_delivery(store, delivery_id=str(delivery["id"])) is not None:
+            continue
+        outbox = _outbox_event(store, str(delivery.get("outbox_event_id") or ""))
+        if outbox is None or outbox.get("status") not in {"failed", "dead_letter"}:
+            continue
+        outbox.update(
+            {
+                "attempt_count": 0,
+                "available_at": _now(),
+                "last_error": None,
+                "lease_owner": None,
+                "lease_until": None,
+                "status": "pending",
+                "updated_at": _now(),
+            }
+        )
+        _save_outbox(store, outbox)
+        outbox_requeue_count += 1
+    return {
+        "delivery_count": delivery_count,
+        "outbox_requeue_count": outbox_requeue_count,
+    }
 
 
 def _delivery_evidence_chain(deliveries: list[dict[str, Any]]) -> list[dict[str, Any]]:

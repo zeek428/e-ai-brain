@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from types import SimpleNamespace
 from typing import Any
 
 from fastapi import Request
-from psycopg import Error as PsycopgError
 
 from app.api.deps import api_error
 from app.services.model_gateway import call_model_gateway_for_task
@@ -15,7 +13,7 @@ from app.services.model_gateway_config_context import model_gateway_source_store
 def execute_assessment_gateway_task(
     *,
     authenticate_runner: Callable[..., Any],
-    complete_task: Callable[..., dict[str, Any]],
+    complete_assessment: Callable[..., dict[str, Any]],
     current_store: Any,
     request: Request,
     runner_id: str,
@@ -42,11 +40,6 @@ def execute_assessment_gateway_task(
             "Assessment runner task is missing frozen execution provenance",
         )
     repository = getattr(current_store, "repository", None)
-    save_invocation = getattr(repository, "save_assessment_model_invocation", None)
-    if not callable(save_invocation):
-        raise api_error(
-            503, "REPOSITORY_REQUIRED", "Assessment invocation repository is unavailable"
-        )
     requirements = getattr(repository, "load_requirements", lambda: {"requirements": {}})()
     requirement = (requirements.get("requirements") or {}).get(payload.get("requirement_id"))
     if not isinstance(requirement, dict):
@@ -66,34 +59,27 @@ def execute_assessment_gateway_task(
         "product_context": {"product_id": requirement.get("product_id")},
         "requirement_snapshot": requirement,
     }
+    get_existing_invocation = getattr(
+        repository,
+        "get_assessment_model_invocation_for_execution",
+        None,
+    )
+    existing_invocation = (
+        get_existing_invocation(execution_id) if callable(get_existing_invocation) else None
+    )
+    if isinstance(existing_invocation, dict):
+        return complete_assessment(
+            current_store=current_store,
+            model_invocation_id=existing_invocation.get("id"),
+            runner_id=runner_id,
+            task=task,
+        )
     gateway_store = model_gateway_source_store(repository)
     output, model_log = call_model_gateway_for_task(gateway_store, task=gateway_task)
-    try:
-        invocation = save_invocation(
-            task=gateway_task,
-            execution_id=execution_id,
-            model_log=model_log,
-            output=output,
-        )
-    except PsycopgError:
-        raise
-    except Exception as exc:
-        raise api_error(
-            409,
-            "ASSESSMENT_MODEL_INVOCATION_INVALID",
-            "Assessment gateway invocation could not be frozen",
-        ) from exc
-    completed = complete_task(
+    return complete_assessment(
         current_store=current_store,
-        payload=SimpleNamespace(
-            error_code=None,
-            error_message=None,
-            logs=[{"event": "model_gateway_completed", "model_invocation_id": invocation["id"]}],
-            result_json={"model_invocation_id": invocation["id"]},
-            runner_id=runner_id,
-            status="succeeded",
-        ),
-        request=request,
-        task_id=task_id,
+        model_log=model_log,
+        output=output,
+        runner_id=runner_id,
+        task=task,
     )
-    return {**completed, "model_invocation_id": invocation["id"]}

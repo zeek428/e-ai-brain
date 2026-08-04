@@ -763,6 +763,30 @@ def project_work_item_quality_gate_result(
         raise api_error(409, "RD_WORK_ITEM_NOT_READY", "Quality gate has no immutable identity")
     gate_status = str(quality_gate_run.get("status") or "failed")
     event_key = f"work-item-quality-gate:{item['id']}:{attempt['id']}:{gate_id}"
+    projected_gate = (
+        (attempt.get("result_json") or {}).get("quality_gate")
+        if isinstance(attempt.get("result_json"), dict)
+        else None
+    )
+    if (
+        gate_status == "passed"
+        and item.get("status") == "reviewing"
+        and attempt.get("status") == "completed"
+        and isinstance(projected_gate, dict)
+        and str(projected_gate.get("id") or "") == gate_id
+    ):
+        existing_event = _existing_event(
+            current_store,
+            collaboration_run_id=str(task["collaboration_run_id"]),
+            event_key=event_key,
+        )
+        return {
+            "attempt": deepcopy(attempt),
+            "event": deepcopy(existing_event) if existing_event is not None else None,
+            "idempotent_replay": True,
+            "next_state": "reviewing",
+            "work_item": deepcopy(item),
+        }
     terminal_attempt_states = {
         "cancelled",
         "expired",

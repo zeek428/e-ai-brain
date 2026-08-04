@@ -779,6 +779,12 @@ class HappyPathClient(PreflightClient):
                 "revision": 1,
                 **payload,
             }
+        if path == "/api/requirements/requirement-e2e/acceptance-test-plans":
+            return {"id": "acceptance-plan-e2e", **payload}
+        if path == "/api/acceptance-test-plans/acceptance-plan-e2e/cases":
+            return {"id": f"acceptance-case-{len(self.posts)}", **payload}
+        if path == "/api/acceptance-test-plans/acceptance-plan-e2e/activate":
+            return {"id": "acceptance-plan-e2e", "status": "active"}
         if path == "/api/requirements/requirement-e2e/assessments":
             return {
                 "id": "assessment-e2e",
@@ -1037,6 +1043,40 @@ def test_real_e2e_happy_path_projects_native_runner_gate_delivery_and_no_deploym
         "secrets",
     ):
         assert prohibited in instruction
+    acceptance_plan_payload = next(
+        payload
+        for path, payload in client.posts
+        if path == "/api/requirements/requirement-e2e/acceptance-test-plans"
+    )
+    assert acceptance_plan_payload == {
+        "product_id": "product-1",
+        "title": "R&D delivery E2E acceptance plan",
+    }
+    acceptance_case_posts = [
+        payload
+        for path, payload in client.posts
+        if path == "/api/acceptance-test-plans/acceptance-plan-e2e/cases"
+    ]
+    artifact_path = acceptance_case_posts[0]["verification"]["path"]
+    assert str(artifact_path).startswith("docs/e2e/rd-collaboration-rd-delivery-")
+    assert [item["criterion"] for item in acceptance_case_posts] == [
+        f"Only {artifact_path} is changed",
+        "Independent quality gate and automated testing pass",
+        "Delivery stops at ready_for_release without deployment",
+    ]
+    assert all(
+        item["verification"]
+        == {
+            "path": artifact_path,
+            "required_text": [item["criterion"]],
+            "type": "file_contains",
+        }
+        for item in acceptance_case_posts
+    )
+    assert any(
+        path == "/api/acceptance-test-plans/acceptance-plan-e2e/activate"
+        for path, _payload in client.posts
+    )
     assert not any(
         path == "/api/ai-tasks"
         or path.endswith("/start")

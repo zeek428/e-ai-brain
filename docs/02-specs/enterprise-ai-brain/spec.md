@@ -110,7 +110,7 @@ v2.0 覆盖规则：上述 `create_rd_task` 仅作为历史动作 key 和旧消�
 - 编码 Runner 的成功只推进到 `verifying`。平台创建独立 verifier Runner 任务，质量门禁从服务端命令 Catalog 聚合单元测试、类型检查、lint、凭据/依赖/静态扫描、CI、变更文件/行数和受保护路径证据。
 - `auto_commit` 只有在门禁 `passed`、独立证据达到策略下限、风险不高于阈值且未命中迁移/受保护路径时才可发出 merge 决策；否则创建人工 Review。编码 Runner 自报测试通过不能单独放行。
 - 部署请求、运行、步骤、审计和派发 Outbox 在同一 PostgreSQL 事务写入。独立 execution worker 使用租约和幂等键执行 Runner、Jenkins、Git 写回、健康检查和回滚；API 进程内 worker 仅作测试兼容。
-- 外部事件先按 Provider 签名/专用 Token 校验，以 `provider + delivery_id` 幂等写入 `external_event_inbox`，再投影为 CI、PR/MR、Jenkins、可观测性或用户行为事实；失败可重试，超过上限进入死信。
+- 外部事件先按 Provider 签名/专用 Token 校验，以 `provider + delivery_id` 幂等写入 `external_event_inbox`，再投影为 CI、PR/MR、Jenkins、可观测性或用户行为事实；失败可重试，超过上限进入死信。带 `ai_brain.rd_delivery_id` 的 Git 回调必须优先从不可变交付记录取得冻结 `product_id/repository_id/provider`，再校验回调仓库身份和分支；同一远端仓库被多个产品配置时不得按查询顺序取第一条，未知或不匹配的交付绑定必须拒绝。
 - Runner Target 和 Jenkins Connection 通过 `execution_resource_grants` 按产品、环境授权。非全局用户不能枚举、绑定或启动 scope 外执行资源。
 
 ## 实施切片
@@ -1211,7 +1211,7 @@ v2.0 对 `AssistantDraftBuilder` 的覆盖规则：历史 `create_rd_task` key �
 - 决策选项冻结 `outcome/subject_transition/input_schema` 等映射，服务端只按映射校验可选 `input` 并执行主体状态迁移；`request_more_info` 进入 `waiting_more_info`，通过 answers 子资源补充证据、生成新 options/version 并回到 pending，补充期间不得恢复主体。answers 调用者必须具备 `delivery.decision_requests.answer`、业务大脑/产品范围并命中冻结 `answer_actor_selector`。
 - 决策请求创建时冻结 `expires_at/timeout_policy/escalation_target_selector`。协作维护 Worker 按数据库时间幂等扫描，到期默认执行 `escalate_keep_paused`：原请求进入 expired，主体保持暂停，expiry event 与后继升级请求各最多一条；不得自动批准或选择业务 option。旧请求 decide/answer 固定拒绝。
 - 代码更改必须先通过平台独立质量门禁。策略允许的低风险提交/推送可自动执行；合并、敏感目录、迁移、安全问题、预算超限和权限越界按风险策略创建 `decision_requests`。默认不进入部署。
-- 集成工作项通过 Outbox 完成远程 push/MR/PR 并保存 repository、分支、local/remote commit SHA、MR/PR、执行身份、Outbox 和对账状态的可信交付记录；`record_ready_for_release_evidence` 只验证并固化这些证据，不在完成判定时临时 push。随后按冻结 delivery_target 分支：ready_for_release 目标完成运行；deployed 目标让运行停在非终态 ready_for_release，交由 P1 部署域推进 deploying/completed，P0 函数不得提前关闭。
+- 集成工作项通过 Outbox 完成远程 push/MR/PR 并保存 repository、分支、local/remote commit SHA、MR/PR、执行身份、Outbox 和对账状态的可信交付记录；`record_ready_for_release_evidence` 只验证并固化这些证据，不在完成判定时临时 push。Provider 回调携带交付 ID 时以冻结交付记录绑定产品和仓库，仓库地址相同的其他产品配置不能截获对账；Inbox 首次验签后保存的上下文不可修改，修复映射后应接收新的 Provider Delivery，而不能改写历史事件。随后按冻结 delivery_target 分支：ready_for_release 目标完成运行；deployed 目标让运行停在非终态 ready_for_release，交由 P1 部署域推进 deploying/completed，P0 函数不得提前关闭。
 - 运行失败或取消后保持终态不可变，产品版本保持失败时的 active/testing 阶段。restart 仅对最近一代终态运行、无活动运行且范围/策略/仓库/资源重新校验通过时创建 `run_generation+1/supersedes_run_id` 的新运行；只能复用经确定性验证仍兼容的已批准证据，不能复活旧工作项、attempt 或租约。
 - 每个 generation 的 `rd_collaboration_run_requirements` 和 version_resolved 来源在启动后完全冻结。普通范围写入口在存在非终态运行时返回 `RD_SCOPE_FROZEN`；当前运行只允许不改变范围的 `plan_version` 重规划。待发布前范围变化只能提交 `rd_scope_change_requests`：锁定旧运行并创建唯一决策；批准事务先按 generation 撤销租约、收敛非终态工作项/attempt/Review/AI task 和外部 Outbox，再终结旧运行、应用全部类型化 operations、仅递增一次 `scope_version`，迟到结果只进审计/对账，随后由调用方以返回的 `terminal_run_id` 显式 restart；拒绝则只恢复由该请求暂停的原运行阶段且不改范围。进入 `ready_for_release/deploying/released` 或 ready-target 已完成后不得回退或 restart，只能创建必带来源运行、可选旧需求血缘的后续需求并进入新的 planning 版本。
 - 每次运行冻结不可变 `strategy_snapshot`，历史运行不读取后续修改后的策略解释自身。管理列表继续使用 PostgreSQL read model 分页筛选；策略页面升级原入口，不新增“旧策略/新策略”切换。

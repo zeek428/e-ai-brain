@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 from app.core.store import MemoryStore
+from app.services.ai_executor_runner_rd_completion import move_ai_task_to_executor_review
 from app.services.ai_executor_runners import (
     _load_executor_policy_for_ai_task,
     _sync_runner_completion_to_ai_task,
 )
 from app.services.quality_gates import resolve_pre_merge_quality_gate_policy
 from app.services.rd_collaboration_decisions import apply_decision
+from app.services.rd_git_branches import rd_work_item_branch_name
 from app.services.rd_work_item_execution import (
     approve_work_item_after_task_review,
     project_work_item_quality_gate_result,
@@ -173,6 +182,151 @@ def test_internal_dispatch_uses_only_frozen_executor_and_creates_attempt() -> No
     assert '"background": "需求背景"' in dispatched["runner_task"]["instruction"]
     assert '"summary": "string"' in dispatched["runner_task"]["instruction"]
     assert store.rd_work_items["work-1"]["status"] == "running"
+
+
+def test_internal_dispatch_overrides_source_branch_with_frozen_work_item_branch() -> None:
+    store = _ai_work_item_store()
+    store.ai_executor_runners["runner-frozen"] = {
+        "id": "runner-frozen",
+        "status": "active",
+        "executor_types": ["codex"],
+        "workspace_roots": ["/tmp/work-item"],
+    }
+    store.rd_task_executor_policy_snapshots["snapshot-1"]["payload_json"]["git_config"][
+        "branch"
+    ] = "codex/rd-collaboration-v2"
+
+    dispatched = dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="work-1",
+    )
+
+    branch = rd_work_item_branch_name("run-1", "work-1")
+    runner_task = dispatched["runner_task"]
+    assert runner_task["request_config"]["branch"] == branch
+    assert runner_task["input_payload"]["branch"] == branch
+    assert branch in runner_task["instruction"]
+
+
+def test_dependent_work_item_dispatch_freezes_upstream_delivery_commits() -> None:
+    store = _ai_work_item_store(task_type="automated_testing")
+    store.ai_executor_runners["runner-frozen"] = {
+        "id": "runner-frozen",
+        "status": "active",
+        "executor_types": ["codex"],
+        "workspace_roots": ["/tmp/work-item"],
+    }
+    upstream_sha = "c" * 40
+    store.rd_work_items["work-upstream"] = {
+        "id": "work-upstream",
+        "ai_task_id": "task-upstream",
+        "collaboration_run_id": "run-1",
+        "status": "completed",
+    }
+    store.rd_work_item_dependencies["dependency-1"] = {
+        "id": "dependency-1",
+        "collaboration_run_id": "run-1",
+        "predecessor_work_item_id": "work-upstream",
+        "successor_work_item_id": "work-1",
+    }
+    store.ai_executor_tasks["runner-task-upstream"] = {
+        "id": "runner-task-upstream",
+        "ai_task_id": "task-upstream",
+        "created_at": "2026-08-04T00:00:00+00:00",
+        "result_json": {"git_delivery": {"local_commit_sha": upstream_sha}},
+        "status": "succeeded",
+        "task_kind": "coding",
+    }
+
+    dispatched = dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="work-1",
+    )
+
+    runner_task = dispatched["runner_task"]
+    assert runner_task["request_config"]["upstream_delivery_commit_shas"] == [upstream_sha]
+    assert runner_task["input_payload"]["upstream_delivery_commit_shas"] == [upstream_sha]
+    assert upstream_sha in runner_task["instruction"]
+
+
+def test_internal_dispatch_reuses_latest_retained_worktree_for_work_item_rework() -> None:
+    store = _ai_work_item_store()
+    store.ai_executor_runners["runner-frozen"] = {
+        "id": "runner-frozen",
+        "status": "active",
+        "executor_types": ["codex"],
+        "workspace_roots": ["/tmp/work-item"],
+    }
+    store.ai_executor_tasks["previous-runner-task"] = {
+        "id": "previous-runner-task",
+        "ai_task_id": "previous-ai-task",
+        "created_at": "2026-07-30T00:00:00+00:00",
+        "input_payload": {"rd_work_item_id": "work-1"},
+        "result_json": {
+            "workspace_isolation": {
+                "base_workspace_root": "/tmp/work-item",
+                "branch_name": "rd/run-1/work-1",
+                "mode": "git_worktree",
+                "status": "retained_after_cancel",
+                "worktree_path": "/tmp/reused-work-item-worktree",
+            }
+        },
+        "status": "cancelled",
+    }
+
+    dispatched = dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="work-1",
+    )
+
+    config = dispatched["runner_task"]["request_config"]
+    assert config["reuse_workspace"] is True
+    assert config["workspace_isolation"]["worktree_path"] == "/tmp/reused-work-item-worktree"
+    assert dispatched["runner_task"]["workspace_root"] == "/tmp/work-item"
+
+
+def test_internal_dispatch_carries_structured_review_feedback_into_rework_task() -> None:
+    store = _ai_work_item_store()
+    store.ai_executor_runners["runner-frozen"] = {
+        "id": "runner-frozen",
+        "status": "active",
+        "executor_types": ["codex"],
+        "workspace_roots": ["/tmp/work-item"],
+    }
+    store.rd_work_item_attempts["attempt-1"] = {
+        "id": "attempt-1",
+        "work_item_id": "work-1",
+        "attempt_no": 1,
+        "status": "completed",
+        "rework_evidence": [
+            {
+                "comment": "补充质量门禁 ID、自动测试结果和零部署证据",
+                "review_id": "review-1",
+            }
+        ],
+    }
+
+    dispatched = dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="work-1",
+    )
+
+    expected_feedback = [
+        {
+            "comment": "补充质量门禁 ID、自动测试结果和零部署证据",
+            "review_id": "review-1",
+        }
+    ]
+    runner_task = dispatched["runner_task"]
+    assert runner_task["input_payload"]["rework_feedback"] == expected_feedback
+    assert runner_task["request_config"]["rework_feedback"] == expected_feedback
+    assert dispatched["attempt"]["input_json"]["rework_feedback"] == expected_feedback
+    assert "补充质量门禁 ID、自动测试结果和零部署证据" in runner_task["instruction"]
+    assert "不得把尚未发生的下游状态写成已完成事实" in runner_task["instruction"]
 
 
 def test_internal_dispatch_persists_complete_immutable_execution_gate_snapshot() -> None:
@@ -751,6 +905,366 @@ def test_passed_independent_review_completes_the_linked_work_item() -> None:
         event["event_type"] == "work_item.review_approved"
         for event in store.rd_collaboration_events.values()
     )
+
+
+def test_ai_reviewer_seat_queues_read_only_review_runner_after_quality_gate() -> None:
+    """An AI reviewer seat must receive executable work instead of a human-only Review."""
+    store = _ai_work_item_store(task_type="development_planning")
+    store.rd_run_seats["seat-reviewer"].update(
+        {
+            "subject_type": "ai_employee",
+            "human_user_id": None,
+            "ai_employee_id": "employee-reviewer",
+            "executor_profile_id": "executor-reviewer",
+        }
+    )
+    store.rd_executor_profiles["executor-reviewer"] = {
+        "id": "executor-reviewer",
+        "executor_type": "codex",
+        "runner_id": "runner-reviewer",
+        "status": "active",
+        "timeout_seconds": 300,
+    }
+    store.ai_executor_runners.update(
+        {
+            "runner-frozen": {
+                "id": "runner-frozen",
+                "status": "active",
+                "executor_types": ["codex"],
+                "workspace_roots": ["/tmp/work-item"],
+            },
+            "runner-reviewer": {
+                "id": "runner-reviewer",
+                "status": "active",
+                "executor_types": ["codex"],
+                "workspace_roots": ["/tmp/work-item"],
+                "trust_domain": "verification",
+            },
+        }
+    )
+    dispatch = dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="work-1",
+    )
+    coding_task = store.ai_executor_tasks[dispatch["runner_task"]["id"]]
+    coding_task["result_json"] = {
+        "git_delivery": {"local_commit_sha": "a" * 40},
+        "workspace_isolation": {
+            "base_workspace_root": "/tmp/work-item",
+            "mode": "git_worktree",
+            "worktree_path": "/tmp/work-item/reviewable",
+        },
+    }
+    quality_gate = {
+        "id": "gate-1",
+        "status": "passed",
+        "policy_snapshot": {"coding_runner_task_id": coding_task["id"]},
+    }
+    project_work_item_quality_gate_result(
+        store,
+        ai_task_id=dispatch["task"]["id"],
+        quality_gate_run=quality_gate,
+        runner_task_id=coding_task["id"],
+    )
+
+    move_ai_task_to_executor_review(
+        store,
+        ai_task=store.ai_tasks[dispatch["task"]["id"]],
+        actor_id="runner-reviewer",
+        executor_snapshot={"runner_task_id": coding_task["id"]},
+        output_json={"summary": "quality gate passed"},
+        quality_gate_run=quality_gate,
+    )
+
+    review_tasks = [
+        task
+        for task in store.ai_executor_tasks.values()
+        if task.get("task_kind") == "work_item_review"
+    ]
+    assert len(review_tasks) == 1
+    assert review_tasks[0]["runner_id"] == "runner-reviewer"
+    assert review_tasks[0]["workspace_root"] == "/tmp/work-item"
+    assert review_tasks[0]["input_payload"] == {
+        "ai_employee_id": "employee-reviewer",
+        "coding_runner_task_id": coding_task["id"],
+        "expected_commit_sha": "a" * 40,
+        "executor_profile_id": "executor-reviewer",
+        "quality_gate_run_id": "gate-1",
+        "rd_collaboration_run_id": "run-1",
+        "rd_work_item_id": "work-1",
+        "review_id": store.ai_tasks[dispatch["task"]["id"]]["review_ids"][0],
+        "reviewer_seat_id": "seat-reviewer",
+    }
+    assert "Current work-item type: development_planning" in review_tasks[0]["instruction"]
+    assert '"id": "gate-1"' in review_tasks[0]["instruction"]
+    assert "Do not require downstream remote push" in review_tasks[0]["instruction"]
+    assert store.ai_tasks[dispatch["task"]["id"]]["current_step"] == "ai_reviewer_running"
+    assert store.ai_tasks[dispatch["task"]["id"]]["status"] == "running"
+
+
+def test_non_terminal_ai_reviewer_updates_do_not_fail_the_review() -> None:
+    """Claim and log updates are progress signals, not terminal review results."""
+    store = _ai_work_item_store(task_type="development_planning")
+    store.rd_run_seats["seat-reviewer"].update(
+        {
+            "subject_type": "ai_employee",
+            "human_user_id": None,
+            "ai_employee_id": "employee-reviewer",
+            "executor_profile_id": "executor-reviewer",
+        }
+    )
+    store.rd_executor_profiles["executor-reviewer"] = {
+        "id": "executor-reviewer",
+        "executor_type": "codex",
+        "runner_id": "runner-reviewer",
+        "status": "active",
+    }
+    store.ai_executor_runners.update(
+        {
+            "runner-frozen": {
+                "id": "runner-frozen",
+                "status": "active",
+                "executor_types": ["codex"],
+                "workspace_roots": ["/tmp/work-item"],
+            },
+            "runner-reviewer": {
+                "id": "runner-reviewer",
+                "status": "active",
+                "executor_types": ["codex"],
+                "workspace_roots": ["/tmp/work-item"],
+                "trust_domain": "verification",
+            },
+        }
+    )
+    dispatch = dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="work-1",
+    )
+    coding_task = store.ai_executor_tasks[dispatch["runner_task"]["id"]]
+    coding_task["result_json"] = {
+        "git_delivery": {"local_commit_sha": "a" * 40},
+        "workspace_isolation": {
+            "mode": "git_worktree",
+            "worktree_path": "/tmp/work-item/reviewable",
+        },
+    }
+    quality_gate = {
+        "id": "gate-1",
+        "status": "passed",
+        "policy_snapshot": {"coding_runner_task_id": coding_task["id"]},
+    }
+    project_work_item_quality_gate_result(
+        store,
+        ai_task_id=dispatch["task"]["id"],
+        quality_gate_run=quality_gate,
+        runner_task_id=coding_task["id"],
+    )
+    move_ai_task_to_executor_review(
+        store,
+        ai_task=store.ai_tasks[dispatch["task"]["id"]],
+        actor_id="runner-reviewer",
+        executor_snapshot={"runner_task_id": coding_task["id"]},
+        output_json={"summary": "quality gate passed"},
+        quality_gate_run=quality_gate,
+    )
+    review_task = next(
+        task
+        for task in store.ai_executor_tasks.values()
+        if task.get("task_kind") == "work_item_review"
+    )
+
+    for status in ("claimed", "running"):
+        review_task["status"] = status
+        _sync_runner_completion_to_ai_task(
+            store,
+            task=review_task,
+            runner_id="runner-reviewer",
+        )
+
+    ai_task = store.ai_tasks[dispatch["task"]["id"]]
+    assert ai_task["current_step"] == "ai_reviewer_running"
+    assert ai_task["error_code"] is None
+    assert ai_task["status"] == "running"
+
+
+def test_signed_ai_reviewer_approval_completes_frozen_work_item() -> None:
+    """A trusted AI reviewer result must own the same state transition as a seat Review."""
+    store = _ai_work_item_store(task_type="development_planning")
+    private_key = Ed25519PrivateKey.generate()
+    public_key = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    store.rd_run_seats["seat-reviewer"].update(
+        {
+            "subject_type": "ai_employee",
+            "human_user_id": None,
+            "ai_employee_id": "employee-reviewer",
+            "executor_profile_id": "executor-reviewer",
+        }
+    )
+    store.rd_executor_profiles["executor-reviewer"] = {
+        "id": "executor-reviewer",
+        "executor_type": "codex",
+        "runner_id": "runner-reviewer",
+        "status": "active",
+    }
+    store.ai_executor_runners.update(
+        {
+            "runner-frozen": {
+                "id": "runner-frozen",
+                "status": "active",
+                "executor_types": ["codex"],
+                "workspace_roots": ["/tmp/work-item"],
+                "trust_boundary_id": "coding-boundary",
+                "trust_domain": "coding",
+            },
+            "runner-reviewer": {
+                "id": "runner-reviewer",
+                "status": "active",
+                "attestation_public_key": base64.b64encode(public_key).decode("ascii"),
+                "attestation_status": "active",
+                "executor_types": ["codex"],
+                "workspace_roots": ["/tmp/work-item"],
+                "trust_boundary_id": "review-boundary",
+                "trust_domain": "verification",
+            },
+        }
+    )
+    dispatch = dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="work-1",
+    )
+    coding_task = store.ai_executor_tasks[dispatch["runner_task"]["id"]]
+    coding_task["result_json"] = {
+        "git_delivery": {"local_commit_sha": "b" * 40},
+        "workspace_isolation": {
+            "mode": "git_worktree",
+            "worktree_path": "/tmp/work-item/reviewable",
+        },
+    }
+    quality_gate = {
+        "id": "gate-1",
+        "status": "passed",
+        "policy_snapshot": {"coding_runner_task_id": coding_task["id"]},
+    }
+    project_work_item_quality_gate_result(
+        store,
+        ai_task_id=dispatch["task"]["id"],
+        quality_gate_run=quality_gate,
+        runner_task_id=coding_task["id"],
+    )
+    move_ai_task_to_executor_review(
+        store,
+        ai_task=store.ai_tasks[dispatch["task"]["id"]],
+        actor_id="runner-reviewer",
+        executor_snapshot={"runner_task_id": coding_task["id"]},
+        output_json={"summary": "quality gate passed"},
+        quality_gate_run=quality_gate,
+    )
+    review_task = next(
+        task
+        for task in store.ai_executor_tasks.values()
+        if task.get("task_kind") == "work_item_review"
+    )
+    unsigned_result = {
+        "parsed_output": {
+            "comment": "Acceptance evidence and implementation are consistent.",
+            "decision": "approve",
+            "findings": [],
+            "reviewed_commit_sha": "b" * 40,
+            "summary": "Independent AI review passed",
+        }
+    }
+    payload = {
+        "result_sha256": hashlib.sha256(
+            json.dumps(
+                unsigned_result,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest(),
+        "runner_task_id": review_task["id"],
+        "status": "succeeded",
+    }
+    review_task.update(
+        {
+            "finished_at": "2026-08-04T00:00:00+00:00",
+            "result_json": {
+                **unsigned_result,
+                "execution_attestation": {
+                    "payload": payload,
+                    "signature": base64.b64encode(
+                        private_key.sign(
+                            json.dumps(
+                                payload,
+                                ensure_ascii=True,
+                                separators=(",", ":"),
+                                sort_keys=True,
+                            ).encode("utf-8")
+                        )
+                    ).decode("ascii"),
+                },
+            },
+            "status": "succeeded",
+        }
+    )
+
+    _sync_runner_completion_to_ai_task(
+        store,
+        task=review_task,
+        runner_id="runner-reviewer",
+    )
+
+    ai_task = store.ai_tasks[dispatch["task"]["id"]]
+    review = store.human_reviews[ai_task["review_ids"][0]]
+    assert store.rd_work_items["work-1"]["status"] == "completed"
+    assert ai_task["status"] == "completed"
+    assert ai_task["current_step"] == "ai_review_approved"
+    assert review["status"] == "approved"
+    assert review["decided_by"] == "employee-reviewer"
+    assert any(
+        feedback.get("producer_subject_id") == "employee-reviewer"
+        and feedback.get("executor_profile_id") == "executor-reviewer"
+        for feedback in store.role_feedback_records.values()
+    )
+
+
+def test_passed_quality_gate_projection_replays_without_retransitioning_work_item() -> None:
+    store = _ai_work_item_store()
+    store.ai_executor_runners["runner-frozen"] = {
+        "id": "runner-frozen",
+        "status": "active",
+        "executor_types": ["codex"],
+        "workspace_roots": ["/tmp/work-item"],
+    }
+    dispatch = dispatch_ai_task_for_work_item(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="work-1",
+    )
+    quality_gate = {"id": "gate-1", "status": "passed", "blocked_reasons": []}
+    first = project_work_item_quality_gate_result(
+        store,
+        ai_task_id=dispatch["task"]["id"],
+        quality_gate_run=quality_gate,
+        runner_task_id=dispatch["runner_task"]["id"],
+    )
+    replay = project_work_item_quality_gate_result(
+        store,
+        ai_task_id=dispatch["task"]["id"],
+        quality_gate_run=quality_gate,
+        runner_task_id=dispatch["runner_task"]["id"],
+    )
+
+    assert first["work_item"]["status"] == "reviewing"
+    assert replay["idempotent_replay"] is True
+    assert replay["work_item"]["version"] == first["work_item"]["version"]
+    assert replay["attempt"]["status"] == "completed"
 
 
 def test_approving_the_ai_task_review_projects_to_the_work_item() -> None:

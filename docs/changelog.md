@@ -7,6 +7,7 @@
 ## [Unreleased]
 
 ### Added
+- 验收计划用例现支持冻结的 `file_contains` 独立验证配置：仅允许受限工作区相对路径和必含文本；质量门禁在启动时冻结计划、用例指纹和编码 local commit，验证 Runner 从该提交的 Git blob 验证（脏工作树、缺失/超限 blob 均失败），并用 Ed25519 证明绑定完整结果摘要。服务端仅接收当前门禁、冻结指纹与 Commit 均匹配的 `runner://` 证据；替代计划、历史门禁和未提交文件不能解锁在途门禁。验收证据、门禁、检查和审计改为单一事务提交，并以门禁与用例唯一索引/稳定记录 ID 防止重试重复。未映射、无证据或验证失败仍会阻断协作，不会由 E2E 脚本预填通过结果。安装包也通过 Git 解析 linked worktree 的共享元数据目录，避免 Codex 因 `.git/index.lock` 无权限而失败。
 - 研发协同工作项列表新增产品范围保护且有界的 `attempt_history` 安全投影，用于验证质量返工、取消恢复、Runner 超时人工恢复和高风险派发：最多返回最近 20 次不可变 attempt 序号/状态、同产品范围内服务端唯一关联的编码 Runner 状态、workspace SHA-256 指纹、安全失败码、返工计数、时间戳和持久化迟到围栏摘要；读取时严格移除内部 attempt ID、租约、Token/Hash、执行器/员工、幂等键、原始路径和 payload、Runner 配置/日志/结果、Provider 回调及事件正文。真实质量场景从故障前任务输入交给独立 Gate 判定；取消恢复等待 Runner 终态和服务端 fence；超时场景以乐观锁临时收紧统一策略，评估冻结快照后 `finally` 恢复完整原策略并记录三个版本，恢复异常先清理再失败关闭。真实恢复场景仍保持显式 opt-in，不加入默认或快速回归，也不触发部署。
 - 新增显式 opt-in 的真实 Runner 研发交付 E2E 套件和产品范围保护的可信 Git 交付只读投影：以两个 AI 岗位、独立真人审核、隔离分支、远程对账和测试证据验证到 `ready_for_release`，不进入默认/快速回归且不触发部署；套件严格核对指定编码 Runner、对应的独立可信质量门禁 Runner 及审核前依赖阻塞，并通过工作项列表的 `active_attempt_count` 证明审核前未派发、批准后 Worker 已派发，不再读取工作项表中不存在的 `attempt_id`。原生 Runner 顶层、`result`、`parsed_output` 仅归一化本地 commit/分支与有界标量测试证据，伪造远程/对账/回调字段及嵌套凭据/Token/原始 payload 不落库也不从历史记录投影。运行详情展示 local/remote commit、`pending/reconciled`、验证时间和证据哈希；工作项列表只投影活动 attempt 计数，不暴露 attempt ID、租约、Token、执行器或原始载荷，也不新增远程 SHA、部署或回调写入口。
 - AI 执行器 Runner 安装包启动脚本现在会校验 Linux/macOS 目标系统，避免在 macOS 上误运行 Linux systemd 包；Linux/macOS/通用 Shell 包会创建 `.venv` 并自动安装缺失的 `runner_requirements.txt` 依赖，Windows 脚本同步补齐依赖检查。执行器编辑页不再重复回填可视化管理的元数据字段，已选 CPU 架构可正确展示；Token 轮换和创建结果直接提供可复制的 `AI_BRAIN_RUNNER_TOKEN=...` 配置行，其中轮换结果通过居中弹窗呈现，避免被页面滚动位置遮挡。
@@ -21,6 +22,9 @@
 - 修复钉钉 AI 表格动作在连接未配置 Base ID 时字段不可输入的问题，支持动作级兜底输入并保留连接级自动带出。
 
 ### Changed
+- 修复迭代版本列表与总览把 `ready_for_release`、`deploying` 归一化为“开发中”的问题；版本状态类型、筛选标签和状态推进目标现保留完整交付阶段，测试中版本只推进到待发布，不再跳过待发布直达已发布。帮助中心同步更新真实“待发布 + 协同 completed”页面截图。
+- 研发交付的签名 Git 回调在同一远端仓库被多个产品配置时，改为优先按不可变 `rd_delivery_id` 绑定冻结产品、仓库和 Provider，再校验仓库身份、分支与 Commit；不再按仓库查询顺序误选其他产品。Inbox 已冻结的历史上下文保持不可变，修复配置后使用新的 Provider Delivery 重发，错误事件继续保留审计。
+- Codex Runner 在 linked Git worktree 内执行时，会仅向 Codex 追加经过仓库 `.git` 边界校验的 worktree/common Git 元数据写入目录，解决 `index.lock` 无法创建而不扩大代码工作区或任意父目录权限。
 - 研发协同真实 E2E 新增可选 `api|browser` 人工确认通道：受控浏览器脚本通过真实登录页数学安全校验，从迭代版本总览进入指定协同运行，并只对精确匹配、仍待处理且带版本锁的任务 Review 或高风险 `approve_dispatch` 决策执行一次确认；Python 适配器随后以公共 API 轮询 Review、工作项和决策的持久状态。高风险派发决策从对应工作项的挂起决策读取，前端合并去重运行级和工作项级决策并展示来源，选项标签缺失时回退显示冻结 code，生产选项统一为 `approve_dispatch` 与 `cancel_work_item`。研发任务页支持 `task_id` 精确深链、详情内待确认入口、协同工作项跳转，以及来自后端 `created_at/updated_at` 的创建/更新时间；确认后会刷新详情时间，缺失值显示 `-`。v2 任务继续禁止直接启动、重试或取消。浏览器证据只写仓库外目录并脱敏，流程仍停在 `ready_for_release`，不触发部署；帮助中心同步补充任务时间字段说明，无需替换现有真实截图。
 - 修复研发协同编码 Runner 失败回写：当前有效 attempt 的 `failed/dead_letter` 结果会与 AI 任务、attempt、协作事件和审计原子投影为 `rework_required`，同时释放工作项租约；`timed_out` 还会受冻结 `max_iterations` 约束，达到上限后原子创建 `runner_timeout_recovery` 人工决策并暂停为 `waiting_human`，不会无限自动重试。确认重试仅恢复为 `ready`，由 Worker 创建新 attempt；超时配置只能在后续协作代次的统一策略中调整。未改变定时作业或部署行为。
 - Codex Runner 安装包和命令归一化现在强制追加 `exec --disable code_mode_host --ephemeral`：本地执行不会继承桌面端当前会话，只读取冻结工作项输入，也不会留下可被后续任务续接的执行会话；不改变定时作业或部署行为。

@@ -1505,7 +1505,9 @@ function normalizeProductStatus(status?: string): ProductRecord['status'] {
 function normalizeProductVersionStatus(status?: string): ProductVersionRecord['status'] {
   if (
     status === 'archived' ||
+    status === 'deploying' ||
     status === 'planning' ||
+    status === 'ready_for_release' ||
     status === 'released' ||
     status === 'testing'
   ) {

@@ -62,6 +62,30 @@ def _product_repositories(current_store: Any) -> list[dict[str, Any]]:
     return results
 
 
+def _rd_delivery_record(
+    current_store: Any,
+    *,
+    delivery_id: str,
+) -> dict[str, Any] | None:
+    delivery = read_memory_dict(current_store, "rd_git_deliveries").get(delivery_id)
+    if delivery is not None:
+        return dict(delivery)
+    repository = getattr(current_store, "repository", None)
+    list_records = getattr(repository, "list_rd_delivery_evidence_records", None)
+    if not callable(list_records):
+        list_records = getattr(repository, "list_trusted_delivery_records", None)
+    if not callable(list_records):
+        return None
+    return next(
+        (
+            dict(record)
+            for record in list_records(record_type="rd_git_delivery")
+            if str(record.get("id") or "") == delivery_id
+        ),
+        None,
+    )
+
+
 def map_external_event_product(
     current_store: Any,
     *,
@@ -69,10 +93,42 @@ def map_external_event_product(
     provider: str,
 ) -> tuple[str | None, str | None]:
     identities = _event_repository_identities(payload)
+    ai_brain = payload.get("ai_brain") if isinstance(payload.get("ai_brain"), dict) else {}
+    delivery_id = str(ai_brain.get("rd_delivery_id") or "").strip()
+    repositories = _product_repositories(current_store)
+    if delivery_id:
+        delivery = _rd_delivery_record(current_store, delivery_id=delivery_id)
+        if delivery is None:
+            return None, None
+        frozen_repository_id = str(delivery.get("repository_id") or "").strip()
+        frozen_product_id = str(delivery.get("product_id") or "").strip()
+        frozen_repository = next(
+            (
+                repository
+                for repository in repositories
+                if str(repository.get("id") or "") == frozen_repository_id
+            ),
+            None,
+        )
+        if (
+            frozen_repository is None
+            or frozen_repository.get("status", "active") != "active"
+            or str(frozen_repository.get("product_id") or "") != frozen_product_id
+            or str(frozen_repository.get("git_provider") or "") != provider
+            or str(delivery.get("provider") or "") != provider
+        ):
+            return None, None
+        configured = {
+            _repository_identity(frozen_repository.get("remote_url")),
+            _repository_identity(frozen_repository.get("project_path")),
+        }
+        if not identities.intersection(configured - {""}):
+            return None, None
+        return frozen_product_id or None, frozen_repository_id or None
     if not identities:
         explicit_product_id = str(payload.get("product_id") or "").strip()
         return (explicit_product_id or None, None)
-    for repository in _product_repositories(current_store):
+    for repository in repositories:
         if repository.get("status", "active") != "active":
             continue
         if str(repository.get("git_provider") or "") != provider:

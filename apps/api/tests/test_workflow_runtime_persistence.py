@@ -273,6 +273,7 @@ def test_pending_reviews_route_uses_direct_repository_query():
         pending = client.get("/api/reviews/pending", headers=headers).json()["data"]
 
         assert [item["id"] for item in pending["items"]] == ["review_perf_001"]
+        assert "_task_output_json" not in pending["items"][0]
         assert repository.task_workflow_source_row_reads == 0
     finally:
         app.state.store = original_store

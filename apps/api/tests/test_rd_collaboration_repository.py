@@ -28,6 +28,7 @@ from app.core.repositories.rd_collaboration import (
     RdCollaborationVersionConflictError,
 )
 from app.main import app
+from app.services.ai_executor_runners import retry_ai_executor_task_response
 from app.services.rd_collaboration_decisions import answer_decision_request
 from app.services.rd_collaboration_graph_runtime import RdCollaborationGraphRuntime
 from app.services.rd_collaboration_planning import start_collaboration_run
@@ -4245,7 +4246,11 @@ def test_assessment_runner_completion_commits_task_opinion_audit_and_outbox_atom
     assert repository.get_requirement_assessment_execution(execution["id"])["status"] == "pending"
 
     def gateway_result(_store, *, task):
-        output = {"summary": "accept", "conclusion_json": {"recommendation": "accept"}}
+        output = {
+            "summary": "accept",
+            "conclusion_json": {"recommendation": "accept"},
+            "confidence": "high",
+        }
         payload = task["input_payload"]
         return output, {
             "id": "assessment-runner-atomic-gateway-log",
@@ -4266,6 +4271,30 @@ def test_assessment_runner_completion_commits_task_opinion_audit_and_outbox_atom
     monkeypatch.setattr(
         "app.services.ai_executor_assessment_gateway.call_model_gateway_for_task", gateway_result
     )
+    original_complete = repository.complete_ai_assessment_runner_task
+    repository.complete_ai_assessment_runner_task = lambda **_kwargs: (_ for _ in ()).throw(
+        psycopg.OperationalError("forced atomic gateway completion failure")
+    )
+    app.state.store = PostgresRuntimeStore(repository)
+    try:
+        failed_gateway_completion = TestClient(app).post(
+            f"/api/system/ai-executor-tasks/{task['id']}/execute-assessment-gateway",
+            json={"runner_id": runner_id},
+            headers={"X-Runner-Token": "runner-secret"},
+        )
+        assert failed_gateway_completion.status_code == 503
+    finally:
+        repository.complete_ai_assessment_runner_task = original_complete
+        app.state.store = original_store
+    with repository._connect() as connection:
+        assert connection.execute(
+            """
+            SELECT count(*) FROM requirement_assessment_model_invocations
+            WHERE assessment_execution_id = %s
+            """,
+            (execution["id"],),
+        ).fetchone()[0] == 0
+
     app.state.store = PostgresRuntimeStore(repository)
     try:
         completed = TestClient(app).post(
@@ -4281,6 +4310,7 @@ def test_assessment_runner_completion_commits_task_opinion_audit_and_outbox_atom
     finally:
         app.state.store = original_store
     assert repository.get_requirement_assessment_execution(execution["id"])["status"] == "completed"
+    assert float(repository.get_requirement_assessment_opinion(opinion["id"])["confidence"]) == 0.9
     assert repository.list_ai_executor_tasks(runner_id=runner_id)[0]["status"] == "succeeded"
     assert any(
         item["subject_id"] == task["id"] and item["event_type"] == "ai_executor_task.succeeded"
@@ -4291,6 +4321,193 @@ def test_assessment_runner_completion_commits_task_opinion_audit_and_outbox_atom
             "SELECT 1 FROM execution_outbox_events WHERE id = %s",
             (f"assessment-runner-complete-{task['id']}",),
         ).fetchone()
+
+
+def test_retry_assessment_runner_task_rebinds_pending_execution_atomically(
+    repository: PostgresSnapshotRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seeded = _seed_exact_run(repository, prefix="assessment-runner-retry")
+    assessment = repository.get_requirement_assessment(str(seeded["assessment"]))
+    assert assessment is not None
+    runner_id = "assessment-runner-retry-runner"
+    profile_id = "assessment-runner-retry-profile"
+    employee_id = "assessment-runner-retry-ai"
+    repository.save_ai_executor_runner_record(
+        {
+            "id": runner_id,
+            "name": "Assessment retry runner",
+            "token_hash": sha256(b"runner-secret").hexdigest(),
+            "executor_types": ["codex"],
+            "workspace_roots": ["/srv/workspaces/project-a"],
+            "created_by": "user_admin",
+        }
+    )
+    repository.save_rd_ai_employee_record(
+        {
+            "id": employee_id,
+            "brain_app_id": "rd_brain",
+            "code": employee_id,
+            "name": "Assessment retry AI",
+            "created_by": "user_admin",
+        }
+    )
+    repository.save_rd_executor_profile_record(
+        {
+            "id": profile_id,
+            "brain_app_id": "rd_brain",
+            "code": profile_id,
+            "name": "Assessment retry profile",
+            "executor_type": "codex",
+            "runner_id": runner_id,
+            "workspace_capabilities": {"assessment_workspace_root": "/srv/workspaces/project-a"},
+            "created_by": "user_admin",
+        }
+    )
+    opinion = {
+        "id": "assessment-runner-retry-opinion",
+        "assessment_id": assessment["id"],
+        "role_code": "architect",
+        "ai_employee_id": employee_id,
+        "executor_profile_id": profile_id,
+        "input_revision": 1,
+        "strategy_snapshot_id": seeded["base_snapshot"]["id"],
+        "opinion_round": 1,
+        "conclusion_json": {},
+        "evidence_refs": [],
+        "risk_summary": {},
+        "cost_summary": {},
+        "assigned_subject_type": "ai_employee",
+        "assigned_ai_employee_id": employee_id,
+    }
+    execution = {
+        "id": "assessment-runner-retry-execution",
+        "assessment_id": assessment["id"],
+        "opinion_id": opinion["id"],
+        "role_code": "architect",
+        "actor_type": "ai_employee",
+        "ai_employee_id": employee_id,
+        "executor_profile_id": profile_id,
+        "input_revision": 1,
+        "strategy_snapshot_id": seeded["base_snapshot"]["id"],
+        "execution_kind": "assessment_only",
+        "side_effect_policy": "no_code_git_deploy_runner_work_item",
+        "status": "pending",
+    }
+    repository.save_assessment_bundle(
+        assessment=assessment,
+        opinions=[opinion],
+        executions=[execution],
+    )
+    source_task = {
+        "id": "assessment-runner-retry-source-task",
+        "runner_id": runner_id,
+        "executor_type": "codex",
+        "instruction": "Assess requirement only",
+        "workspace_root": "/srv/workspaces/project-a",
+        "input_payload": {
+            "assessment_id": assessment["id"],
+            "assessment_execution_id": execution["id"],
+            "executor_profile_id": profile_id,
+            "product_id": seeded["product"],
+            "requirement_id": seeded["requirement"],
+            "requirement_revision": 1,
+            "strategy_snapshot_id": seeded["base_snapshot"]["id"],
+        },
+        "request_config": {"assessment_only": True},
+        "result_json": {},
+        "logs": [],
+        "status": "dead_letter",
+        "error_code": "AI_EXECUTOR_TASK_LEASE_EXPIRED",
+        "error_message": "Task lease expired",
+        "created_by": "user_admin",
+        "task_kind": "assessment",
+    }
+    repository.save_ai_executor_task_record(source_task)
+    with repository._connect(autocommit=False) as connection:
+        connection.execute(
+            """
+            UPDATE requirement_assessment_executions
+            SET ai_executor_task_id = %s, runner_id = %s
+            WHERE id = %s
+            """,
+            (source_task["id"], runner_id, execution["id"]),
+        )
+    frozen_output = {
+        "summary": "Reuse the frozen gateway assessment after retry",
+        "confidence": 0.9,
+    }
+    repository.save_assessment_model_invocation(
+        task=source_task,
+        execution_id=execution["id"],
+        model_log={
+            "id": "assessment-runner-retry-frozen-log",
+            "provider": "test",
+            "model": "test-model",
+            "purpose": "requirement_assessment",
+            "status": "succeeded",
+            "tokens": {},
+            "latency_ms": 1,
+            "executor_profile_id": profile_id,
+            "product_id": seeded["product"],
+            "requirement_revision": 1,
+            "strategy_snapshot_id": seeded["base_snapshot"]["id"],
+            "ai_executor_task_id": source_task["id"],
+            "requirement_assessment_execution_id": execution["id"],
+        },
+        output=frozen_output,
+    )
+
+    retried = retry_ai_executor_task_response(
+        current_store=PostgresRuntimeStore(repository),
+        payload=SimpleNamespace(reason="retry after fixed assessment gateway"),
+        task_id=source_task["id"],
+        user={
+            "id": "user_admin",
+            "permissions": ["system.plugins.manage"],
+            "roles": ["admin"],
+        },
+    )
+
+    retry_task = retried["task"]
+    assert retry_task["id"] != source_task["id"]
+    assert retry_task["status"] == "queued"
+    persisted_execution = repository.get_requirement_assessment_execution(execution["id"])
+    assert persisted_execution["ai_executor_task_id"] == retry_task["id"]
+    assert persisted_execution["runner_id"] == runner_id
+
+    def unexpected_model_call(*_args, **_kwargs):
+        raise AssertionError("retry must reuse the frozen assessment model result")
+
+    monkeypatch.setattr(
+        "app.services.ai_executor_assessment_gateway.call_model_gateway_for_task",
+        unexpected_model_call,
+    )
+    original_store = app.state.store
+    app.state.store = PostgresRuntimeStore(repository)
+    try:
+        claimed = TestClient(app).post(
+            "/api/system/ai-executor-tasks/claim",
+            json={"executor_type": "codex", "runner_id": runner_id},
+            headers={"X-Runner-Token": "runner-secret"},
+        )
+        assert claimed.status_code == 200
+        assert claimed.json()["data"]["task"]["id"] == retry_task["id"]
+        completed = TestClient(app).post(
+            f"/api/system/ai-executor-tasks/{retry_task['id']}/execute-assessment-gateway",
+            json={"runner_id": runner_id},
+            headers={"X-Runner-Token": "runner-secret"},
+        )
+        assert completed.status_code == 200, completed.text
+        assert completed.json()["data"]["model_invocation_id"] == (
+            "assessment-runner-retry-frozen-log"
+        )
+    finally:
+        app.state.store = original_store
+    assert repository.get_requirement_assessment_execution(execution["id"])["status"] == "completed"
+    assert next(
+        item for item in repository.list_ai_executor_tasks() if item["id"] == retry_task["id"]
+    )["status"] == "succeeded"
 
 
 def test_substantive_requirement_edit_cancels_prior_nonterminal_assessments(

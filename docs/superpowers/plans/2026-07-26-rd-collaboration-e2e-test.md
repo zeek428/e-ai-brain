@@ -904,6 +904,15 @@ git commit -m "test: verify controlled rd experience reuse"
 
 ### Task 9: Execute the real P0 chain, document evidence, and run final gates
 
+> **Sequencing ruling (2026-07-28):** Task 8's causal P1 reuse assertion
+> runs after this task has produced a real P0 source run and immutable feedback.
+> The source candidate must be found by its actual feedback producer subject
+> (or an explicit expected experience ID), never by treating a work-item ID as
+> `evidence_subject_id`. Its compatible and trust-mismatched successor runs
+> must be created after independent approval through the public collaboration
+> APIs; pre-created runs are not evidence of causal frozen reuse. The prior
+> Task 8 coverage commit remains local and unpushed until this repair is made.
+
 **Files:**
 - Modify: `docs/08-help/delivery.md`
 - Modify: `docs/changelog.md`

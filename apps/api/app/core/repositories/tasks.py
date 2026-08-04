@@ -1083,7 +1083,7 @@ class TaskReadRepository:
                 cursor.execute(
                     f"""
                     SELECT r.id, r.ai_task_id, r.stage, r.status, r.content, r.version,
-                           r.created_at, r.updated_at
+                           r.created_at, r.updated_at, t.output_json
                     FROM human_reviews r
                     JOIN ai_tasks t ON t.id = r.ai_task_id
                     {where_clause}
@@ -1102,6 +1102,7 @@ class TaskReadRepository:
                         "status": row[3],
                         "updated_at": row[7].isoformat() if row[7] else None,
                         "version": row[5],
+                        "_task_output_json": row[8],
                     }
                     for row in cursor.fetchall()
                 ]

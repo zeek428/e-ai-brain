@@ -28,7 +28,14 @@ export type ProductVersionRecord = {
   releaseDate?: string;
   scopeVersion?: number;
   startDate?: string;
-  status: 'active' | 'archived' | 'planning' | 'released' | 'testing';
+  status:
+    | 'active'
+    | 'archived'
+    | 'deploying'
+    | 'planning'
+    | 'ready_for_release'
+    | 'released'
+    | 'testing';
   updatedAt?: string;
 };
 

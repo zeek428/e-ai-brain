@@ -95,6 +95,69 @@ def test_github_webhook_is_verified_deduplicated_and_redacted(monkeypatch):
     assert first["payload_hash"] == hashlib.sha256(body).hexdigest()
 
 
+def test_rd_delivery_webhook_uses_frozen_repository_when_repository_is_shared(
+    monkeypatch,
+):
+    from app.services.external_event_inbox import receive_external_event
+
+    monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "github-webhook-secret")
+    store = _github_store()
+    store.product_git_repositories = {
+        "repo_wrong": {
+            "id": "repo_wrong",
+            "product_id": "product_wrong",
+            "git_provider": "github",
+            "project_path": "acme/project",
+            "remote_url": "https://github.com/acme/project.git",
+            "status": "active",
+        },
+        "repo_frozen": {
+            "id": "repo_frozen",
+            "product_id": "product_frozen",
+            "git_provider": "github",
+            "project_path": "acme/project",
+            "remote_url": "https://github.com/acme/project.git",
+            "status": "active",
+        },
+    }
+    store.rd_git_deliveries = {
+        "delivery_frozen": {
+            "id": "delivery_frozen",
+            "product_id": "product_frozen",
+            "repository_id": "repo_frozen",
+            "provider": "github",
+        }
+    }
+    body = json.dumps(
+        {
+            "after": "frozen-commit",
+            "ref": "refs/heads/rd/frozen-branch",
+            "repository": {"full_name": "acme/project"},
+            "ai_brain": {"rd_delivery_id": "delivery_frozen"},
+        }
+    ).encode()
+    signature = "sha256=" + hmac.new(
+        b"github-webhook-secret",
+        body,
+        hashlib.sha256,
+    ).hexdigest()
+
+    event = receive_external_event(
+        store,
+        body=body,
+        connection_id="connection_github",
+        headers={
+            "x-github-delivery": "delivery-shared-repository",
+            "x-github-event": "push",
+            "x-hub-signature-256": signature,
+        },
+        provider="github",
+    )
+
+    assert event["payload"]["_context"]["product_id"] == "product_frozen"
+    assert event["payload"]["_context"]["repository_id"] == "repo_frozen"
+
+
 def test_duplicate_webhook_still_requires_a_valid_signature(monkeypatch):
     from app.services.external_event_inbox import receive_external_event
 

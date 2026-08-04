@@ -21,6 +21,7 @@ from app.core.repositories.authorization_defaults import (
     VALID_SCOPE_ACCESS_LEVELS,
     VALID_SCOPE_TYPES,
 )
+from app.core.repositories.user_scope_grants import active_scopes_for_user
 from app.core.roles import ROLE_DEFINITIONS
 
 ROLE_PERMISSION_TEMPLATE_BY_CODE: dict[str, set[str]] = {
@@ -1118,6 +1119,7 @@ class PostgresAuthorizationRepository(CompatibilityAuthorizationRepository):
         roles = self._role_codes_for_user(user)
         permissions = self._permissions_for_roles(roles)
         scopes = self._scopes_for_roles(roles)
+        scopes.extend(self._scopes_for_user(str(user["id"])))
         member_permissions, member_scopes = self._product_member_authorization_for_user(
             str(user["id"])
         )
@@ -1232,6 +1234,9 @@ class PostgresAuthorizationRepository(CompatibilityAuthorizationRepository):
             }
             for scope_type, scope_id, access_level in rows
         ]
+
+    def _scopes_for_user(self, user_id: str) -> list[dict[str, Any]]:
+        return active_scopes_for_user(self._connect, user_id)
 
     def menu_resources(self) -> list[dict[str, Any]]:
         with self._connect() as connection:

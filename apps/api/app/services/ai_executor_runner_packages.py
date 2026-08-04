@@ -534,8 +534,12 @@ def _attestation_public_key() -> str:
     return base64.b64encode(public_key).decode("ascii")
 
 
-def _execution_attestation(task_id: str) -> dict:
-    payload = {"runner_task_id": task_id}
+def _execution_attestation(*, task_id: str, status: str, result_json: dict) -> dict:
+    payload = {
+        "result_sha256": hashlib.sha256(_canonical_attestation_payload(result_json)).hexdigest(),
+        "runner_task_id": task_id,
+        "status": status,
+    }
     signature = _read_or_create_attestation_private_key().sign(
         _canonical_attestation_payload(payload),
     )
@@ -701,7 +705,11 @@ def _complete_task(
     if logs:
         _print_local_logs(task_id, logs)
     signed_result = dict(result_json)
-    signed_result["execution_attestation"] = _execution_attestation(task_id)
+    signed_result["execution_attestation"] = _execution_attestation(
+        task_id=task_id,
+        status=status,
+        result_json=signed_result,
+    )
     _request_json(
         "POST",
         f"{API_ROOT}/ai-executor-tasks/{task_id}/complete",
@@ -809,9 +817,100 @@ def _git(cwd: str, *args: str, timeout_seconds: int = 60) -> tuple[int, str]:
     return _command_output(["git", *args], cwd=cwd, timeout_seconds=timeout_seconds)
 
 
+def _is_path_within(path: str, parent: str) -> bool:
+    try:
+        resolved_parent = os.path.realpath(parent)
+        return os.path.commonpath([os.path.realpath(path), resolved_parent]) == resolved_parent
+    except ValueError:
+        return False
+
+
+def _worktree_git_metadata_dirs(
+    workspace_root: str,
+    workspace_isolation: dict | None,
+) -> list[str]:
+    if not workspace_isolation or workspace_isolation.get("mode") != "git_worktree":
+        return []
+    base_workspace_root = os.path.realpath(
+        str(workspace_isolation.get("base_workspace_root") or "")
+    )
+    worktree_path = os.path.realpath(str(workspace_isolation.get("worktree_path") or ""))
+    if not base_workspace_root or worktree_path != os.path.realpath(workspace_root):
+        return []
+    common_code, common_output = _git(base_workspace_root, "rev-parse", "--git-common-dir")
+    common_git_root = common_output.strip()
+    if common_code != 0 or not common_git_root:
+        return []
+    if not os.path.isabs(common_git_root):
+        common_git_root = os.path.join(base_workspace_root, common_git_root)
+    common_git_root = os.path.realpath(common_git_root)
+    if not os.path.isdir(common_git_root):
+        return []
+    metadata_dirs: list[str] = []
+    for git_argument in ("--git-dir", "--git-common-dir"):
+        code, output = _git(worktree_path, "rev-parse", git_argument)
+        candidate = output.strip()
+        if code != 0 or not candidate:
+            return []
+        if not os.path.isabs(candidate):
+            candidate = os.path.join(worktree_path, candidate)
+        candidate = os.path.realpath(candidate)
+        if not os.path.isdir(candidate) or not _is_path_within(candidate, common_git_root):
+            return []
+        if candidate not in metadata_dirs:
+            metadata_dirs.append(candidate)
+    return metadata_dirs
+
+
+def _with_codex_worktree_git_metadata_access(
+    executor_type: str,
+    command_args: list[str],
+    workspace_root: str,
+    workspace_isolation: dict | None,
+) -> list[str]:
+    if executor_type != "codex" or not command_args:
+        return command_args
+    metadata_dirs = _worktree_git_metadata_dirs(workspace_root, workspace_isolation)
+    if not metadata_dirs:
+        return command_args
+    existing_dirs = {
+        command_args[index + 1]
+        for index, value in enumerate(command_args[:-1])
+        if value == "--add-dir"
+    }
+    augmented = list(command_args)
+    for metadata_dir in metadata_dirs:
+        if metadata_dir not in existing_dirs:
+            augmented.extend(["--add-dir", metadata_dir])
+    return augmented
+
+
 def _safe_path_part(value: str) -> str:
     sanitized = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value or "").strip()).strip(".-")
     return sanitized or "task"
+
+
+def _safe_git_ref_component(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        raise RuntimeError("R&D work-item branch component is required")
+    normalized = _safe_path_part(raw)
+    if normalized.endswith(".lock"):
+        normalized = f"{normalized[:-5].rstrip('.-') or 'item'}-lock"
+    if normalized == raw:
+        return normalized
+    return f"{normalized}-{hashlib.sha256(raw.encode('utf-8')).hexdigest()[:12]}"
+
+
+def _frozen_rd_work_item_branch(task: dict) -> str | None:
+    request_config = task.get("request_config")
+    if not isinstance(request_config, dict):
+        return None
+    run_id = str(request_config.get("rd_collaboration_run_id") or "").strip()
+    work_item_id = str(request_config.get("rd_work_item_id") or "").strip()
+    if not run_id or not work_item_id:
+        return None
+    return f"rd/{_safe_git_ref_component(run_id)}/{_safe_git_ref_component(work_item_id)}"
 
 
 def _prepare_isolated_workspace(task: dict, workspace_root: str) -> tuple[str, dict | None]:
@@ -828,6 +927,22 @@ def _prepare_isolated_workspace(task: dict, workspace_root: str) -> tuple[str, d
             "worktree_path": workspace_root,
         }
     base_root = os.path.abspath(git_root.strip())
+    request_config = task.get("request_config")
+    request_config = request_config if isinstance(request_config, dict) else {}
+    raw_upstream_commits = request_config.get("upstream_delivery_commit_shas")
+    upstream_commits = raw_upstream_commits if isinstance(raw_upstream_commits, list) else []
+    if len(upstream_commits) > 32:
+        raise RuntimeError("too many upstream delivery commits")
+    normalized_upstream_commits = []
+    for value in upstream_commits:
+        commit_sha = str(value or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
+            raise RuntimeError("upstream delivery commit SHA is invalid")
+        code, output = _git(base_root, "cat-file", "-e", f"{commit_sha}^{{commit}}")
+        if code != 0:
+            raise RuntimeError(f"upstream delivery commit is unavailable: {output}")
+        if commit_sha not in normalized_upstream_commits:
+            normalized_upstream_commits.append(commit_sha)
     repo_name = _safe_path_part(os.path.basename(base_root))
     worktree_path = os.path.join(
         os.path.dirname(base_root),
@@ -835,7 +950,46 @@ def _prepare_isolated_workspace(task: dict, workspace_root: str) -> tuple[str, d
         repo_name,
         _safe_path_part(task_id),
     )
-    branch_name = f"ai-brain/{_safe_path_part(task_id)}"
+    branch_name = _frozen_rd_work_item_branch(task) or f"ai-brain/{_safe_path_part(task_id)}"
+    if normalized_upstream_commits:
+        code, worktree_list = _git(base_root, "worktree", "list", "--porcelain")
+        if code != 0:
+            raise RuntimeError(f"git worktree list failed: {worktree_list}")
+        expected_parent = os.path.realpath(os.path.dirname(worktree_path))
+        for block in worktree_list.split("\n\n"):
+            lines = block.splitlines()
+            existing_path = next(
+                (line.removeprefix("worktree ") for line in lines if line.startswith("worktree ")),
+                "",
+            )
+            existing_branch = next(
+                (line.removeprefix("branch ") for line in lines if line.startswith("branch ")),
+                "",
+            )
+            if existing_branch != f"refs/heads/{branch_name}" or not existing_path:
+                continue
+            real_existing_path = os.path.realpath(existing_path)
+            if real_existing_path == os.path.realpath(worktree_path):
+                continue
+            try:
+                inside_runner_parent = (
+                    os.path.commonpath([real_existing_path, expected_parent]) == expected_parent
+                )
+            except ValueError:
+                inside_runner_parent = False
+            if not inside_runner_parent:
+                raise RuntimeError("existing delivery branch worktree is outside runner isolation")
+            code, output = _git(
+                base_root,
+                "worktree",
+                "remove",
+                "--force",
+                real_existing_path,
+            )
+            if code != 0:
+                raise RuntimeError(f"stale delivery worktree removal failed: {output}")
+            if os.path.exists(real_existing_path):
+                shutil.rmtree(real_existing_path, ignore_errors=True)
     if os.path.exists(worktree_path):
         _discard_isolated_workspace(
             {
@@ -846,16 +1000,67 @@ def _prepare_isolated_workspace(task: dict, workspace_root: str) -> tuple[str, d
         )
     os.makedirs(os.path.dirname(worktree_path), exist_ok=True)
     # git worktree add keeps AI changes outside the primary workspace until review approval.
-    code, output = _git(base_root, "worktree", "add", "-b", branch_name, worktree_path, "HEAD")
+    branch_exists, _ = _git(
+        base_root,
+        "show-ref",
+        "--verify",
+        "--quiet",
+        f"refs/heads/{branch_name}",
+    )
+    if normalized_upstream_commits:
+        code, output = _git(
+            base_root,
+            "worktree",
+            "add",
+            "-B",
+            branch_name,
+            worktree_path,
+            normalized_upstream_commits[0],
+        )
+    elif branch_exists == 0:
+        code, output = _git(base_root, "worktree", "add", worktree_path, branch_name)
+    else:
+        code, output = _git(
+            base_root,
+            "worktree",
+            "add",
+            "-b",
+            branch_name,
+            worktree_path,
+            "HEAD",
+        )
     if code != 0:
         raise RuntimeError(f"git worktree add failed: {output}")
+    for commit_sha in normalized_upstream_commits[1:]:
+        code, output = _git(worktree_path, "merge", "--no-edit", commit_sha)
+        if code != 0:
+            _git(worktree_path, "merge", "--abort")
+            raise RuntimeError(f"upstream delivery integration failed: {output}")
     return worktree_path, {
         "base_workspace_root": base_root,
         "branch_name": branch_name,
         "mode": "git_worktree",
         "patch_path": None,
         "status": "active",
+        "upstream_delivery_commit_shas": normalized_upstream_commits,
         "worktree_path": worktree_path,
+    }
+
+
+def _frozen_workspace_branch_drift(isolation: dict) -> dict | None:
+    if not isinstance(isolation, dict) or isolation.get("mode") != "git_worktree":
+        return None
+    expected_branch_name = str(isolation.get("branch_name") or "").strip()
+    worktree_path = str(isolation.get("worktree_path") or "").strip()
+    if not expected_branch_name or not worktree_path:
+        return None
+    code, output = _git(worktree_path, "branch", "--show-current")
+    actual_branch_name = output.strip() if code == 0 else ""
+    if actual_branch_name == expected_branch_name:
+        return None
+    return {
+        "actual_branch_name": actual_branch_name or None,
+        "expected_branch_name": expected_branch_name,
     }
 
 
@@ -1112,21 +1317,39 @@ def _parsed_json_output(output_preview: str):
         if lines and lines[-1].startswith("```"):
             lines = lines[:-1]
         text = "\n".join(lines).strip()
-    candidates = [text]
-    object_start = text.find("{")
-    object_end = text.rfind("}")
-    if object_start >= 0 and object_end > object_start:
-        candidates.append(text[object_start:object_end + 1])
-    array_start = text.find("[")
-    array_end = text.rfind("]")
-    if array_start >= 0 and array_end > array_start:
-        candidates.append(text[array_start:array_end + 1])
-    for candidate in candidates:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    decoder = json.JSONDecoder()
+    parsed_candidates: list[tuple[int, object]] = []
+    for index, character in enumerate(text):
+        if character not in "{[":
+            continue
         try:
-            return json.loads(candidate)
+            parsed, _ = decoder.raw_decode(text[index:])
         except json.JSONDecodeError:
             continue
-    return None
+        if isinstance(parsed, (dict, list)):
+            parsed_candidates.append((index, parsed))
+
+    delivery_candidates = [
+        candidate
+        for candidate in parsed_candidates
+        if isinstance(candidate[1], dict) and "git_delivery" in candidate[1]
+    ]
+    if delivery_candidates:
+        return delivery_candidates[-1][1]
+
+    summary_candidates = [
+        candidate
+        for candidate in parsed_candidates
+        if isinstance(candidate[1], dict) and "summary" in candidate[1]
+    ]
+    if summary_candidates:
+        return summary_candidates[-1][1]
+    return parsed_candidates[-1][1] if parsed_candidates else None
 
 
 def _executor_result_json(
@@ -1874,8 +2097,7 @@ def _run_deployment_task(task: dict) -> None:
 
 def _git_capture(workspace_root: str, args: list[str]) -> tuple[int, str]:
     process = subprocess.run(
-        ["git", *args],
-        cwd=workspace_root,
+        ["git", "-C", workspace_root, *args],
         env={**os.environ, "PATH": _runner_search_path()},
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -1896,12 +2118,16 @@ def _quality_gate_change_summary(workspace_root: str, base_branch: str) -> dict:
         ["diff", "--name-only", compare_ref, "--"],
     )
     _, status_output = _git_capture(workspace_root, ["status", "--porcelain=v1"])
-    changed_files = {line.strip() for line in names_output.splitlines() if line.strip()}
+    changed_files = {
+        path
+        for line in names_output.splitlines()
+        if (path := line.strip()) and not _is_runner_workspace_artifact(path)
+    }
     for line in status_output.splitlines():
         path = line[3:].strip() if len(line) > 3 else ""
         if " -> " in path:
             path = path.split(" -> ", 1)[1]
-        if path:
+        if path and not _is_runner_workspace_artifact(path):
             changed_files.add(path)
     _, numstat_output = _git_capture(
         workspace_root,
@@ -2050,24 +2276,236 @@ def _quality_scan_findings(check_type: str, diff_text: str, changed_files: list[
     return findings
 
 
+def _safe_acceptance_relative_path(value: object) -> str | None:
+    raw_path = str(value or "").strip().replace("\\", "/")
+    if not raw_path or raw_path.startswith("/") or (len(raw_path) >= 2 and raw_path[1] == ":"):
+        return None
+    normalized = posixpath.normpath(raw_path)
+    if normalized in {".", ".."} or normalized.startswith("../"):
+        return None
+    return normalized
+
+
+def _is_runner_workspace_artifact(path: str) -> bool:
+    normalized = path.replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized == ".ai-brain-task.patch"
+
+
+def _acceptance_file_contains_result(
+    *,
+    case: dict,
+    commit_sha: str | None,
+    task_id: str,
+    workspace_root: str,
+) -> dict:
+    case_id = str(case.get("case_id") or "").strip()
+    verification = case.get("verification")
+    if not isinstance(verification, dict):
+        verification = {}
+    relative_path = _safe_acceptance_relative_path(verification.get("path"))
+    required_text = verification.get("required_text")
+    if not isinstance(required_text, list):
+        required_text = []
+    expected_text = [str(item) for item in required_text if str(item)]
+    failure_reason = ""
+    content = ""
+    if not case_id or verification.get("type") != "file_contains":
+        failure_reason = "Unsupported acceptance verification"
+    elif not commit_sha:
+        failure_reason = "Acceptance repository commit is unavailable"
+    elif not relative_path or not expected_text:
+        failure_reason = "Acceptance verification is incomplete"
+    else:
+        status_code, status_output = _git_capture(workspace_root, ["status", "--porcelain=v1"])
+        if status_code != 0:
+            failure_reason = "Acceptance repository status is unavailable"
+        elif any(
+            not _is_runner_workspace_artifact(
+                (line[3:].strip() if len(line) > 3 else "").split(" -> ", 1)[-1]
+            )
+            for line in status_output.splitlines()
+        ):
+            failure_reason = "Acceptance verification requires a clean worktree"
+        else:
+            object_ref = f"{commit_sha}:{relative_path}"
+            size_code, size_output = _git_capture(
+                workspace_root,
+                ["cat-file", "-s", object_ref],
+            )
+            try:
+                artifact_size = int(size_output.strip()) if size_code == 0 else -1
+            except ValueError:
+                artifact_size = -1
+            if artifact_size < 0:
+                failure_reason = "Acceptance artifact is unavailable in the frozen commit"
+            elif artifact_size > 1024 * 1024:
+                failure_reason = "Acceptance artifact exceeds verification size limit"
+            else:
+                content_code, content = _git_capture(
+                    workspace_root,
+                    ["show", "--no-textconv", object_ref],
+                )
+                if content_code != 0:
+                    failure_reason = "Acceptance artifact is unavailable in the frozen commit"
+                elif any(item not in content for item in expected_text):
+                    failure_reason = "Acceptance artifact is missing required text"
+        if not failure_reason and any(item not in content for item in expected_text):
+            failure_reason = "Acceptance artifact is missing required text"
+    status = "passed" if not failure_reason else "failed"
+    evidence_content = "|".join(
+        [
+            case_id,
+            relative_path or "invalid-path",
+            status,
+            failure_reason or hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        ]
+    )
+    verification_fingerprint = hashlib.sha256(
+        json.dumps(
+            verification,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()[:32]
+    return {
+        "artifact_ref": _quality_evidence_ref(task_id, f"acceptance:{case_id}", evidence_content),
+        "case_id": case_id,
+        "commit_sha": commit_sha,
+        "input_fingerprint": verification_fingerprint,
+        "status": status,
+        "summary": failure_reason or "Frozen acceptance case verified",
+    }
+
+
+def _verify_acceptance_cases(
+    *,
+    acceptance_cases: object,
+    task_id: str,
+    workspace_root: str,
+) -> list[dict]:
+    if not isinstance(acceptance_cases, list):
+        return []
+    code, output = _git_capture(workspace_root, ["rev-parse", "HEAD"])
+    commit_sha = output.strip() if code == 0 and output.strip() else None
+    return [
+        _acceptance_file_contains_result(
+            case=case,
+            commit_sha=commit_sha,
+            task_id=task_id,
+            workspace_root=workspace_root,
+        )
+        for case in acceptance_cases
+        if isinstance(case, dict)
+    ]
+
+
+def _prepare_frozen_commit_workspace(
+    *,
+    expected_commit_sha: str,
+    source_workspace_root: str,
+    task_id: str,
+    workspace_suffix: str,
+    error_context: str,
+) -> tuple[str, dict | None]:
+    commit_sha = str(expected_commit_sha or "").strip().lower()
+    if not commit_sha:
+        return source_workspace_root, None
+    if not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
+        raise RuntimeError(f"{error_context} expected commit SHA is invalid")
+    code, git_root = _git(source_workspace_root, "rev-parse", "--show-toplevel")
+    if code != 0 or not git_root.strip():
+        raise RuntimeError(f"{error_context} source repository is unavailable")
+    base_root = os.path.abspath(git_root.strip())
+    code, output = _git(base_root, "cat-file", "-e", f"{commit_sha}^{{commit}}")
+    if code != 0:
+        raise RuntimeError(f"{error_context} expected commit is unavailable: {output}")
+    repo_name = _safe_path_part(os.path.basename(base_root))
+    worktree_path = os.path.join(
+        os.path.dirname(base_root),
+        WORKTREE_PARENT_DIR_NAME,
+        repo_name,
+        f"{_safe_path_part(task_id)}-{_safe_path_part(workspace_suffix)}",
+    )
+    isolation = {
+        "base_workspace_root": base_root,
+        "branch_name": "",
+        "mode": "git_worktree",
+        "worktree_path": worktree_path,
+    }
+    if os.path.exists(worktree_path):
+        _discard_isolated_workspace(isolation)
+    os.makedirs(os.path.dirname(worktree_path), exist_ok=True)
+    code, output = _git(
+        base_root,
+        "worktree",
+        "add",
+        "--detach",
+        worktree_path,
+        commit_sha,
+    )
+    if code != 0:
+        raise RuntimeError(f"{error_context} worktree add failed: {output}")
+    return worktree_path, isolation
+
+
+def _prepare_quality_gate_workspace(
+    *,
+    expected_commit_sha: str,
+    source_workspace_root: str,
+    task_id: str,
+) -> tuple[str, dict | None]:
+    return _prepare_frozen_commit_workspace(
+        expected_commit_sha=expected_commit_sha,
+        source_workspace_root=source_workspace_root,
+        task_id=task_id,
+        workspace_suffix="quality-gate",
+        error_context="quality gate",
+    )
+
+
+def _prepare_ai_review_workspace(
+    *,
+    expected_commit_sha: str,
+    source_workspace_root: str,
+    task_id: str,
+) -> tuple[str, dict | None]:
+    return _prepare_frozen_commit_workspace(
+        expected_commit_sha=expected_commit_sha,
+        source_workspace_root=source_workspace_root,
+        task_id=task_id,
+        workspace_suffix="ai-review",
+        error_context="AI reviewer",
+    )
+
+
 def _run_quality_gate_task(task: dict) -> None:
     task_id = str(task["id"])
-    workspace_root = str(task.get("workspace_root") or "")
+    source_workspace_root = str(task.get("workspace_root") or "")
     timeout_seconds = int(task.get("timeout_seconds") or 1800)
     input_payload = task.get("input_payload")
     if not isinstance(input_payload, dict):
         input_payload = {}
-    if not _workspace_allowed(workspace_root):
+    if not _workspace_allowed(source_workspace_root):
         _complete_task(
             task_id,
             status="failed",
             error_code="QUALITY_GATE_WORKSPACE_NOT_ALLOWED",
             error_message="Quality gate workspace is outside the runner whitelist",
-            result_json={"checks": [], "workspace_root": workspace_root},
+            result_json={"checks": [], "workspace_root": source_workspace_root},
         )
         return
     started_at = time.time()
+    quality_gate_isolation: dict | None = None
+    workspace_root = source_workspace_root
     try:
+        workspace_root, quality_gate_isolation = _prepare_quality_gate_workspace(
+            expected_commit_sha=str(input_payload.get("expected_commit_sha") or ""),
+            source_workspace_root=source_workspace_root,
+            task_id=task_id,
+        )
         change_summary = _quality_gate_change_summary(
             workspace_root,
             str(input_payload.get("base_branch") or ""),
@@ -2155,6 +2593,11 @@ def _run_quality_gate_task(task: dict) -> None:
         }
         result.update(
             {
+                "acceptance_results": _verify_acceptance_cases(
+                    acceptance_cases=input_payload.get("acceptance_cases"),
+                    task_id=task_id,
+                    workspace_root=workspace_root,
+                ),
                 "checks": checks,
                 "command_shell": False,
                 "duration_ms": int((time.time() - started_at) * 1000),
@@ -2180,8 +2623,11 @@ def _run_quality_gate_task(task: dict) -> None:
             status="failed",
             error_code="QUALITY_GATE_EXECUTION_FAILED",
             error_message=f"Quality gate execution failed: {type(exc).__name__}",
-            result_json={"checks": [], "workspace_root": workspace_root},
+            result_json={"checks": [], "workspace_root": source_workspace_root},
         )
+    finally:
+        if quality_gate_isolation is not None:
+            _discard_isolated_workspace(quality_gate_isolation)
 
 
 def _high_risk_operations(instruction: str) -> list[str]:
@@ -2215,6 +2661,174 @@ def _run_assessment_gateway_task(task: dict) -> None:
     )
 
 
+def _run_work_item_review_task(task: dict) -> None:
+    # Rebuild the frozen commit from the durable repository when available and
+    # fail closed on any mutation of the detached review workspace.
+    task_id = str(task["id"])
+    executor_type = str(task.get("executor_type") or "")
+    source_workspace_root = str(task.get("workspace_root") or "")
+    instruction = str(task.get("instruction") or "")
+    timeout_seconds = int(task.get("timeout_seconds") or 600)
+    input_payload = task.get("input_payload")
+    if not isinstance(input_payload, dict):
+        input_payload = {}
+    if not _workspace_allowed(source_workspace_root):
+        _complete_task(
+            task_id,
+            status="failed",
+            error_code="AI_REVIEWER_WORKSPACE_NOT_ALLOWED",
+            error_message="AI reviewer workspace is outside the runner whitelist",
+            result_json={"workspace_root": source_workspace_root},
+        )
+        return
+    command, command_args, command_error = _resolve_executor_command(executor_type)
+    if command_error:
+        _complete_task(
+            task_id,
+            status="failed",
+            error_code="AI_EXECUTOR_COMMAND_NOT_ALLOWED",
+            error_message=command_error,
+            result_json={
+                "command": command,
+                "command_args": command_args,
+                "executor_type": executor_type,
+                "workspace_root": source_workspace_root,
+            },
+        )
+        return
+    request_config = task.get("request_config")
+    if not isinstance(request_config, dict):
+        request_config = {}
+    isolation = request_config.get("workspace_isolation")
+    if not isinstance(isolation, dict):
+        isolation = None
+    started_at = time.time()
+    review_isolation: dict | None = None
+    workspace_root = source_workspace_root
+    try:
+        workspace_root, review_isolation = _prepare_ai_review_workspace(
+            expected_commit_sha=str(input_payload.get("expected_commit_sha") or ""),
+            source_workspace_root=source_workspace_root,
+            task_id=task_id,
+        )
+        command_args = _with_codex_worktree_git_metadata_access(
+            executor_type,
+            command_args,
+            workspace_root,
+            review_isolation or isolation,
+        )
+        before_head_code, before_head_output = _git(workspace_root, "rev-parse", "HEAD")
+        before_status_code, before_status_output = _git(
+            workspace_root,
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+        )
+        if before_head_code != 0 or before_status_code != 0:
+            _complete_task(
+                task_id,
+                status="failed",
+                error_code="AI_REVIEWER_WORKSPACE_INVALID",
+                error_message="AI reviewer could not freeze the repository state",
+                result_json={"workspace_root": source_workspace_root},
+            )
+            return
+        _append_logs(
+            task_id,
+            [{"level": "info", "message": f"Starting read-only {executor_type} review"}],
+            status="running",
+        )
+        exit_code, preview, timed_out, server_terminal_status = _stream_process_output(
+            command_args=command_args,
+            instruction=instruction,
+            task_id=task_id,
+            timeout_seconds=timeout_seconds,
+            workspace_root=workspace_root,
+        )
+        duration_ms = int((time.time() - started_at) * 1000)
+        if server_terminal_status == "cancel_requested":
+            _complete_task(
+                task_id,
+                status="cancelled",
+                error_code="AI_EXECUTOR_TASK_CANCELLED",
+                error_message="AI reviewer cancelled by platform request",
+                result_json={
+                    "duration_ms": duration_ms,
+                    "workspace_root": source_workspace_root,
+                },
+            )
+            return
+        if server_terminal_status:
+            return
+        if timed_out:
+            _complete_task(
+                task_id,
+                status="timed_out",
+                error_code="AI_EXECUTOR_TASK_TIMEOUT",
+                error_message=f"AI reviewer timed out after {timeout_seconds}s",
+                result_json={
+                    "duration_ms": duration_ms,
+                    "workspace_root": source_workspace_root,
+                },
+            )
+            return
+        after_head_code, after_head_output = _git(workspace_root, "rev-parse", "HEAD")
+        after_status_code, after_status_output = _git(
+            workspace_root,
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+        )
+        mutated = (
+            after_head_code != 0
+            or after_status_code != 0
+            or before_head_output.strip() != after_head_output.strip()
+            or before_status_output != after_status_output
+        )
+        if mutated:
+            _complete_task(
+                task_id,
+                status="failed",
+                error_code="AI_REVIEWER_MUTATED_WORKSPACE",
+                error_message="AI reviewer changed the frozen read-only workspace",
+                result_json={
+                    "duration_ms": duration_ms,
+                    "executor_type": executor_type,
+                    "workspace_root": source_workspace_root,
+                },
+            )
+            return
+        status = "succeeded" if exit_code == 0 else "failed"
+        _complete_task(
+            task_id,
+            status=status,
+            error_code=None if status == "succeeded" else "AI_EXECUTOR_COMMAND_FAILED",
+            error_message=None if status == "succeeded" else preview,
+            result_json=_executor_result_json(
+                duration_ms=duration_ms,
+                execution_workspace_root=workspace_root,
+                executor_type=executor_type,
+                exit_code=exit_code,
+                output_preview=preview,
+                workspace_root=source_workspace_root,
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 - report bounded reviewer failures.
+        _complete_task(
+            task_id,
+            status="failed",
+            error_code=exc.__class__.__name__,
+            error_message=str(exc),
+            result_json={
+                "executor_type": executor_type,
+                "workspace_root": source_workspace_root,
+            },
+        )
+    finally:
+        if review_isolation is not None:
+            _discard_isolated_workspace(review_isolation)
+
+
 def _run_task(task: dict) -> None:
     task_id = task["id"]
     executor_type = str(task.get("executor_type") or "")
@@ -2229,6 +2843,9 @@ def _run_task(task: dict) -> None:
         return
     if task.get("task_kind") == "quality_gate":
         _run_quality_gate_task(task)
+        return
+    if task.get("task_kind") == "work_item_review":
+        _run_work_item_review_task(task)
         return
     high_risk_operations = _high_risk_operations(instruction)
     if high_risk_operations and not _task_has_approval(task):
@@ -2288,22 +2905,41 @@ def _run_task(task: dict) -> None:
             configured_path = os.path.realpath(
                 str(configured_isolation.get("worktree_path") or "")
             )
-            if configured_path != os.path.realpath(workspace_root):
-                raise RuntimeError("Agent loop workspace does not match isolated worktree")
-            if not os.path.isdir(os.path.join(configured_path, ".git")) and not os.path.isfile(
-                os.path.join(configured_path, ".git")
-            ):
+            configured_base_workspace = os.path.realpath(
+                str(configured_isolation.get("base_workspace_root") or "")
+            )
+            if configured_base_workspace != os.path.realpath(workspace_root):
+                raise RuntimeError(
+                    "Agent loop isolated worktree does not belong to the approved base workspace"
+                )
+            configured_git_path = os.path.join(configured_path, ".git")
+            configured_workspace_available = os.path.isdir(configured_git_path) or os.path.isfile(
+                configured_git_path
+            )
+            if configured_workspace_available:
+                execution_workspace_root = configured_path
+                workspace_isolation = {
+                    **configured_isolation,
+                    "status": "agent_loop_reused",
+                }
+            elif request_config.get("upstream_delivery_commit_shas"):
+                execution_workspace_root, workspace_isolation = _prepare_isolated_workspace(
+                    task,
+                    workspace_root,
+                )
+            else:
                 raise RuntimeError("Agent loop isolated worktree is unavailable")
-            execution_workspace_root = configured_path
-            workspace_isolation = {
-                **configured_isolation,
-                "status": "agent_loop_reused",
-            }
         else:
             execution_workspace_root, workspace_isolation = _prepare_isolated_workspace(
                 task,
                 workspace_root,
             )
+        command_args = _with_codex_worktree_git_metadata_access(
+            executor_type,
+            command_args,
+            execution_workspace_root,
+            workspace_isolation,
+        )
         _append_logs(
             task_id,
             [
@@ -2379,6 +3015,39 @@ def _run_task(task: dict) -> None:
                     {
                         "level": "error",
                         "message": f"{executor_type} timed out after {timeout_seconds}s",
+                    }
+                ],
+                result_json=_executor_result_json(
+                    duration_ms=duration_ms,
+                    execution_workspace_root=execution_workspace_root,
+                    executor_type=executor_type,
+                    exit_code=exit_code,
+                    output_preview=preview,
+                    workspace_isolation=workspace_isolation,
+                    workspace_root=workspace_root,
+                ),
+            )
+            return
+        branch_drift = _frozen_workspace_branch_drift(workspace_isolation)
+        if branch_drift is not None:
+            workspace_isolation = {
+                **(workspace_isolation or {}),
+                **branch_drift,
+                "status": "retained_after_branch_drift",
+            }
+            _complete_task(
+                task_id,
+                status="failed",
+                error_code="AI_EXECUTOR_FROZEN_BRANCH_DRIFT",
+                error_message=(
+                    "Executor changed the frozen work-item branch "
+                    f"from {branch_drift['expected_branch_name']} to "
+                    f"{branch_drift['actual_branch_name'] or '<detached>'}"
+                ),
+                logs=[
+                    {
+                        "level": "error",
+                        "message": "Frozen work-item branch drift detected",
                     }
                 ],
                 result_json=_executor_result_json(

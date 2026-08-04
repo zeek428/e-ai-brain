@@ -30,6 +30,7 @@ from app.services.rd_dispatch_fault_decision import (
     runner_safety_decision_options,
     runner_safety_decision_recommendation,
 )
+from app.services.rd_git_branches import rd_work_item_branch_name
 from app.services.rd_requirement_entry_adapters import require_v2_task_work_item_entrypoint
 from app.services.rd_task_executor_policies import (
     prepare_rd_task_executor_task,
@@ -77,6 +78,166 @@ def _work_item_execution_records(
     collection_name: str,
 ) -> dict[str, dict[str, Any]]:
     return read_memory_dict(current_store, collection_name)
+
+
+def _latest_retained_work_item_workspace(
+    current_store: Any,
+    *,
+    work_item_id: str,
+) -> dict[str, Any] | None:
+    """Return the newest cancellation-retained worktree for explicit rework."""
+    repository = getattr(current_store, "repository", None)
+    list_runner_tasks = getattr(repository, "list_ai_executor_tasks", None)
+    records = (
+        list_runner_tasks(
+            ai_task_id=None,
+            product_scope_ids=None,
+            runner_id=None,
+            scheduled_job_run_id=None,
+            status=None,
+        )
+        if callable(list_runner_tasks)
+        else list(_work_item_execution_records(current_store, "ai_executor_tasks").values())
+    )
+    ordered = sorted(
+        (dict(record) for record in records if isinstance(record, dict)),
+        key=lambda record: str(record.get("finished_at") or record.get("updated_at") or ""),
+        reverse=True,
+    )
+    for runner_task in ordered:
+        input_payload = runner_task.get("input_payload")
+        if (
+            not isinstance(input_payload, dict)
+            or input_payload.get("rd_work_item_id") != work_item_id
+        ):
+            continue
+        result_json = runner_task.get("result_json")
+        isolation = (
+            result_json.get("workspace_isolation")
+            if isinstance(result_json, dict)
+            else None
+        )
+        if (
+            not isinstance(isolation, dict)
+            or isolation.get("mode") != "git_worktree"
+            or isolation.get("status") != "retained_after_cancel"
+            or not str(isolation.get("base_workspace_root") or "").strip()
+            or not str(isolation.get("worktree_path") or "").strip()
+        ):
+            continue
+        return deepcopy(isolation)
+    return None
+
+
+def _runner_delivery_commit_sha(runner_task: dict[str, Any]) -> str | None:
+    result_json = runner_task.get("result_json")
+    result_json = result_json if isinstance(result_json, dict) else {}
+    for candidate in (
+        result_json,
+        result_json.get("result"),
+        result_json.get("parsed_output"),
+    ):
+        delivery = candidate.get("git_delivery") if isinstance(candidate, dict) else None
+        if not isinstance(delivery, dict):
+            continue
+        commit_sha = str(delivery.get("local_commit_sha") or "").strip().lower()
+        if len(commit_sha) == 40 and all(
+            character in "0123456789abcdef" for character in commit_sha
+        ):
+            return commit_sha
+    return None
+
+
+def _upstream_delivery_commit_shas(
+    current_store: Any,
+    *,
+    collaboration_run_id: str,
+    work_item_id: str,
+) -> list[str]:
+    """Freeze approved predecessor delivery commits into a successor execution."""
+    repository = getattr(current_store, "repository", None)
+    list_dependencies = getattr(repository, "list_rd_work_item_dependencies", None)
+    dependencies = (
+        list_dependencies(collaboration_run_id)
+        if callable(list_dependencies)
+        else list(
+            _work_item_execution_records(
+                current_store,
+                "rd_work_item_dependencies",
+            ).values()
+        )
+    )
+    predecessor_ids = sorted(
+        {
+            str(dependency.get("predecessor_work_item_id") or "")
+            for dependency in dependencies
+            if dependency.get("successor_work_item_id") == work_item_id
+            and dependency.get("predecessor_work_item_id")
+        }
+    )
+    if not predecessor_ids:
+        return []
+    list_work_items = getattr(repository, "list_rd_work_items_by_ids", None)
+    work_items = (
+        list_work_items(collaboration_run_id, predecessor_ids)
+        if callable(list_work_items)
+        else [
+            item
+            for predecessor_id in predecessor_ids
+            if isinstance(
+                item := _work_item_execution_records(
+                    current_store,
+                    "rd_work_items",
+                ).get(predecessor_id),
+                dict,
+            )
+        ]
+    )
+    work_item_by_id = {str(item["id"]): item for item in work_items}
+    list_runner_tasks = getattr(repository, "list_ai_executor_tasks", None)
+    commits: list[str] = []
+    for predecessor_id in predecessor_ids:
+        predecessor = work_item_by_id.get(predecessor_id)
+        if not predecessor or predecessor.get("status") != "completed":
+            continue
+        ai_task_id = str(predecessor.get("ai_task_id") or "").strip()
+        if not ai_task_id:
+            continue
+        runner_tasks = (
+            list_runner_tasks(ai_task_id=ai_task_id)
+            if callable(list_runner_tasks)
+            else [
+                task
+                for task in _work_item_execution_records(
+                    current_store,
+                    "ai_executor_tasks",
+                ).values()
+                if task.get("ai_task_id") == ai_task_id
+            ]
+        )
+        ordered_tasks = sorted(
+            runner_tasks,
+            key=lambda task: str(
+                task.get("finished_at")
+                or task.get("updated_at")
+                or task.get("created_at")
+                or ""
+            ),
+            reverse=True,
+        )
+        commit_sha = next(
+            (
+                candidate_sha
+                for candidate in ordered_tasks
+                if candidate.get("task_kind") == "coding"
+                and candidate.get("status") == "succeeded"
+                and (candidate_sha := _runner_delivery_commit_sha(candidate)) is not None
+            ),
+            None,
+        )
+        if commit_sha and commit_sha not in commits:
+            commits.append(commit_sha)
+    return commits
 
 
 def _approved_runner_safety_provenance(
@@ -493,6 +654,13 @@ def dispatch_ai_task_for_work_item(
         persist=repository is None,
     )
     task = dict(created["task"])
+    frozen_delivery_branch = rd_work_item_branch_name(collaboration_run_id, work_item_id)
+    task["input_json"] = {
+        **dict(task.get("input_json") or {}),
+        "branch": frozen_delivery_branch,
+        "rd_collaboration_run_id": collaboration_run_id,
+        "rd_work_item_id": work_item_id,
+    }
 
     list_attempts = getattr(repository, "list_rd_work_item_attempts", None)
     persisted_attempts = list_attempts(work_item_id) if callable(list_attempts) else None
@@ -502,6 +670,34 @@ def dispatch_ai_task_for_work_item(
         if isinstance(persisted_attempts, list)
         else list(attempt_store.values())
     )
+    previous_attempt = max(
+        (
+            attempt
+            for attempt in attempts
+            if attempt.get("work_item_id") == work_item_id
+            and isinstance(attempt.get("rework_evidence"), list)
+            and attempt.get("rework_evidence")
+        ),
+        key=lambda candidate: int(candidate.get("attempt_no") or 0),
+        default=None,
+    )
+    rework_feedback = (
+        [
+            _immutable_json_payload(evidence)
+            for evidence in previous_attempt.get("rework_evidence") or []
+            if isinstance(evidence, dict) and str(evidence.get("comment") or "").strip()
+        ]
+        if previous_attempt is not None
+        else []
+    )
+    if rework_feedback:
+        task["input_json"] = {
+            **dict(task.get("input_json") or {}),
+            "rd_collaboration": {
+                **dict((task.get("input_json") or {}).get("rd_collaboration") or {}),
+                "rework_feedback": deepcopy(rework_feedback),
+            },
+        }
     active_attempt = next(
         (
             attempt
@@ -577,7 +773,15 @@ def dispatch_ai_task_for_work_item(
         "status": "running",
         "executor_profile_id": profile["id"],
         "ai_employee_id": owner["ai_employee_id"],
-        "input_json": {"task_id": task["id"], "strategy_snapshot_id": snapshot["id"]},
+        "input_json": {
+            "task_id": task["id"],
+            "strategy_snapshot_id": snapshot["id"],
+            **(
+                {"rework_feedback": deepcopy(rework_feedback)}
+                if rework_feedback
+                else {}
+            ),
+        },
         "result_json": None,
         "failure_json": None,
         "rework_evidence": [],
@@ -641,6 +845,7 @@ def dispatch_ai_task_for_work_item(
     frozen_execution_snapshot = deepcopy(policy["rd_execution_policy_snapshot"])
     runner_task["input_payload"] = {
         **dict(runner_task.get("input_payload") or {}),
+        "branch": frozen_delivery_branch,
         "rd_collaboration_run_id": collaboration_run_id,
         "rd_work_item_attempt_id": attempt["id"],
         "rd_work_item_id": work_item_id,
@@ -648,11 +853,67 @@ def dispatch_ai_task_for_work_item(
     }
     runner_task["request_config"] = {
         **dict(runner_task.get("request_config") or {}),
+        "branch": frozen_delivery_branch,
         "rd_collaboration_run_id": collaboration_run_id,
         "rd_work_item_attempt_id": attempt["id"],
         "rd_work_item_id": work_item_id,
         "rd_execution_policy_snapshot": frozen_execution_snapshot,
     }
+    upstream_delivery_commits = _upstream_delivery_commit_shas(
+        current_store,
+        collaboration_run_id=collaboration_run_id,
+        work_item_id=work_item_id,
+    )
+    if upstream_delivery_commits:
+        runner_task["input_payload"] = {
+            **dict(runner_task.get("input_payload") or {}),
+            "upstream_delivery_commit_shas": upstream_delivery_commits,
+        }
+        runner_task["request_config"] = {
+            **dict(runner_task.get("request_config") or {}),
+            "upstream_delivery_commit_shas": upstream_delivery_commits,
+        }
+        runner_task["instruction"] = (
+            f"{runner_task.get('instruction') or ''}\n\n"
+            "上游交付基线：平台已冻结并验证前序工作项的本地提交，隔离工作区必须以"
+            "这些提交为基线，不得回退或声称文件缺失：\n"
+            f"{json.dumps(upstream_delivery_commits, ensure_ascii=False)}"
+        )
+    if rework_feedback:
+        runner_task["input_payload"] = {
+            **dict(runner_task.get("input_payload") or {}),
+            "rework_feedback": deepcopy(rework_feedback),
+        }
+        runner_task["request_config"] = {
+            **dict(runner_task.get("request_config") or {}),
+            "rework_feedback": deepcopy(rework_feedback),
+        }
+        runner_task["instruction"] = (
+            f"{runner_task.get('instruction') or ''}\n\n"
+            "返工评审反馈（不得扩展冻结工作项范围；逐项修正并在输出中说明证据）：\n"
+            f"{json.dumps(rework_feedback, ensure_ascii=False, sort_keys=True)}\n"
+            "真实性边界：不得把尚未发生的下游状态写成已完成事实。远程推送、产品版本 "
+            "ready_for_release、协作运行完成和部署结果由后续确定性阶段生成；当前工作项"
+            "只能引用已经持久化的证据。"
+        )
+    retained_workspace = _latest_retained_work_item_workspace(
+        current_store,
+        work_item_id=work_item_id,
+    )
+    retained_upstream_commits = (
+        retained_workspace.get("upstream_delivery_commit_shas")
+        if isinstance(retained_workspace, dict)
+        else None
+    )
+    if retained_workspace is not None and (
+        not upstream_delivery_commits
+        or retained_upstream_commits == upstream_delivery_commits
+    ):
+        runner_task["request_config"] = {
+            **dict(runner_task["request_config"]),
+            "reuse_workspace": True,
+            "workspace_isolation": retained_workspace,
+        }
     if repository is None:
         _work_item_execution_records(current_store, "ai_executor_tasks")[runner_task["id"]] = (
             runner_task

@@ -238,7 +238,11 @@ def test_full_chain_regression_script_writes_structured_json_report():
         '"skipped_keys": skipped_keys',
         '"is_complete_chain": not skipped_keys',
         '"status": status',
-        '"steps": [{"detail": step.detail, "name": step.name} for step in steps]',
+        '"steps": [',
+        '"detail": step.detail',
+        '"name": step.name',
+        '"evidence": step.evidence',
+        "for step in steps",
         'status="passed"',
         'status="failed"',
         "Full-chain regression report written to",
@@ -378,10 +382,8 @@ def test_full_chain_regression_knowledge_index_checks_are_split_from_runner():
     script_content = script_path.read_text(encoding="utf-8")
     helper_content = helper_path.read_text(encoding="utf-8")
 
-    assert (
-        "from full_chain_regression_knowledge import "
-        "validate_knowledge_index_health_quick_regression"
-    ) in script_content
+    assert "from full_chain_regression_knowledge import" in script_content
+    assert "validate_knowledge_index_health_quick_regression" in script_content
     assert "def validate_knowledge_index_health_quick_regression(" not in script_content
     assert "Knowledge index health missed readable permission scope labels" not in script_content
     assert "/api/knowledge/documents/{document_id}/retry-index" not in script_content
@@ -396,10 +398,8 @@ def test_full_chain_regression_code_inspection_checks_are_split_from_runner():
     script_content = script_path.read_text(encoding="utf-8")
     helper_content = helper_path.read_text(encoding="utf-8")
 
-    assert (
-        "from full_chain_regression_code_inspection import "
-        "validate_code_inspection_governance_quick_regression"
-    ) in script_content
+    assert "from full_chain_regression_code_inspection import" in script_content
+    assert "validate_code_inspection_governance_quick_regression" in script_content
     assert "def validate_code_inspection_governance_quick_regression(" not in script_content
     assert "version_dashboard_code_inspection_governance" not in script_content
     assert "def validate_code_inspection_governance_quick_regression(" in helper_content
@@ -433,10 +433,8 @@ def test_full_chain_regression_permission_visibility_checks_are_split_from_runne
     script_content = script_path.read_text(encoding="utf-8")
     helper_content = helper_path.read_text(encoding="utf-8")
 
-    assert (
-        "from full_chain_regression_permissions import "
-        "validate_permission_visibility_quick_regression"
-    ) in script_content
+    assert "from full_chain_regression_permissions import" in script_content
+    assert "validate_permission_visibility_quick_regression" in script_content
     assert "def validate_permission_visibility_quick_regression(" not in script_content
     assert "permission_visibility_role_preview" not in script_content
     assert "Permission diagnostics missed readable effective scope" not in script_content

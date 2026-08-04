@@ -151,6 +151,13 @@ def move_ai_task_to_executor_review(
         reviews=reviews or None,
         task=updated_task,
     )
+    from app.services.rd_ai_work_item_reviews import queue_ai_work_item_review_if_needed
+
+    queue_ai_work_item_review_if_needed(
+        current_store,
+        ai_task=updated_task,
+        quality_gate_run=quality_gate_run,
+    )
 
 
 def complete_rd_coding_runner_atomically(

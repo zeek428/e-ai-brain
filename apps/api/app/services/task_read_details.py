@@ -90,12 +90,23 @@ def _pending_reviews_with_recovered_summaries(
     current_store: Any,
     items: list[dict[str, Any]],
     *,
-    read_store: Any,
+    read_store: Any | None = None,
 ) -> list[dict[str, Any]]:
     recovered_items: list[dict[str, Any]] = []
     for review in items:
+        review = dict(review)
+        has_task_output = "_task_output_json" in review
+        task_output = review.pop("_task_output_json", None)
         content = review.get("content")
-        task = read_store.ai_tasks.get(review.get("ai_task_id"))
+        task = (
+            {"id": review.get("ai_task_id"), "output_json": task_output}
+            if has_task_output
+            else (
+                read_store.ai_tasks.get(review.get("ai_task_id"))
+                if read_store is not None
+                else None
+            )
+        )
         if (
             not isinstance(content, dict)
             or task is None
@@ -288,7 +299,6 @@ def pending_reviews_response(
             items = _pending_reviews_with_recovered_summaries(
                 current_store,
                 items,
-                read_store=task_workflow_read_store(current_store),
             )
             return add_list_observability(
                 {
@@ -325,7 +335,6 @@ def pending_reviews_response(
         page_items = _pending_reviews_with_recovered_summaries(
             current_store,
             page_items,
-            read_store=task_workflow_read_store(current_store),
         )
         return add_list_observability(
             {

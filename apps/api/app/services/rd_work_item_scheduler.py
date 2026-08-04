@@ -1011,6 +1011,7 @@ def review_work_item(
     actor: dict[str, Any],
     version: int,
     idempotency_key: str,
+    reviewer_executor_profile_id: str | None = None,
 ) -> dict[str, Any]:
     """Apply the fixed approve/rework/reject review mapping."""
     from app.services.rd_maintenance_fence import require_rd_write_allowed
@@ -1031,6 +1032,7 @@ def review_work_item(
         "comment": comment,
         "version": version,
         "actor_id": actor.get("id"),
+        "reviewer_executor_profile_id": reviewer_executor_profile_id,
     }
     command_id = _command_key(
         command_type="review_work_item", aggregate_id=work_item_id, idempotency_key=idempotency_key
@@ -1053,6 +1055,7 @@ def review_work_item(
             version=version,
             idempotency_key=idempotency_key,
             request=request,
+            reviewer_executor_profile_id=reviewer_executor_profile_id,
         )
     item = _records(store, "rd_work_items").get(work_item_id)
     if (
@@ -1070,6 +1073,13 @@ def review_work_item(
         or owner is None
         or reviewer["id"] == owner["id"]
         or not _actor_matches_seat(actor, reviewer)
+        or (
+            reviewer_executor_profile_id is not None
+            and (
+                reviewer.get("subject_type") != "ai_employee"
+                or reviewer.get("executor_profile_id") != reviewer_executor_profile_id
+            )
+        )
     ):
         raise api_error(
             403, "FORBIDDEN", "Reviewer must match the independent frozen reviewer seat"
@@ -1135,7 +1145,10 @@ def review_work_item(
             "role_code": reviewer["role_code"],
             "seat_id": reviewer["id"],
         },
-        executor_profile_id=attempt.get("executor_profile_id") if attempt else None,
+        executor_profile_id=(
+            reviewer_executor_profile_id
+            or (attempt.get("executor_profile_id") if attempt else None)
+        ),
         actor_id=str(actor["id"]),
         attempt_id=attempt.get("id") if attempt else None,
     )
@@ -1170,6 +1183,7 @@ def _review_work_item_repository(
     version: int,
     idempotency_key: str,
     request: dict[str, Any],
+    reviewer_executor_profile_id: str | None,
 ) -> dict[str, Any]:
     get_item = getattr(repository, "get_rd_work_item", None)
     get_seat = getattr(repository, "get_rd_run_seat", None)
@@ -1190,6 +1204,13 @@ def _review_work_item_repository(
         or owner is None
         or reviewer["id"] == owner["id"]
         or not _actor_matches_seat(actor, reviewer)
+        or (
+            reviewer_executor_profile_id is not None
+            and (
+                reviewer.get("subject_type") != "ai_employee"
+                or reviewer.get("executor_profile_id") != reviewer_executor_profile_id
+            )
+        )
     ):
         raise api_error(
             403, "FORBIDDEN", "Reviewer must match the independent frozen reviewer seat"
@@ -1259,7 +1280,9 @@ def _review_work_item_repository(
                 "seat_id": reviewer["id"],
                 "human_user_id": reviewer.get("human_user_id"),
                 "ai_employee_id": reviewer.get("ai_employee_id"),
-                "executor_profile_id": attempt.get("executor_profile_id"),
+                "executor_profile_id": (
+                    reviewer_executor_profile_id or attempt.get("executor_profile_id")
+                ),
                 "work_item_id": work_item_id,
                 "attempt_id": attempt["id"],
                 "strategy_snapshot_id": run["strategy_snapshot_id"],

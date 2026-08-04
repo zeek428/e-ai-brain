@@ -1729,6 +1729,41 @@ def validate_rd_delivery_e2e(
     )
     requirement_id = str(requirement.get("id") or "")
     _assert(requirement_id, "Requirement creation did not return an id")
+    acceptance_plan = client.post(
+        f"/api/requirements/{requirement_id}/acceptance-test-plans",
+        {
+            "product_id": config.product_id,
+            "title": "R&D delivery E2E acceptance plan",
+        },
+    )
+    acceptance_plan_id = str(acceptance_plan.get("id") or "")
+    _assert(acceptance_plan_id, "Acceptance test plan creation did not return an id")
+    for index, criterion in enumerate(acceptance_criteria, start=1):
+        acceptance_case = client.post(
+            f"/api/acceptance-test-plans/{acceptance_plan_id}/cases",
+            {
+                "case_code": f"rd_e2e_{index}",
+                "criterion": criterion,
+                "title": f"R&D delivery E2E criterion {index}",
+                "verification": {
+                    "path": artifact_path,
+                    "required_text": [criterion],
+                    "type": "file_contains",
+                },
+            },
+        )
+        _assert(
+            str(acceptance_case.get("id") or ""),
+            f"Acceptance case {index} creation did not return an id",
+        )
+    activated_acceptance_plan = client.post(
+        f"/api/acceptance-test-plans/{acceptance_plan_id}/activate",
+        {},
+    )
+    _assert(
+        activated_acceptance_plan.get("status") == "active",
+        "Acceptance test plan did not become active",
+    )
     assessment, scenario_policy_versions = create_scenario_assessment(
         client,
         scenario=scenario,

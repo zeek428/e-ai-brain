@@ -139,6 +139,7 @@ def model_gateway_messages(
         )
     else:
         payload = {
+            "expected_output_schema": {"summary": "non-empty string"},
             "input_json": task.get("input_json", {}),
             "product_context": public_product_context(task.get("product_context")),
             "requirement_snapshot": task.get("requirement_snapshot", {}),
@@ -147,7 +148,8 @@ def model_gateway_messages(
         }
         system_content = (
             "You are the AI Brain model gateway. Return one JSON object only, "
-            "without markdown, comments, or explanatory text."
+            "without markdown, comments, or explanatory text. The object must "
+            "include a non-empty string field named summary."
         )
     return [
         {"role": "system", "content": system_content},

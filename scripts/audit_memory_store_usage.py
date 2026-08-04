@@ -89,6 +89,7 @@ ALLOWED_MEMORY_FALLBACK_SETATTR_FUNCTIONS = {
     ("apps/api/app/services/task_graph_runtime.py", "_memory_dict"),
     ("apps/api/app/services/task_listing.py", "_memory_dict"),
     ("apps/api/app/services/task_persistence_helpers.py", "_memory_list"),
+    ("apps/api/app/services/task_persistence_helpers.py", "_memory_dict"),
     ("apps/api/app/services/task_review_artifacts.py", "_memory_dict"),
     ("apps/api/app/services/user_feedback.py", "_memory_dict"),
     ("apps/api/app/services/user_insights.py", "_memory_dict"),

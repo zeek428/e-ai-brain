@@ -16,6 +16,17 @@ def _memory_list(current_store: Any, collection_name: str) -> list[dict[str, Any
     return collection
 
 
+def _memory_dict(
+    current_store: Any,
+    collection_name: str,
+) -> dict[str, dict[str, Any]]:
+    collection = getattr(current_store, collection_name, None)
+    if not isinstance(collection, dict):
+        collection = {}
+        setattr(current_store, collection_name, collection)
+    return collection
+
+
 def save_task_state_records(
     current_store: Any,
     *,
@@ -43,7 +54,9 @@ def save_task_state_records(
         save_records(**kwargs)
         return
     if repository is None and code_review_report is not None:
-        current_store.code_review_reports[code_review_report["id"]] = code_review_report
+        _memory_dict(current_store, "code_review_reports")[code_review_report["id"]] = (
+            code_review_report
+        )
 
 
 def save_task_start_records(

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, api_error, require_any_permission_or_roles, store
 from app.core.trace import envelope, get_trace_id
@@ -31,6 +31,7 @@ class AcceptanceCaseCreateRequest(BaseModel):
     case_code: str
     criterion: str
     title: str
+    verification: dict[str, Any] = Field(default_factory=dict)
 
 
 class AcceptanceRunCreateRequest(BaseModel):
@@ -119,9 +120,12 @@ def create_plan_case(
             created_by=user["id"],
             plan_id=plan_id,
             title=payload.title,
+            verification=payload.verification,
         )
     except ValueError as exc:
-        raise api_error(404, "NOT_FOUND", str(exc)) from exc
+        if str(exc) == "Acceptance test plan not found":
+            raise api_error(404, "NOT_FOUND", str(exc)) from exc
+        raise api_error(400, "VALIDATION_ERROR", str(exc)) from exc
     return envelope(case, get_trace_id(request))
 
 

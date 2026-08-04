@@ -109,27 +109,40 @@ class ExecutionGovernanceWriteRepository:
     ) -> None:
         with self._connect(autocommit=False) as connection:
             with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO trusted_delivery_records (
-                      record_type, id, product_id, payload_json, created_at, updated_at
-                    )
-                    VALUES (%s, %s, %s, %s::jsonb, COALESCE(%s::timestamptz, now()),
-                            COALESCE(%s::timestamptz, now()))
-                    ON CONFLICT (record_type, id) DO UPDATE SET
-                      product_id = EXCLUDED.product_id,
-                      payload_json = EXCLUDED.payload_json,
-                      updated_at = EXCLUDED.updated_at
-                    """,
-                    (
-                        record_type,
-                        record["id"],
-                        record.get("product_id"),
-                        json.dumps(record, ensure_ascii=False),
-                        record.get("created_at"),
-                        record.get("updated_at") or record.get("created_at"),
-                    ),
+                self._upsert_trusted_delivery_record(
+                    cursor,
+                    record=record,
+                    record_type=record_type,
                 )
+
+    @staticmethod
+    def _upsert_trusted_delivery_record(
+        cursor: Any,
+        *,
+        record: dict[str, Any],
+        record_type: str,
+    ) -> None:
+        cursor.execute(
+            """
+            INSERT INTO trusted_delivery_records (
+              record_type, id, product_id, payload_json, created_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s::jsonb, COALESCE(%s::timestamptz, now()),
+                    COALESCE(%s::timestamptz, now()))
+            ON CONFLICT (record_type, id) DO UPDATE SET
+              product_id = EXCLUDED.product_id,
+              payload_json = EXCLUDED.payload_json,
+              updated_at = EXCLUDED.updated_at
+            """,
+            (
+                record_type,
+                record["id"],
+                record.get("product_id"),
+                json.dumps(record, ensure_ascii=False),
+                record.get("created_at"),
+                record.get("updated_at") or record.get("created_at"),
+            ),
+        )
 
     def save_rd_delivery_evidence_record(
         self,
@@ -518,6 +531,29 @@ class ExecutionGovernanceWriteRepository:
                     cursor,
                     {str(check["id"]): check for check in checks},
                 )
+                self._upsert_audit_events(cursor, audit_events or [])
+
+    def save_quality_gate_completion_bundle_record(
+        self,
+        *,
+        acceptance_runs: list[dict[str, Any]],
+        audit_events: list[dict[str, Any]] | None,
+        checks: list[dict[str, Any]],
+        run: dict[str, Any],
+    ) -> None:
+        with self._connect(autocommit=False) as connection:
+            with connection.cursor() as cursor:
+                self.upsert_quality_gate_runs(cursor, {str(run["id"]): run})
+                self.upsert_quality_gate_checks(
+                    cursor,
+                    {str(check["id"]): check for check in checks},
+                )
+                for acceptance_run in acceptance_runs:
+                    self._upsert_trusted_delivery_record(
+                        cursor,
+                        record=acceptance_run,
+                        record_type="acceptance_test_run",
+                    )
                 self._upsert_audit_events(cursor, audit_events or [])
 
     def save_agent_loop_bundle_record(

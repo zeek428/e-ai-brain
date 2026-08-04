@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
 from app.api.deps import api_error
 from app.core.store import MemoryStore
+from app.services.rd_git_branches import rd_work_item_branch_name
 from app.services.rd_git_delivery import (
     finalize_ready_for_release_target,
     list_run_git_deliveries,
+    reconcile_rd_git_delivery_control_plane,
     record_ready_for_release_evidence,
     record_version_git_delivery,
     record_version_git_delivery_from_runner,
@@ -80,6 +83,21 @@ def _persist_verified_callback(
     }
     store.external_event_inbox[str(callback["id"])] = callback
     return callback
+
+
+def test_work_item_branch_name_is_valid_and_collision_resistant_for_internal_ids() -> None:
+    first = rd_work_item_branch_name(
+        "rd_collaboration_run_030",
+        "rd_collaboration_run_030:plan:1:item:implement_e2e_artifact",
+    )
+    second = rd_work_item_branch_name(
+        "rd_collaboration_run_030",
+        "rd_collaboration_run_030-plan-1-item-implement_e2e_artifact",
+    )
+
+    assert first.startswith("rd/rd_collaboration_run_030/")
+    assert ":" not in first
+    assert first != second
 
 
 def _record_verified_delivery(store: MemoryStore) -> dict[str, object]:
@@ -236,6 +254,49 @@ def test_runner_delivery_accepts_native_local_result_shapes_and_ignores_remote_c
         "signature_status",
     ):
         assert forged not in persisted
+
+
+def test_runner_delivery_preserves_human_readable_test_suite_name() -> None:
+    store, ai_task, runner_task = _runner_delivery_fixture(envelope="result")
+    runner_task["result_json"]["result"]["test_evidence"]["suite"] = (
+        "independent quality gate + version level contract"
+    )
+
+    recorded = record_version_git_delivery_from_runner(
+        store,
+        ai_task=ai_task,
+        runner_task=runner_task,
+    )
+
+    assert recorded is not None
+    assert recorded["delivery"]["test_evidence"]["suite"] == (
+        "independent quality gate + version level contract"
+    )
+
+
+def test_runner_delivery_uses_canonical_branch_for_internal_work_item_ids() -> None:
+    work_item_id = "rd_collaboration_run_030:plan:1:item:implement_e2e_artifact"
+    store, ai_task, runner_task = _runner_delivery_fixture(
+        envelope=None,
+        work_item_id=work_item_id,
+    )
+    store.rd_work_items[work_item_id] = {
+        "id": work_item_id,
+        "collaboration_run_id": "run-1",
+        "work_item_type": "implementation",
+        "status": "completed",
+    }
+    expected_branch = rd_work_item_branch_name("run-1", work_item_id)
+    runner_task["result_json"]["git_delivery"]["working_branch"] = expected_branch
+
+    recorded = record_version_git_delivery_from_runner(
+        store,
+        ai_task=ai_task,
+        runner_task=runner_task,
+    )
+
+    assert recorded is not None
+    assert recorded["delivery"]["working_branch"] == expected_branch
 
 
 @pytest.mark.parametrize(
@@ -701,6 +762,102 @@ def test_runner_delivery_outbox_and_signed_provider_callback_form_the_only_remot
     assert incomplete.value.detail["code"] == "RD_DELIVERY_EVIDENCE_INCOMPLETE"
     reconciled = _materialized_delivery(store, str(created["delivery"]["id"]))
     assert reconciled["remote_commit_sha"] == "local-sha-1"
+
+
+def test_git_push_waits_on_one_stable_approval_and_requeues_after_human_approval() -> None:
+    from app.services.ai_executor_runner_approvals import (
+        approve_ai_executor_approval_request_response,
+    )
+    from app.services.operational_deployments import process_execution_outbox_events
+
+    store = _delivery_store()
+    store.ai_executor_runners["runner-1"] = {
+        "id": "runner-1",
+        "executor_types": ["codex"],
+        "status": "active",
+        "workspace_roots": ["/tmp/rd"],
+    }
+    store.ai_executor_tasks["runner-source-approval"] = {
+        "id": "runner-source-approval",
+        "ai_task_id": "task-approval",
+        "created_by": "user_admin",
+        "executor_type": "codex",
+        "runner_id": "runner-1",
+        "status": "succeeded",
+        "timeout_seconds": 600,
+        "workspace_root": "/tmp/rd/run-1/coding-1",
+    }
+    created = record_version_git_delivery(
+        store,
+        collaboration_run_id="run-1",
+        work_item_id="coding-1",
+        repository_id="repo-1",
+        provider="gitlab",
+        working_branch="rd/run-1/coding-1",
+        version_branch="release/v1",
+        target_branch="main",
+        local_commit_sha="local-sha-approval",
+        workspace_isolation={
+            "worktree_path": "/tmp/rd/run-1/coding-1",
+            "branch": "rd/run-1/coding-1",
+            "status": "isolated",
+        },
+        source_runner_id="runner-1",
+        source_runner_task_id="runner-source-approval",
+    )
+
+    assert process_execution_outbox_events(store, worker_id="worker-approval") == 1
+    assert len(store.ai_executor_approval_requests) == 1
+    approval_request = next(iter(store.ai_executor_approval_requests.values()))
+    assert approval_request["id"].startswith("rd-git-push-approval:")
+    assert approval_request["approval_request"]["source"] == "rd_git_delivery"
+    outbox = store.execution_outbox_events[created["outbox"]["id"]]
+    assert outbox["status"] == "pending"
+    assert outbox["payload"]["push_approval_request_id"] == approval_request["id"]
+
+    approve_ai_executor_approval_request_response(
+        approval_request_id=approval_request["id"],
+        current_store=store,
+        payload=SimpleNamespace(
+            approval_id=None,
+            approved_operations=["git_push_or_merge"],
+            expires_at=None,
+            reason="approved for the frozen delivery",
+        ),
+        user={"id": "user_admin", "permissions": ["system.plugins.manage"]},
+    )
+
+    assert process_execution_outbox_events(store, worker_id="worker-approval") == 1
+    push_tasks = [
+        task for task in store.ai_executor_tasks.values() if task.get("task_kind") == "git_push"
+    ]
+    assert len(push_tasks) == 1
+    assert push_tasks[0]["request_config"]["ai_executor_approval"]["approved"] is True
+
+
+def test_delivery_control_plane_recovers_terminal_integration_and_dead_letter_outbox() -> None:
+    store, ai_task, runner_task = _runner_delivery_fixture(envelope="result")
+    ai_task["status"] = "completed"
+    store.ai_tasks[ai_task["id"]] = ai_task
+    store.ai_executor_tasks[runner_task["id"]] = runner_task
+    store.repository = SimpleNamespace(
+        list_ai_executor_tasks=lambda: [runner_task],
+        load_ai_tasks=lambda: {"ai_tasks": {ai_task["id"]: ai_task}},
+    )
+
+    recovered = reconcile_rd_git_delivery_control_plane(store)
+
+    assert recovered == {"delivery_count": 1, "outbox_requeue_count": 0}
+    delivery = next(iter(store.rd_git_deliveries.values()))
+    outbox = store.execution_outbox_events[delivery["outbox_event_id"]]
+    outbox.update({"attempt_count": 5, "last_error": "dispatch_failed", "status": "dead_letter"})
+
+    requeued = reconcile_rd_git_delivery_control_plane(store)
+
+    assert requeued == {"delivery_count": 0, "outbox_requeue_count": 1}
+    recovered_outbox = store.execution_outbox_events[delivery["outbox_event_id"]]
+    assert recovered_outbox["status"] == "pending"
+    assert recovered_outbox["attempt_count"] == 0
 
 
 def test_incomplete_callback_is_retryable_instead_of_being_marked_completed() -> None:

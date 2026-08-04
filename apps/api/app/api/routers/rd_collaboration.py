@@ -152,6 +152,20 @@ def _require(user: dict[str, Any], permission: str) -> None:
     )
 
 
+def _require_work_item_review(user: dict[str, Any]) -> None:
+    """Allow the dedicated reviewer role to complete only assigned reviews.
+
+    Product scope and the frozen reviewer-seat match remain enforced by the
+    route and scheduler respectively; this deliberately does not grant the
+    reviewer planning or work-item execution rights.
+    """
+    require_any_permission_or_roles(
+        user,
+        {"delivery.rd_collaboration.work"},
+        {"admin", "rd_owner", "product_owner", "developer", "tester", "reviewer"},
+    )
+
+
 def _get(
     current_store: Any, collection: str, record_id: str, repository_method: str
 ) -> dict[str, Any] | None:
@@ -722,7 +736,7 @@ def review(
     payload: ReviewRequest,
     user: dict[str, Any] = CurrentUser,
 ) -> dict[str, Any]:
-    _require(user, "delivery.rd_collaboration.work")
+    _require_work_item_review(user)
     require_work_item_scope(store(request), user, work_item_id)
     result = review_work_item(
         store(request),

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-python - <<'PY'
+"${PYTHON_BIN:-python3}" - <<'PY'
 from pathlib import Path
 from hashlib import sha256
 import os

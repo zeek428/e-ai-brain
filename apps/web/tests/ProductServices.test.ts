@@ -7,6 +7,46 @@ afterEach(() => {
 });
 
 describe('product service API mappings', () => {
+  it('preserves delivery-stage product version statuses', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      expect(String(input)).toBe('/api/product-versions');
+      return new Response(
+        JSON.stringify({
+          data: {
+            items: [
+              {
+                code: 'v-ready',
+                id: 'version_ready',
+                name: '待发布版本',
+                product_id: 'product_api',
+                status: 'ready_for_release',
+              },
+              {
+                code: 'v-deploying',
+                id: 'version_deploying',
+                name: '部署中版本',
+                product_id: 'product_api',
+                status: 'deploying',
+              },
+            ],
+            total: 2,
+          },
+        }),
+        { headers: { 'Content-Type': 'application/json' }, status: 200 },
+      );
+    });
+    window.localStorage.setItem('ai_brain_access_token', 'token-admin');
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { fetchDeliveryIterationVersions } = await import('../src/services/aiBrain');
+    const versions = await fetchDeliveryIterationVersions();
+
+    expect(versions.map((version) => version.status)).toEqual([
+      'ready_for_release',
+      'deploying',
+    ]);
+  });
+
   it('sends product subresource CRUD requests to backend APIs without exposing git credentials', async () => {
     const jsonResponse = (body: unknown) =>
       new Response(JSON.stringify(body), {

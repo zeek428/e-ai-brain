@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 
 from cryptography.hazmat.primitives import serialization
@@ -15,10 +16,20 @@ def _signed_verifier_task(
     boundary_id: str,
     private_key: Ed25519PrivateKey,
 ) -> tuple[dict, dict]:
+    result_json: dict = {}
     payload = {
         "base_commit": "abc123",
+        "result_sha256": hashlib.sha256(
+            json.dumps(
+                result_json,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest(),
         "result_commit": "def456",
         "runner_task_id": "ai_executor_task_verify_001",
+        "status": "succeeded",
         "test_summary": {"passed": 3},
     }
     serialized = json.dumps(
@@ -43,12 +54,12 @@ def _signed_verifier_task(
     task = {
         "id": "ai_executor_task_verify_001",
         "runner_id": runner["id"],
-        "result_json": {
-            "execution_attestation": {
-                "payload": payload,
-                "signature": base64.b64encode(signature).decode("ascii"),
-            }
-        },
+        "status": "succeeded",
+        "result_json": result_json,
+    }
+    task["result_json"]["execution_attestation"] = {
+        "payload": payload,
+        "signature": base64.b64encode(signature).decode("ascii"),
     }
     return runner, task
 

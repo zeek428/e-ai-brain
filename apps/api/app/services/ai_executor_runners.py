@@ -4,6 +4,7 @@ import base64
 import hashlib
 import secrets
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -18,6 +19,10 @@ from app.services.agent_autonomy import (
     record_agent_coding_completed,
 )
 from app.services.ai_executor_assessment_gateway import execute_assessment_gateway_task
+from app.services.ai_executor_runner_assessment_completion import (
+    complete_ai_assessment_gateway_runner_task,
+)
+from app.services.ai_executor_runner_auto_commit import complete_ai_task_with_auto_commit
 from app.services.ai_executor_runner_constants import (
     AI_EXECUTOR_LOCAL_RUNNER_TYPES,
     AI_EXECUTOR_RUNNER_CAPABILITIES,
@@ -50,7 +55,6 @@ from app.services.ai_executor_runner_health import (
 from app.services.ai_executor_runner_packages import build_ai_executor_runner_install_package
 from app.services.ai_executor_runner_persistence import (
     _delete_runner_record,
-    _memory_collection,
     _persist_record,
     _persist_task_state_records,
     _read_collection,
@@ -100,7 +104,6 @@ from app.services.operational_records import record_audit_event
 from app.services.product_scope import product_scope_filter
 from app.services.quality_gates import (
     complete_pre_merge_quality_gate,
-    quality_gate_allows_auto_merge,
     start_pre_merge_quality_gate,
 )
 from app.services.rd_work_item_execution import (
@@ -109,20 +112,7 @@ from app.services.rd_work_item_execution import (
     project_failed_coding_runner_result,
     project_work_item_quality_gate_result,
 )
-from app.services.task_graph_runtime import latest_graph_run, transition_latest_graph_run
 from app.services.task_output_summary import readable_runner_task_output_summary
-from app.services.task_persistence_helpers import (
-    record_audit_event as record_task_audit_event,
-)
-from app.services.task_persistence_helpers import save_review_decision_records
-from app.services.task_review_artifacts import (
-    advance_requirement_after_task_completed,
-    confirm_code_review_report,
-    create_automated_testing_bugs,
-    create_knowledge_deposit,
-    create_post_release_bugs,
-)
-from app.services.task_workflow_context import task_workflow_write_store
 
 
 def _ensure_admin(user: dict[str, Any]) -> None:
@@ -223,7 +213,6 @@ def create_ai_executor_runner_install_package_response(
     runner = _read_record(current_store, "ai_executor_runners", runner_id)
     if runner is None:
         raise api_error(404, "NOT_FOUND", "AI executor runner not found")
-
     return build_ai_executor_runner_install_package(
         runner,
         arch=arch,
@@ -349,152 +338,6 @@ def _code_change_review_mode(policy: dict[str, Any] | None) -> str:
     return "auto_commit" if mode == "auto_commit" else "manual_review"
 
 
-def _complete_ai_task_with_auto_commit_if_configured(
-    current_store: Any,
-    *,
-    ai_task: dict[str, Any],
-    executor_snapshot: dict[str, Any],
-    output_json: dict[str, Any],
-    quality_gate_run: dict[str, Any] | None,
-    runner_id: str,
-) -> bool:
-    policy = _load_executor_policy_for_ai_task(current_store, ai_task)
-    if (
-        _code_change_review_mode(policy) != "auto_commit"
-        or quality_gate_run is None
-        or not quality_gate_allows_auto_merge(quality_gate_run)
-    ):
-        return False
-
-    write_store = task_workflow_write_store(current_store)
-    task = write_store.ai_tasks.get(ai_task["id"], dict(ai_task))
-    now = datetime.now(UTC).isoformat()
-    review_id = current_store.new_id("review")
-    review = {
-        "ai_task_id": task["id"],
-        "content": output_json,
-        "created_at": now,
-        "decided_at": now,
-        "decided_by": "system",
-        "decision_reason": "auto_commit_by_executor_policy",
-        "id": review_id,
-        "questions": [],
-        "stage": task.get("task_type") or "executor_result",
-        "status": "approved",
-        "updated_at": now,
-        "version": 1,
-    }
-    if getattr(write_store, "repository", None) is None:
-        _memory_collection(write_store, "human_reviews")[review_id] = review
-    review_ids = list(task.get("review_ids") or [])
-    if review_id not in review_ids:
-        review_ids.append(review_id)
-    task.update(
-        {
-            "current_step": "executor_completed",
-            "output_json": output_json,
-            "review_ids": review_ids,
-            "status": "completed",
-            "updated_at": now,
-        }
-    )
-
-    audit_start_index = len(write_store.audit_events)
-    record_task_audit_event(
-        write_store,
-        event_type="ai_task.executor_completed",
-        actor_id=runner_id,
-        ai_task_id=task["id"],
-        subject_type="ai_task",
-        subject_id=task["id"],
-        payload={
-            "ai_task_id": task["id"],
-            **executor_snapshot,
-            "code_change_review_mode": "auto_commit",
-            "executor_policy_id": (policy or {}).get("id"),
-            "quality_gate_run_id": quality_gate_run["id"],
-        },
-    )
-    from app.services.ai_executor_workspace_isolation import (
-        mark_ai_executor_workspace_isolation_decision,
-    )
-
-    mark_ai_executor_workspace_isolation_decision(
-        current_store,
-        action="merge",
-        decided_by="system",
-        reason="auto_commit_by_executor_policy",
-        task=task,
-    )
-    confirm_code_review_report(write_store, task)
-    created_bug_ids = [
-        *create_automated_testing_bugs(write_store, actor_id="system", task=task),
-        *create_post_release_bugs(write_store, actor_id="system", task=task),
-    ]
-    advance_requirement_after_task_completed(write_store, task)
-    knowledge_deposit = create_knowledge_deposit(write_store, task)
-    checkpoint = transition_latest_graph_run(
-        write_store,
-        task=task,
-        status="completed",
-        current_step="complete_archive",
-        state_snapshot={
-            "code_change_review_mode": "auto_commit",
-            "quality_gate_run_id": quality_gate_run["id"],
-            "review_id": review_id,
-            "task_status": task["status"],
-        },
-    )
-    record_task_audit_event(
-        write_store,
-        event_type="review.submitted",
-        actor_id="system",
-        ai_task_id=task["id"],
-        subject_type="human_review",
-        subject_id=review_id,
-        payload={
-            "code_change_review_mode": "auto_commit",
-            "decision": "approved",
-            "executor_policy_id": (policy or {}).get("id"),
-            "quality_gate_run_id": quality_gate_run["id"],
-        },
-    )
-    record_task_audit_event(
-        write_store,
-        event_type="ai_task.executor_auto_committed",
-        actor_id="system",
-        ai_task_id=task["id"],
-        subject_type="ai_task",
-        subject_id=task["id"],
-        payload={
-            "executor_policy_id": (policy or {}).get("id"),
-            "quality_gate_run_id": quality_gate_run["id"],
-            "runner_id": runner_id,
-            "runner_task_id": executor_snapshot.get("runner_task_id"),
-        },
-    )
-    graph_run = latest_graph_run(write_store, task)
-    requirement = write_store.requirements.get(task.get("requirement_id"))
-    code_review_report = (
-        write_store.code_review_reports.get(task.get("code_review_report_id"))
-        if task.get("code_review_report_id")
-        else None
-    )
-    save_review_decision_records(
-        write_store,
-        task=task,
-        review=review,
-        graph_run=graph_run,
-        checkpoint=checkpoint,
-        requirement=requirement,
-        knowledge_deposits=[knowledge_deposit],
-        bugs=[write_store.bugs[bug_id] for bug_id in created_bug_ids],
-        code_review_report=code_review_report,
-        audit_events=write_store.audit_events[audit_start_index:],
-    )
-    return True
-
-
 def _sync_runner_completion_to_ai_task(
     current_store: Any,
     *,
@@ -508,6 +351,17 @@ def _sync_runner_completion_to_ai_task(
         return
     ai_task = _load_ai_task(current_store, task.get("ai_task_id"))
     if ai_task is None:
+        return
+    if task.get("task_kind") == "work_item_review":
+        if task.get("status") not in AI_EXECUTOR_TASK_TERMINAL_STATUSES:
+            return
+        from app.services.rd_ai_work_item_reviews import complete_ai_work_item_review
+
+        complete_ai_work_item_review(
+            current_store,
+            ai_task=ai_task,
+            runner_task=task,
+        )
         return
     if complete_rd_coding_runner_atomically(
         current_store,
@@ -626,11 +480,12 @@ def _sync_runner_completion_to_ai_task(
                 quality_gate_run=quality_gate_run,
             )
             return
-        if _complete_ai_task_with_auto_commit_if_configured(
+        if complete_ai_task_with_auto_commit(
             current_store,
             ai_task=ai_task,
             executor_snapshot=executor_snapshot,
             output_json=output_json,
+            policy=_load_executor_policy_for_ai_task(current_store, ai_task),
             quality_gate_run=quality_gate_run,
             runner_id=runner_id,
         ):
@@ -859,7 +714,6 @@ def _sync_runner_completion_to_scheduled_run(
     from app.services.scheduled_job_ai_executor import (
         sync_ai_executor_completion_to_scheduled_run,
     )
-
     if sync_ai_executor_completion_to_scheduled_run(
         current_store,
         runner_id=runner_id,
@@ -1770,6 +1624,30 @@ def claim_ai_executor_task_response(
     return {"task": _task_public(task)}
 
 
+def _reconcile_terminal_quality_gate_completion(
+    current_store: Any,
+    *,
+    task: dict[str, Any],
+    runner_id: str,
+) -> bool:
+    """Replay a persisted quality-gate projection after a post-write failure.
+
+    Runner result persistence happens before downstream collaboration projection.
+    A transient projection error must therefore remain recoverable when the
+    Runner retries its already-terminal completion callback.
+    """
+    if task.get("task_kind") != "quality_gate" or task.get("status") not in {
+        "succeeded",
+        "failed",
+        "cancelled",
+        "timed_out",
+        "dead_letter",
+    }:
+        return False
+    _sync_runner_completion_to_ai_task(current_store, task=task, runner_id=runner_id)
+    return True
+
+
 def _sync_ai_executor_task_by_id(current_store: Any, task_id: str) -> dict[str, Any]:
     sync_ai_executor_task_store(current_store)
     task = _read_record(current_store, "ai_executor_tasks", task_id)
@@ -2057,12 +1935,42 @@ def retry_ai_executor_task_response(
             "source_task_id": source_task["id"],
         },
     )
-    _persist_record(
-        current_store,
-        "save_ai_executor_task_record",
-        retry_task,
-        audit_event=audit_event,
-    )
+    assessment_execution_id = str(
+        (source_task.get("input_payload") or {}).get("assessment_execution_id") or ""
+    ).strip()
+    if assessment_execution_id and source_task.get("task_kind") == "assessment":
+        retry_assessment = getattr(
+            getattr(current_store, "repository", None),
+            "retry_ai_assessment_runner_task",
+            None,
+        )
+        if not callable(retry_assessment):
+            raise api_error(
+                503,
+                "REPOSITORY_REQUIRED",
+                "Assessment retry persistence is unavailable",
+            )
+        try:
+            retry_assessment(
+                source_task=source_task,
+                retry_task=retry_task,
+                audit_event=audit_event,
+            )
+        except PsycopgError:
+            raise
+        except Exception as exc:
+            raise api_error(
+                409,
+                getattr(exc, "code", "ASSESSMENT_EXECUTION_INVALID"),
+                str(exc),
+            ) from exc
+    else:
+        _persist_record(
+            current_store,
+            "save_ai_executor_task_record",
+            retry_task,
+            audit_event=audit_event,
+        )
     _sync_runner_completion_to_scheduled_run(
         current_store,
         task=retry_task,
@@ -2089,9 +1997,15 @@ def complete_ai_executor_task_response(
     task = _read_record(current_store, "ai_executor_tasks", task_id)
     if task is None or task.get("runner_id") != runner_id:
         raise api_error(404, "NOT_FOUND", "AI executor task not found")
-    if task.get("status") in AI_EXECUTOR_TASK_TERMINAL_STATUSES:
-        raise api_error(409, "AI_EXECUTOR_TASK_TERMINAL", "Terminal task cannot be completed")
     status = _ensure_enum(getattr(payload, "status", None), AI_EXECUTOR_TASK_STATUSES, "status")
+    if task.get("status") in AI_EXECUTOR_TASK_TERMINAL_STATUSES:
+        if status == task.get("status") and _reconcile_terminal_quality_gate_completion(
+            current_store,
+            task=task,
+            runner_id=runner_id,
+        ):
+            return {"task": _task_public(task)}
+        raise api_error(409, "AI_EXECUTOR_TASK_TERMINAL", "Terminal task cannot be completed")
     if status not in AI_EXECUTOR_TASK_TERMINAL_STATUSES and status != "running":
         raise api_error(400, "VALIDATION_ERROR", "Task completion status is invalid")
     now = datetime.now(UTC).isoformat()
@@ -2271,7 +2185,13 @@ def execute_ai_assessment_task_gateway_response(
 ) -> dict[str, Any]:
     return execute_assessment_gateway_task(
         authenticate_runner=_authenticated_runner,
-        complete_task=complete_ai_executor_task_response,
+        complete_assessment=partial(
+            complete_ai_assessment_gateway_runner_task,
+            append_task_logs=_append_task_logs,
+            sync_ai_task=_sync_runner_completion_to_ai_task,
+            sync_scheduled_run=_sync_runner_completion_to_scheduled_run,
+            task_public=_task_public,
+        ),
         current_store=current_store,
         request=request,
         runner_id=runner_id,

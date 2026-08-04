@@ -1098,7 +1098,7 @@ def test_start_task_writes_review_graph_and_checkpoint_without_request_persist()
         assert [review["id"] for review in pending_reviews] == [started["review_id"]]
         assert review_detail["id"] == started["review_id"]
         assert review_detail["task"]["id"] == generated["task_id"]
-        assert repository.task_workflow_source_row_reads == 4
+        assert repository.task_workflow_source_row_reads == 3
         assert (
             f"start:{generated['task_id']}:{started['review_id']}:"
             f"{started['graph_run_id']}:{started['checkpoint_id']}"

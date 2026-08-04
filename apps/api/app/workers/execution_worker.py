@@ -21,6 +21,7 @@ from app.services.rd_collaboration_graph_event_projection import (
     process_rd_collaboration_graph_events,
 )
 from app.services.rd_collaboration_plan_generation import plan_pending_collaboration_runs
+from app.services.rd_git_delivery import reconcile_rd_git_delivery_control_plane
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ def run_execution_worker_iteration(
     rd_collaboration_graph_runtime: Any | None = None,
     collaboration_planner: Any | None = None,
 ) -> dict[str, int]:
+    rd_git_delivery_reconciliation = reconcile_rd_git_delivery_control_plane(current_store)
     outbox_count = process_execution_outbox_events(
         current_store,
         worker_id=worker_id,
@@ -89,6 +91,12 @@ def run_execution_worker_iteration(
         "rd_collaboration_graph_event_count": rd_collaboration_graph_event_count,
         "rd_collaboration_plan_count": len(rd_collaboration_planning["planned_run_ids"]),
         "reconciliation_count": reconciliation_count,
+        "rd_git_delivery_projection_count": rd_git_delivery_reconciliation[
+            "delivery_count"
+        ],
+        "rd_git_delivery_outbox_requeue_count": rd_git_delivery_reconciliation[
+            "outbox_requeue_count"
+        ],
     }
     classified_dispatch_counts = {
         "rd_collaboration_auto_dispatch_deferred_count": len(

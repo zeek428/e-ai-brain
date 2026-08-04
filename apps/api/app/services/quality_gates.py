@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import fnmatch
+import json
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
-from app.services.acceptance_test_plans import evaluate_acceptance_coverage
+from app.services.acceptance_test_plans import (
+    acceptance_verification_fingerprint,
+    active_acceptance_case_verification_bundle,
+    build_acceptance_test_run,
+    evaluate_acceptance_coverage,
+)
 from app.services.ai_executor_task_creation import create_ai_executor_task
 from app.services.execution_attestations import verify_execution_attestation
 from app.services.operational_records import read_memory_dict, record_audit_event
@@ -67,6 +73,11 @@ MANUAL_REVIEW_REASON_CODES = {
     "PROTECTED_PATH_REQUIRES_MANUAL_REVIEW",
     "VERIFIER_ATTESTATION_REQUIRED",
 }
+
+
+def _json_safe(value: Any) -> Any:
+    """Normalize repository timestamp values before storing gate evidence in JSON."""
+    return json.loads(json.dumps(value, default=str))
 
 
 def _policy_candidates(current_store: Any) -> list[dict[str, Any]]:
@@ -261,6 +272,40 @@ def _save_gate_bundle(
         check_store[check["id"]] = deepcopy(check)
 
 
+def _save_gate_completion_bundle(
+    current_store: Any,
+    *,
+    acceptance_runs: list[dict[str, Any]],
+    audit_events: list[dict[str, Any]],
+    checks: list[dict[str, Any]],
+    run: dict[str, Any],
+) -> None:
+    """Persist completion facts together so a retry cannot leave orphan evidence."""
+    repository = getattr(current_store, "repository", None)
+    save_bundle = getattr(repository, "save_quality_gate_completion_bundle_record", None)
+    if callable(save_bundle):
+        save_bundle(
+            acceptance_runs=acceptance_runs,
+            audit_events=audit_events,
+            checks=checks,
+            run=run,
+        )
+        read_memory_dict(current_store, "quality_gate_runs")[run["id"]] = deepcopy(run)
+        check_store = read_memory_dict(current_store, "quality_gate_checks")
+        for check in checks:
+            check_store[check["id"]] = deepcopy(check)
+    else:
+        _save_gate_bundle(
+            current_store,
+            audit_events=audit_events,
+            checks=checks,
+            run=run,
+        )
+    acceptance_store = read_memory_dict(current_store, "acceptance_test_runs")
+    for acceptance_run in acceptance_runs:
+        acceptance_store[acceptance_run["id"]] = deepcopy(acceptance_run)
+
+
 def start_pre_merge_quality_gate(
     current_store: Any,
     *,
@@ -279,11 +324,30 @@ def start_pre_merge_quality_gate(
         ai_task=ai_task,
         executor_policy=executor_policy,
     )
+    acceptance_bundle = active_acceptance_case_verification_bundle(
+        current_store,
+        requirement_id=str(ai_task.get("requirement_id") or ""),
+    )
+    acceptance_cases = acceptance_bundle["cases"]
+    acceptance_case_fingerprints = {
+        str(item["case_id"]): acceptance_verification_fingerprint(item["verification"])
+        for item in acceptance_cases
+        if isinstance(item, dict)
+        and str(item.get("case_id") or "").strip()
+        and isinstance(item.get("verification"), dict)
+    }
+    coding_local_commit_sha = _coding_local_commit_sha(coding_runner_task)
     run_id = current_store.new_id("quality_gate_run")
     run = {
         "id": run_id,
         "policy_id": policy.get("id"),
-        "policy_snapshot": deepcopy(policy),
+        "policy_snapshot": {
+            **deepcopy(policy),
+            "acceptance_cases": deepcopy(acceptance_cases),
+            "acceptance_case_fingerprints": acceptance_case_fingerprints,
+            "acceptance_plan_id": acceptance_bundle["plan_id"],
+            "coding_local_commit_sha": coding_local_commit_sha,
+        },
         "phase": "pre_merge",
         "subject_type": "ai_task",
         "subject_id": ai_task["id"],
@@ -337,7 +401,15 @@ def start_pre_merge_quality_gate(
         else {}
     )
     workspace_root = str(
-        workspace_isolation.get("worktree_path") or coding_runner_task.get("workspace_root") or ""
+        workspace_isolation.get("base_workspace_root")
+        or coding_runner_task.get("workspace_root")
+        or workspace_isolation.get("worktree_path")
+        or ""
+    )
+    comparison_base = (
+        f"{coding_local_commit_sha}^"
+        if coding_local_commit_sha
+        else (coding_runner_task.get("request_config") or {}).get("branch")
     )
     verification_runner = _select_verification_runner(
         current_store,
@@ -354,7 +426,7 @@ def start_pre_merge_quality_gate(
         created_by=str(ai_task.get("created_by") or "system"),
         executor_type=str(coding_runner_task.get("executor_type") or "codex"),
         input_payload={
-            "base_branch": (coding_runner_task.get("request_config") or {}).get("branch"),
+            "base_branch": comparison_base,
             "checks": [
                 {
                     "catalog_code": check.get("command_catalog_code"),
@@ -368,6 +440,8 @@ def start_pre_merge_quality_gate(
             "max_changed_lines": policy.get("max_changed_lines"),
             "protected_paths": policy.get("protected_paths") or [],
             "quality_gate_run_id": run_id,
+            "acceptance_cases": acceptance_cases,
+            "expected_commit_sha": coding_local_commit_sha,
         },
         instruction=(
             "Execute the platform-defined deterministic quality gate catalog. "
@@ -446,7 +520,10 @@ def _gate_run_and_checks(
     if callable(list_runs) and callable(list_checks):
         runs = list(list_runs(subject_id=None, subject_type=None))
         run = next((item for item in runs if item.get("id") == quality_gate_run_id), None)
-        return run, list(list_checks(quality_gate_run_id)) if run else []
+        return (
+            _json_safe(run),
+            _json_safe(list(list_checks(quality_gate_run_id))),
+        ) if run else (None, [])
     run = read_memory_dict(current_store, "quality_gate_runs").get(quality_gate_run_id)
     checks = [
         check
@@ -466,6 +543,24 @@ def _runner_task_record(current_store: Any, runner_task_id: str) -> dict[str, An
         )
     task = read_memory_dict(current_store, "ai_executor_tasks").get(runner_task_id)
     return deepcopy(task) if task else None
+
+
+def _coding_local_commit_sha(coding_runner_task: dict[str, Any]) -> str | None:
+    """Read the Runner's local delivery fact rather than mutable client input."""
+    result_json = coding_runner_task.get("result_json")
+    result_json = result_json if isinstance(result_json, dict) else {}
+    for candidate in (
+        result_json,
+        result_json.get("result"),
+        result_json.get("parsed_output"),
+    ):
+        delivery = candidate.get("git_delivery") if isinstance(candidate, dict) else None
+        if not isinstance(delivery, dict):
+            continue
+        local_commit_sha = str(delivery.get("local_commit_sha") or "").strip()
+        if local_commit_sha:
+            return local_commit_sha
+    return None
 
 
 def _matches_protected_path(path: str, patterns: list[str]) -> bool:
@@ -552,8 +647,65 @@ def complete_pre_merge_quality_gate(
         )
     source_store = task_workflow_read_store(current_store)
     acceptance_task = getattr(source_store, "ai_tasks", {}).get(run.get("subject_id"))
+    expected_acceptance_cases = {
+        str(item.get("case_id") or ""): item
+        for item in policy.get("acceptance_cases") or []
+        if isinstance(item, dict) and str(item.get("case_id") or "")
+    }
+    expected_case_fingerprints = {
+        str(case_id): str(fingerprint)
+        for case_id, fingerprint in (policy.get("acceptance_case_fingerprints") or {}).items()
+        if str(case_id).strip() and str(fingerprint).strip()
+    }
+    if not expected_case_fingerprints:
+        expected_case_fingerprints = {
+            case_id: acceptance_verification_fingerprint(item["verification"])
+            for case_id, item in expected_acceptance_cases.items()
+            if isinstance(item.get("verification"), dict)
+        }
+    expected_commit_sha = str(policy.get("coding_local_commit_sha") or "").strip()
+    acceptance_runs: list[dict[str, Any]] = []
+    for reported in result.get("acceptance_results") or []:
+        if not isinstance(reported, dict):
+            continue
+        case_id = str(reported.get("case_id") or "").strip()
+        artifact_ref = str(reported.get("artifact_ref") or "").strip()
+        commit_sha = str(reported.get("commit_sha") or "").strip()
+        input_fingerprint = str(reported.get("input_fingerprint") or "").strip()
+        status = str(reported.get("status") or "").strip()
+        if (
+            case_id not in expected_acceptance_cases
+            or not artifact_ref
+            or not expected_commit_sha
+            or commit_sha != expected_commit_sha
+            or input_fingerprint != expected_case_fingerprints.get(case_id)
+            or status not in {"passed", "failed"}
+            or not verifier_succeeded
+            or not verifier_trust_isolated
+        ):
+            continue
+        acceptance_runs.append(
+            build_acceptance_test_run(
+            current_store,
+            artifact_ref=artifact_ref,
+            case_id=case_id,
+            commit_sha=commit_sha,
+            input_fingerprint=input_fingerprint,
+            quality_gate_run_id=run_id,
+            status=status,
+            verifier_task_id=str(verifier_runner_task.get("id") or "").strip() or None,
+            )
+        )
     acceptance_coverage = (
-        evaluate_acceptance_coverage(current_store, ai_task=acceptance_task)
+        evaluate_acceptance_coverage(
+            current_store,
+            ai_task=acceptance_task,
+            additional_runs=acceptance_runs,
+            commit_sha=expected_commit_sha or None,
+            expected_case_fingerprints=expected_case_fingerprints,
+            plan_id=str(policy.get("acceptance_plan_id") or "") or None,
+            quality_gate_run_id=run_id,
+        )
         if acceptance_task is not None
         else {"blocked_reasons": []}
     )
@@ -720,8 +872,9 @@ def complete_pre_merge_quality_gate(
             "verifier_runner_task_id": verifier_runner_task.get("id"),
         },
     )
-    _save_gate_bundle(
+    _save_gate_completion_bundle(
         current_store,
+        acceptance_runs=acceptance_runs,
         audit_events=[audit_event],
         checks=checks,
         run=run,

@@ -1,3 +1,6 @@
+import json
+from datetime import UTC, datetime
+
 import pytest
 
 from app.core.store import MemoryStore
@@ -71,6 +74,59 @@ def test_conflicting_case_results_for_same_commit_are_flaky_and_blocked() -> Non
     assert result["flaky_case_ids"] == [case["id"]]
 
 
+def test_frozen_plan_scope_is_not_replaced_by_internal_work_item_criteria() -> None:
+    store = MemoryStore()
+    plan = create_acceptance_test_plan(
+        store,
+        created_by="user_admin",
+        product_id="product_001",
+        requirement_id="requirement_001",
+        title="需求验收计划",
+    )
+    case = create_acceptance_test_case(
+        store,
+        case_code="acceptance.requirement_scope",
+        criterion="需求交付标准",
+        created_by="user_admin",
+        plan_id=plan["id"],
+        title="需求交付标准验收",
+    )
+    activate_acceptance_test_plan(store, plan_id=plan["id"], user_id="user_admin")
+    record_acceptance_test_run(
+        store,
+        artifact_ref="artifact://build/requirement-scope",
+        case_id=case["id"],
+        commit_sha="abc123",
+        input_fingerprint="inputs-v1",
+        status="passed",
+        verifier_task_id="verify_001",
+    )
+    task = _task()
+    task["input_json"]["acceptance_criteria"] = ["返回测试岗位内部证据"]
+
+    result = evaluate_acceptance_coverage(store, ai_task=task, plan_id=plan["id"])
+
+    assert result["blocked_reasons"] == []
+    assert result["unmapped_criteria"] == []
+
+
+def test_acceptance_coverage_plan_is_json_safe_for_postgres_timestamp_rows() -> None:
+    store = MemoryStore()
+    plan = create_acceptance_test_plan(
+        store,
+        created_by="user_admin",
+        product_id="product_001",
+        requirement_id="requirement_001",
+        title="审批导出验收",
+    )
+    store.acceptance_test_plans[plan["id"]]["created_at"] = datetime(2026, 8, 4, tzinfo=UTC)
+
+    result = evaluate_acceptance_coverage(store, ai_task=_task(), plan_id=plan["id"])
+
+    assert result["plan"]["created_at"] == "2026-08-04T00:00:00+00:00"
+    json.dumps(result)
+
+
 def test_active_acceptance_plan_cannot_be_mutated_after_snapshot() -> None:
     store = MemoryStore()
     plan = create_acceptance_test_plan(
@@ -90,4 +146,30 @@ def test_active_acceptance_plan_cannot_be_mutated_after_snapshot() -> None:
             created_by="user_admin",
             plan_id=plan["id"],
             title="后加用例",
+        )
+
+
+def test_file_contains_verification_rejects_paths_outside_the_workspace() -> None:
+    store = MemoryStore()
+    plan = create_acceptance_test_plan(
+        store,
+        created_by="user_admin",
+        product_id="product_001",
+        requirement_id="requirement_001",
+        title="安全验收计划",
+    )
+
+    with pytest.raises(ValueError, match="path"):
+        create_acceptance_test_case(
+            store,
+            case_code="acceptance.outside_workspace",
+            criterion="不得读取工作区外文件",
+            created_by="user_admin",
+            plan_id=plan["id"],
+            title="工作区边界",
+            verification={
+                "path": "../outside.txt",
+                "required_text": ["not allowed"],
+                "type": "file_contains",
+            },
         )

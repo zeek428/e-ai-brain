@@ -1275,6 +1275,15 @@ class ExecutionGovernanceRepository(Protocol):
         run: dict[str, Any],
     ) -> None: ...
 
+    def save_quality_gate_completion_bundle_record(
+        self,
+        *,
+        acceptance_runs: list[dict[str, Any]],
+        audit_events: list[dict[str, Any]] | None,
+        checks: list[dict[str, Any]],
+        run: dict[str, Any],
+    ) -> None: ...
+
     def save_agent_loop_bundle_record(
         self,
         *,

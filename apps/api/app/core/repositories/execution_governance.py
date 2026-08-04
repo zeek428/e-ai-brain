@@ -13,6 +13,11 @@ def _without_none(record: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in record.items() if value is not None}
 
 
+def _json_timestamp(value: Any) -> Any:
+    formatter = getattr(value, "isoformat", None)
+    return formatter() if callable(formatter) else value
+
+
 class ExecutionGovernanceReadRepository:
     def __init__(
         self,
@@ -301,8 +306,8 @@ class ExecutionGovernanceReadRepository:
                         **(row[2] or {}),
                         "id": row[0],
                         "product_id": row[1],
-                        "created_at": row[3],
-                        "updated_at": row[4],
+                        "created_at": _json_timestamp(row[3]),
+                        "updated_at": _json_timestamp(row[4]),
                     }
                     for row in cursor.fetchall()
                 ]
@@ -658,6 +663,9 @@ class ExecutionGovernanceReadRepository:
 
     def save_quality_gate_bundle_record(self, *args: Any, **kwargs: Any) -> None:
         self._write_repository.save_quality_gate_bundle_record(*args, **kwargs)
+
+    def save_quality_gate_completion_bundle_record(self, *args: Any, **kwargs: Any) -> None:
+        self._write_repository.save_quality_gate_completion_bundle_record(*args, **kwargs)
 
     def save_agent_loop_bundle_record(self, *args: Any, **kwargs: Any) -> None:
         self._write_repository.save_agent_loop_bundle_record(*args, **kwargs)

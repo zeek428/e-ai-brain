@@ -26,6 +26,12 @@ def test_execution_worker_iteration_processes_outbox_and_jenkins_sync(monkeypatc
     store = object()
     monkeypatch.setattr(
         execution_worker,
+        "reconcile_rd_git_delivery_control_plane",
+        lambda current_store: calls.append(("git_delivery_reconcile", "execution-worker-test"))
+        or {"delivery_count": 1, "outbox_requeue_count": 2},
+    )
+    monkeypatch.setattr(
+        execution_worker,
         "process_external_event_inbox_events",
         lambda current_store, *, worker_id: calls.append(("external", worker_id)) or 4,
     )
@@ -81,9 +87,12 @@ def test_execution_worker_iteration_processes_outbox_and_jenkins_sync(monkeypatc
         "rd_collaboration_auto_dispatch_count": 1,
         "rd_collaboration_graph_event_count": 5,
         "rd_collaboration_plan_count": 1,
+        "rd_git_delivery_outbox_requeue_count": 2,
+        "rd_git_delivery_projection_count": 1,
         "reconciliation_count": 0,
     }
     assert calls == [
+        ("git_delivery_reconcile", "execution-worker-test"),
         ("outbox", "execution-worker-test"),
         ("external", "execution-worker-test"),
         ("collaboration_graph", "execution-worker-test"),

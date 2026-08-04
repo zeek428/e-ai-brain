@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -59,6 +60,41 @@ class _Connect:
         yield _Connection(self.cursor)
 
 
+def test_list_trusted_delivery_records_keeps_timestamps_json_serializable() -> None:
+    created_at = datetime(2026, 7, 29, 12, 14, 33, tzinfo=UTC)
+    updated_at = datetime(2026, 7, 29, 12, 15, 1, tzinfo=UTC)
+    cursor = _Cursor(
+        rows=[
+            (
+                "acceptance-plan-1",
+                "product-1",
+                {
+                    "id": "acceptance-plan-1",
+                    "status": "draft",
+                    "title": "Delivery acceptance",
+                },
+                created_at,
+                updated_at,
+            )
+        ]
+    )
+    repository = ExecutionGovernanceReadRepository(_Connect(cursor))
+
+    records = repository.list_trusted_delivery_records(record_type="acceptance_test_plan")
+
+    assert records == [
+        {
+            "created_at": created_at.isoformat(),
+            "id": "acceptance-plan-1",
+            "product_id": "product-1",
+            "status": "draft",
+            "title": "Delivery acceptance",
+            "updated_at": updated_at.isoformat(),
+        }
+    ]
+    json.dumps(records)
+
+
 def test_autonomous_delivery_migration_defines_governance_primitives():
     migration = (
         Path(__file__).resolve().parents[1]
@@ -94,6 +130,38 @@ def test_autonomous_delivery_migration_defines_governance_primitives():
     assert "idx_external_event_inbox_claim" in sql
     assert "UNIQUE (provider, delivery_id)" in sql
     assert "UNIQUE (loop_run_id, iteration_number)" in sql
+
+
+def test_acceptance_runs_are_unique_per_quality_gate_case():
+    migration = (
+        Path(__file__).resolve().parents[1]
+        / "app"
+        / "db"
+        / "migrations"
+        / "129_quality_gate_acceptance_run_uniqueness.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "CREATE UNIQUE INDEX" in sql
+    assert "uq_trusted_delivery_acceptance_gate_case" in sql
+    assert "quality_gate_run_id" in sql
+    assert "case_id" in sql
+
+
+def test_ai_work_item_review_is_an_allowed_runner_task_kind() -> None:
+    migration = (
+        Path(__file__).resolve().parents[1]
+        / "app"
+        / "db"
+        / "migrations"
+        / "130_ai_work_item_review_runner.sql"
+    )
+
+    assert migration.is_file()
+    sql = migration.read_text(encoding="utf-8")
+    assert "ck_ai_executor_tasks_task_kind" in sql
+    assert "work_item_review" in sql
 
 
 def test_execution_attestation_repository_persists_and_reads_verified_proofs():
@@ -233,6 +301,46 @@ def test_quality_gate_policy_write_uses_optimistic_lock():
         stale_repository.save_quality_gate_policy_record(policy, expected_version=2)
     assert exc_info.value.current_version == 3
     assert len(stale_cursor.executed) == 1
+
+
+def test_quality_gate_completion_bundle_persists_acceptance_evidence_atomically():
+    cursor = _Cursor()
+    connect = _Connect(cursor)
+    repository = ExecutionGovernanceWriteRepository(connect)
+
+    repository.save_quality_gate_completion_bundle_record(
+        acceptance_runs=[
+            {
+                "id": "acceptance_test_run_001",
+                "product_id": "product_001",
+                "case_id": "acceptance_case_001",
+                "quality_gate_run_id": "quality_gate_run_001",
+                "status": "passed",
+            }
+        ],
+        audit_events=[],
+        checks=[
+            {
+                "id": "quality_gate_check_001",
+                "quality_gate_run_id": "quality_gate_run_001",
+                "check_type": "unit_test",
+                "status": "passed",
+            }
+        ],
+        run={
+            "id": "quality_gate_run_001",
+            "phase": "pre_merge",
+            "subject_type": "ai_task",
+            "subject_id": "task_001",
+            "status": "passed",
+        },
+    )
+
+    assert connect.autocommit_values == [False]
+    executed_sql = "\n".join(sql for sql, _ in cursor.executed)
+    assert "INSERT INTO quality_gate_runs" in executed_sql
+    assert "INSERT INTO quality_gate_checks" in executed_sql
+    assert "INSERT INTO trusted_delivery_records" in executed_sql
 
 
 def test_claim_execution_outbox_events_uses_skip_locked_lease():

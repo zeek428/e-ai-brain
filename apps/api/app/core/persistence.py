@@ -2951,6 +2951,21 @@ class PostgresSnapshotRepository(RdCollaborationReadRepository):
             run=run,
         )
 
+    def save_quality_gate_completion_bundle_record(
+        self,
+        *,
+        acceptance_runs: list[dict[str, Any]],
+        audit_events: list[dict[str, Any]] | None,
+        checks: list[dict[str, Any]],
+        run: dict[str, Any],
+    ) -> None:
+        self._execution_governance_read_repository.save_quality_gate_completion_bundle_record(
+            acceptance_runs=acceptance_runs,
+            audit_events=audit_events,
+            checks=checks,
+            run=run,
+        )
+
     def save_agent_loop_bundle_record(
         self,
         *,

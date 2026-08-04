@@ -658,7 +658,14 @@ function normalizeDashboardLevel(value?: string): 'error' | 'info' | 'success' |
 }
 
 function normalizeProductVersionStatus(status?: string): ProductVersionRecord['status'] {
-  if (status === 'archived' || status === 'planning' || status === 'released' || status === 'testing') {
+  if (
+    status === 'archived' ||
+    status === 'deploying' ||
+    status === 'planning' ||
+    status === 'ready_for_release' ||
+    status === 'released' ||
+    status === 'testing'
+  ) {
     return status;
   }
   return 'active';

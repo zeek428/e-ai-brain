@@ -9,9 +9,35 @@ from app.core.store import MemoryStore
 from app.main import app
 from app.services.model_gateway import call_model_gateway_for_json_object
 from app.services.model_gateway_listing import list_model_gateway_configs_response
+from app.services.model_gateway_task_io import model_gateway_messages
 from tests.requirement_fixtures import seed_accepted_assessment_provenance
 
 client = TestClient(app)
+
+
+def test_requirement_assessment_gateway_message_requires_non_empty_summary() -> None:
+    messages = model_gateway_messages(
+        code_review_payload=None,
+        task={
+            "id": "assessment-runner-task",
+            "input_json": {
+                "assessment_execution_id": "assessment-execution",
+                "requirement_id": "requirement-1",
+            },
+            "input_payload": {
+                "assessment_execution_id": "assessment-execution",
+            },
+            "product_context": {"product_id": "product-1"},
+            "requirement_snapshot": {"id": "requirement-1", "title": "评估需求"},
+            "task_type": "requirement_assessment",
+            "title": "Requirement assessment: requirement-1",
+        },
+    )
+
+    payload = json.loads(messages[1]["content"])
+
+    assert payload["expected_output_schema"]["summary"] == "non-empty string"
+    assert "summary" in messages[0]["content"]
 
 
 def test_structured_json_gateway_call_accepts_a_planner_schema_without_task_specific_fields() -> (

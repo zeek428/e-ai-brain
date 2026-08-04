@@ -407,6 +407,47 @@ def test_default_role_menu_grants_include_required_permissions():
             )
 
 
+def test_postgres_authorization_snapshot_includes_user_scope_grants(
+    monkeypatch,
+) -> None:
+    repository = object.__new__(authorization_repository.PostgresAuthorizationRepository)
+    monkeypatch.setattr(repository, "_role_codes_for_user", lambda _user: ["reviewer"])
+    monkeypatch.setattr(repository, "_permissions_for_roles", lambda _roles: {"review.decide"})
+    monkeypatch.setattr(
+        repository,
+        "_scopes_for_roles",
+        lambda _roles: [
+            {
+                "scope_type": "review_assignment",
+                "scope_id": "self",
+                "access_level": "write",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        repository,
+        "_scopes_for_user",
+        lambda _user_id: [
+            {"scope_type": "product", "scope_id": "product-1", "access_level": "read"}
+        ],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        repository,
+        "_product_member_authorization_for_user",
+        lambda _user_id: (set(), []),
+    )
+    monkeypatch.setattr(repository, "granted_menu_codes_for_roles", lambda _roles: set())
+    monkeypatch.setattr(repository, "menu_resources", lambda: [])
+
+    snapshot = repository.snapshot_for_user({"id": "reviewer-1", "roles": ["reviewer"]})
+
+    assert snapshot.scopes == [
+        {"scope_type": "review_assignment", "scope_id": "self", "access_level": "write"},
+        {"scope_type": "product", "scope_id": "product-1", "access_level": "read"},
+    ]
+
+
 def test_rbac_migration_does_not_seed_non_admin_product_wildcard_scopes():
     sql = MIGRATION.read_text(encoding="utf-8")
     role_scope_seed = re.search(

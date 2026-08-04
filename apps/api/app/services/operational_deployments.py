@@ -3290,6 +3290,40 @@ def _dispatch_rd_git_delivery_outbox_event(
 
     result = dispatch_rd_git_delivery_push_from_outbox(current_store, event=event)
     now = datetime.now(UTC).isoformat()
+    if result.get("waiting_human"):
+        approval_request = result.get("approval_request") or {}
+        event.update(
+            {
+                "attempt_count": 0,
+                "available_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+                "last_error": "AI_EXECUTOR_APPROVAL_REQUIRED",
+                "lease_owner": None,
+                "lease_until": None,
+                "payload": {
+                    **dict(event.get("payload") or {}),
+                    "push_approval_request_id": approval_request.get("id"),
+                },
+                "status": "pending",
+                "updated_at": now,
+            }
+        )
+        audit = record_audit_event(
+            current_store,
+            event_type="rd_git_delivery.push_waiting_human",
+            actor_id=worker_id,
+            subject_type="rd_git_delivery",
+            subject_id=str(event.get("aggregate_id") or event["id"]),
+            payload={
+                "approval_request_id": approval_request.get("id"),
+                "outbox_event_id": event["id"],
+            },
+        )
+        repository = getattr(current_store, "repository", None)
+        save_event = getattr(repository, "save_execution_outbox_event_record", None)
+        if callable(save_event):
+            save_event(event, audit_event=audit)
+        read_memory_dict(current_store, "execution_outbox_events")[event["id"]] = event
+        return
     event.update(
         {
             "last_error": None,

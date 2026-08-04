@@ -57,7 +57,9 @@ export type ProductResourceEditor =
 export const versionStatusLabels: Record<ProductVersionRecord['status'], { color: string; label: string }> = {
   active: { color: 'blue', label: '开发中' },
   archived: { color: 'default', label: '历史归档' },
+  deploying: { color: 'processing', label: '部署中' },
   planning: { color: 'gold', label: '规划中' },
+  ready_for_release: { color: 'orange', label: '待发布' },
   released: { color: 'green', label: '已发布' },
   testing: { color: 'purple', label: '测试中' },
 };

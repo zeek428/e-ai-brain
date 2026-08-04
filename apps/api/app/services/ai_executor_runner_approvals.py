@@ -721,6 +721,12 @@ def approve_ai_executor_approval_request_response(
             event for event in (request_audit_event, action_audit_event) if event is not None
         ],
     )
+    from app.services.rd_git_delivery import requeue_git_delivery_after_approval
+
+    requeue_git_delivery_after_approval(
+        current_store,
+        approval_request=updated_request,
+    )
 
     return {
         "action": action_payload,

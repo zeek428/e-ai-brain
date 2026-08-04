@@ -20,6 +20,13 @@ def _canonical_payload_bytes(payload: dict[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
+def _result_sha256(result_json: dict[str, Any]) -> str:
+    signed_result = {
+        key: value for key, value in result_json.items() if key != "execution_attestation"
+    }
+    return hashlib.sha256(_canonical_payload_bytes(signed_result)).hexdigest()
+
+
 def _runner_record(current_store: Any, runner_id: str) -> dict[str, Any] | None:
     repository = getattr(current_store, "repository", None)
     list_runners = getattr(repository, "list_ai_executor_runners", None)
@@ -163,6 +170,25 @@ def verify_execution_attestation(
             "id": record["id"],
             "status": "invalid",
             "error_code": "EXECUTION_ATTESTATION_INVALID",
+            "payload_sha256": record["payload_sha256"],
+        }
+    if (
+        str(payload.get("status") or "") != str(runner_task.get("status") or "")
+        or str(payload.get("result_sha256") or "") != _result_sha256(result_json)
+    ):
+        record = _record(
+            current_store,
+            runner=runner,
+            runner_task=runner_task,
+            payload=payload,
+            signature=signature,
+            status="invalid",
+            error_code="EXECUTION_ATTESTATION_RESULT_MISMATCH",
+        )
+        return {
+            "id": record["id"],
+            "status": "invalid",
+            "error_code": "EXECUTION_ATTESTATION_RESULT_MISMATCH",
             "payload_sha256": record["payload_sha256"],
         }
     try:

@@ -558,6 +558,108 @@ class RdCollaborationTransaction:
             )
         return execution
 
+    def retry_ai_assessment_runner_task(
+        self,
+        *,
+        source_task: dict[str, Any],
+        retry_task: dict[str, Any],
+        audit_event: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Atomically create an assessment retry and move its frozen execution binding."""
+        source_payload = (
+            source_task.get("input_payload")
+            if isinstance(source_task.get("input_payload"), dict)
+            else {}
+        )
+        retry_payload = (
+            retry_task.get("input_payload")
+            if isinstance(retry_task.get("input_payload"), dict)
+            else {}
+        )
+        execution_id = str(source_payload.get("assessment_execution_id") or "").strip()
+        if (
+            not execution_id
+            or retry_payload.get("assessment_execution_id") != execution_id
+            or retry_task.get("task_kind") != "assessment"
+        ):
+            raise RdCollaborationRepositoryError(
+                "ASSESSMENT_EXECUTION_INVALID",
+                "Assessment retry task is missing frozen execution provenance",
+            )
+        self.cursor.execute(
+            """
+            SELECT id, status, runner_id, input_payload
+            FROM ai_executor_tasks
+            WHERE id = %s
+            FOR UPDATE
+            """,
+            (source_task["id"],),
+        )
+        persisted_source = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
+        if persisted_source is None:
+            raise RdCollaborationRepositoryError("NOT_FOUND", "AI executor task not found")
+        if persisted_source.get("status") not in {
+            "cancelled",
+            "failed",
+            "timed_out",
+            "dead_letter",
+        }:
+            raise RdCollaborationRepositoryError(
+                "AI_EXECUTOR_TASK_NOT_RETRYABLE",
+                "Assessment runner task is not eligible for retry",
+            )
+        if (
+            not isinstance(persisted_source.get("input_payload"), dict)
+            or persisted_source["input_payload"].get("assessment_execution_id") != execution_id
+        ):
+            raise RdCollaborationRepositoryError(
+                "ASSESSMENT_EXECUTION_INVALID",
+                "Source task is not bound to this assessment execution",
+            )
+        self.cursor.execute(
+            """
+            SELECT id, status, ai_executor_task_id, model_invocation_id
+            FROM requirement_assessment_executions
+            WHERE id = %s
+            FOR UPDATE
+            """,
+            (execution_id,),
+        )
+        execution = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
+        if (
+            execution is None
+            or execution.get("status") != "pending"
+            or execution.get("ai_executor_task_id") != source_task["id"]
+            or execution.get("model_invocation_id") is not None
+        ):
+            raise RdCollaborationRepositoryError(
+                "ASSESSMENT_EXECUTION_INVALID",
+                "Assessment execution is not eligible for retry",
+            )
+        self._repository.upsert_ai_executor_tasks(self.cursor, {retry_task["id"]: retry_task})
+        self.cursor.execute(
+            """
+            UPDATE requirement_assessment_executions
+            SET ai_executor_task_id = %s, runner_id = %s, updated_at = now()
+            WHERE id = %s AND ai_executor_task_id = %s AND status = 'pending'
+            RETURNING *
+            """,
+            (
+                retry_task["id"],
+                retry_task["runner_id"],
+                execution_id,
+                source_task["id"],
+            ),
+        )
+        rebound_execution = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
+        if rebound_execution is None:
+            raise RdCollaborationRepositoryError(
+                "ASSESSMENT_EXECUTION_CONFLICT",
+                "Assessment execution retry binding was changed concurrently",
+            )
+        self.save_audit_event(audit_event)
+        return rebound_execution
+
     def complete_ai_assessment_runner_task(
         self,
         *,
@@ -566,14 +668,16 @@ class RdCollaborationTransaction:
         execution_id: str,
         executor_profile_id: str,
         runner_id: str,
-        model_invocation_id: str,
+        model_invocation_id: str | None = None,
+        model_log: dict[str, Any] | None = None,
+        output: dict[str, Any] | None = None,
         audit_event: dict[str, Any],
         outbox_event: dict[str, Any],
     ) -> dict[str, Any]:
         """Commit the frozen runner task, gateway evidence, opinion and event trail together."""
         self.cursor.execute(
             """
-            SELECT id, runner_id, status, input_payload
+            SELECT id, runner_id, status, input_payload, request_config
             FROM ai_executor_tasks WHERE id = %s FOR UPDATE
             """,
             (task["id"],),
@@ -614,6 +718,23 @@ class RdCollaborationTransaction:
             raise RdCollaborationRepositoryError(
                 "ASSESSMENT_EXECUTION_INVALID", "Runner task provenance does not match execution"
             )
+        if model_log is not None or output is not None:
+            if not isinstance(model_log, dict) or not isinstance(output, dict):
+                raise RdCollaborationRepositoryError(
+                    "ASSESSMENT_MODEL_INVOCATION_INVALID",
+                    "Assessment model invocation must include a structured log and output",
+                )
+            model_invocation_id = self.record_assessment_model_invocation(
+                task=task,
+                execution_id=execution_id,
+                model_log=model_log,
+                output=output,
+            )["id"]
+        if not model_invocation_id:
+            raise RdCollaborationRepositoryError(
+                "ASSESSMENT_MODEL_INVOCATION_INVALID",
+                "Assessment runner completion must include a frozen model invocation",
+            )
         self.cursor.execute(
             """
             SELECT id, status, executor_profile_id, product_id, requirement_revision,
@@ -624,6 +745,30 @@ class RdCollaborationTransaction:
             (model_invocation_id,),
         )
         invocation = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
+        invocation_task_id = str(invocation.get("ai_executor_task_id") or "") if invocation else ""
+        retry_source_task_id = str(
+            (persisted_task.get("request_config") or {}).get("retry_of_task_id") or ""
+        )
+        invocation_belongs_to_retry_source = False
+        if invocation_task_id and invocation_task_id != task["id"]:
+            self.cursor.execute(
+                """
+                SELECT status, input_payload
+                FROM ai_executor_tasks
+                WHERE id = %s
+                FOR KEY SHARE
+                """,
+                (invocation_task_id,),
+            )
+            source_task = self._repository._row(cursor=self.cursor, row=self.cursor.fetchone())
+            source_payload = source_task.get("input_payload") if source_task else {}
+            invocation_belongs_to_retry_source = bool(
+                retry_source_task_id == invocation_task_id
+                and source_task is not None
+                and source_task.get("status") in {"cancelled", "failed", "timed_out", "dead_letter"}
+                and isinstance(source_payload, dict)
+                and source_payload.get("assessment_execution_id") == execution_id
+            )
         if invocation is None or (
             invocation.get("status") != "succeeded"
             or invocation.get("executor_profile_id") != executor_profile_id
@@ -631,7 +776,10 @@ class RdCollaborationTransaction:
             or int(invocation.get("requirement_revision") or 0)
             != int(execution.get("input_revision") or 0)
             or invocation.get("strategy_snapshot_id") != execution.get("strategy_snapshot_id")
-            or invocation.get("ai_executor_task_id") != task["id"]
+            or (
+                invocation.get("ai_executor_task_id") != task["id"]
+                and not invocation_belongs_to_retry_source
+            )
             or invocation.get("assessment_execution_id") != execution_id
         ):
             raise RdCollaborationRepositoryError(
@@ -734,13 +882,37 @@ class RdCollaborationTransaction:
                     "Model invocation output is missing an assessment summary",
                 )
             conclusion = {"summary": summary}
+        confidence = output.get("confidence")
+        if isinstance(confidence, bool):
+            confidence = None
+        elif isinstance(confidence, int | float):
+            confidence = float(confidence) if 0 <= confidence <= 1 else None
+        elif isinstance(confidence, str):
+            normalized_confidence = confidence.strip().lower()
+            confidence = {
+                "low": 0.35,
+                "medium": 0.65,
+                "high": 0.9,
+            }.get(normalized_confidence)
+            if confidence is None:
+                try:
+                    parsed_confidence = float(normalized_confidence)
+                except ValueError:
+                    parsed_confidence = None
+                confidence = (
+                    parsed_confidence
+                    if parsed_confidence is not None and 0 <= parsed_confidence <= 1
+                    else None
+                )
+        else:
+            confidence = None
         return {
             "actor_id": actor_id,
             "conclusion_json": conclusion,
             "evidence_refs": output.get("evidence_refs")
             if isinstance(output.get("evidence_refs"), list)
             else [],
-            "confidence": output.get("confidence"),
+            "confidence": confidence,
             "risk_summary": output.get("risk_summary")
             if isinstance(output.get("risk_summary"), dict)
             else {},
@@ -1930,12 +2102,35 @@ class RdCollaborationWriteBase:
             ).complete_ai_assessment_runner_task(**kwargs)
         )
 
+    def retry_ai_assessment_runner_task(self, **kwargs: Any) -> dict[str, Any]:
+        return self._in_transaction(
+            lambda cursor: RdCollaborationTransaction(
+                self, cursor
+            ).retry_ai_assessment_runner_task(**kwargs)
+        )
+
     def save_assessment_model_invocation(self, **kwargs: Any) -> dict[str, Any]:
         return self._in_transaction(
             lambda cursor: RdCollaborationTransaction(
                 self, cursor
             ).save_assessment_model_invocation(**kwargs)
         )
+
+    def get_assessment_model_invocation_for_execution(
+        self,
+        execution_id: str,
+    ) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT *
+                    FROM requirement_assessment_model_invocations
+                    WHERE assessment_execution_id = %s
+                    """,
+                    (execution_id,),
+                )
+                return self._row(cursor=cursor, row=cursor.fetchone())
 
     @staticmethod
     def _idempotency_conflict(message: str, **details: Any) -> RdCollaborationRepositoryError:

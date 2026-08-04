@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 from datetime import UTC, datetime
 
@@ -8,6 +9,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services.rd_git_branches import rd_work_item_branch_name
 from app.services.rd_policy_resolution import (
     PolicyResolutionError,
     _base_snapshot_for_source,
@@ -21,6 +23,7 @@ from app.services.rd_policy_resolution import (
     resolve_work_item_binding,
     validate_snapshot_chain,
 )
+from app.services.rd_task_executor_policies import render_executor_instruction
 from tests.test_technical_solution_export import auth_headers
 
 client = TestClient(app)
@@ -69,8 +72,28 @@ def create_verification_runner(headers: dict[str, str]) -> tuple[dict, Ed25519Pr
     return response.json()["data"], signing_key
 
 
-def signed_execution_attestation(signing_key: Ed25519PrivateKey, *, runner_task_id: str) -> dict:
-    payload = {"runner_task_id": runner_task_id, "status": "succeeded"}
+def signed_execution_attestation(
+    signing_key: Ed25519PrivateKey,
+    *,
+    result_json: dict,
+    runner_task_id: str,
+) -> dict:
+    signed_result = {
+        key: value for key, value in result_json.items() if key != "execution_attestation"
+    }
+    result_sha256 = hashlib.sha256(
+        json.dumps(
+            signed_result,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    payload = {
+        "result_sha256": result_sha256,
+        "runner_task_id": runner_task_id,
+        "status": "succeeded",
+    }
     serialized = json.dumps(
         payload,
         ensure_ascii=True,
@@ -303,9 +326,57 @@ def test_unified_policy_scopes_runner_knowledge_to_task_product():
 
     assert "本产品必须补充回归测试" in claimed["instruction"]
     assert "其他产品专属上下文不能进入任务" not in claimed["instruction"]
+    assert "冻结工作项契约优先于知识中心上下文" in claimed["instruction"]
+    assert (
+        "知识中心上下文仅供参考，不得扩展、覆盖或改变冻结工作项契约"
+        in claimed["instruction"]
+    )
+    assert "不得读取、搜索或修改当前隔离工作区之外的目录" in claimed["instruction"]
+    assert "不要递归搜索相邻隔离工作区、历史任务产物或其说明文件" in claimed["instruction"]
+    assert claimed["instruction"].rfind("冻结工作项契约优先于知识中心上下文") > (
+        claimed["instruction"].find("产品知识中心上下文：")
+    )
     assert [item["document_id"] for item in claimed["input_payload"]["knowledge_references"]] == [
         "policy_knowledge_in_scope"
     ]
+
+
+def test_runner_instruction_names_the_precreated_canonical_work_item_branch() -> None:
+    run_id = "rd_collaboration_run_030"
+    work_item_id = "rd_collaboration_run_030:plan:1:item:implement_e2e_artifact"
+    instruction = render_executor_instruction(
+        {
+            "id": "task_329",
+            "input_json": {
+                "rd_collaboration_run_id": run_id,
+                "rd_work_item_id": work_item_id,
+            },
+            "title": "implement_e2e_artifact",
+        },
+        {"instruction_template": "Execute {{task_id}}"},
+    )
+
+    assert rd_work_item_branch_name(run_id, work_item_id) in instruction
+    assert "平台已在当前隔离工作区预建" in instruction
+    assert "不得切换、创建或删除分支" in instruction
+
+
+def test_runner_instruction_reads_canonical_branch_from_executor_request_config() -> None:
+    run_id = "rd_collaboration_run_030"
+    work_item_id = "rd_collaboration_run_030:plan:1:item:implement_e2e_artifact"
+    instruction = render_executor_instruction(
+        {
+            "id": "task_330",
+            "request_config": {
+                "rd_collaboration_run_id": run_id,
+                "rd_work_item_id": work_item_id,
+            },
+            "title": "implement_e2e_artifact",
+        },
+        {"instruction_template": "Execute {{task_id}}"},
+    )
+
+    assert rd_work_item_branch_name(run_id, work_item_id) in instruction
 
 
 def test_unified_policy_review_requests_workspace_merge_or_discard():
@@ -682,33 +753,36 @@ def test_unified_auto_commit_waits_for_independent_quality_gate():
     assert gate_claim.status_code == 200
     gate_task = gate_claim.json()["data"]["task"]
     assert gate_task is not None
+    gate_result = {
+        "summary": "Independent verification passed",
+        "changed_files": ["apps/api/app/main.py"],
+        "changed_lines": 1,
+        "risk_findings": [],
+        "checks": [
+            {
+                "type": check_type,
+                "status": "passed",
+                "source": "platform_scan"
+                if check_type == "secret_scan"
+                else "platform_verifier",
+                "independent": True,
+                "summary": "passed",
+                "evidence_ref": f"platform://quality/{check_type}/001",
+            }
+            for check_type in ("unit_test", "type_check", "secret_scan")
+        ],
+    }
+    gate_result["execution_attestation"] = signed_execution_attestation(
+        signing_key,
+        result_json=gate_result,
+        runner_task_id=gate_task["id"],
+    )
     gate_completed = client.post(
         f"/api/system/ai-executor-tasks/{gate_task['id']}/complete",
         json={
             "runner_id": verification_runner["id"],
             "status": "succeeded",
-            "result_json": {
-                "summary": "Independent verification passed",
-                "changed_files": ["apps/api/app/main.py"],
-                "changed_lines": 1,
-                "risk_findings": [],
-                "checks": [
-                    {
-                        "type": check_type,
-                        "status": "passed",
-                        "source": "platform_scan"
-                        if check_type == "secret_scan"
-                        else "platform_verifier",
-                        "independent": True,
-                        "summary": "passed",
-                        "evidence_ref": f"platform://quality/{check_type}/001",
-                    }
-                    for check_type in ("unit_test", "type_check", "secret_scan")
-                ],
-                "execution_attestation": signed_execution_attestation(
-                    signing_key, runner_task_id=gate_task["id"]
-                ),
-            },
+            "result_json": gate_result,
         },
         headers={"X-Runner-Token": "verifier-secret"},
     )
@@ -841,31 +915,34 @@ def test_unified_autonomous_loop_retries_failed_gate_with_versioned_context():
         headers={"X-Runner-Token": "verifier-secret"},
     ).json()["data"]["task"]
     assert second_gate_task["task_kind"] == "quality_gate"
+    second_gate_result = {
+        "summary": "第二轮独立验证通过",
+        "risk_findings": [],
+        "checks": [
+            {
+                "type": check_type,
+                "status": "passed",
+                "source": "platform_scan"
+                if check_type == "secret_scan"
+                else "platform_verifier",
+                "independent": True,
+                "summary": "passed",
+                "evidence_ref": f"platform://gate/2/{check_type}",
+            }
+            for check_type in ("unit_test", "type_check", "secret_scan")
+        ],
+    }
+    second_gate_result["execution_attestation"] = signed_execution_attestation(
+        signing_key,
+        result_json=second_gate_result,
+        runner_task_id=second_gate_task["id"],
+    )
     second_gate_completed = client.post(
         f"/api/system/ai-executor-tasks/{second_gate_task['id']}/complete",
         json={
             "runner_id": verification_runner["id"],
             "status": "succeeded",
-            "result_json": {
-                "summary": "第二轮独立验证通过",
-                "risk_findings": [],
-                "checks": [
-                    {
-                        "type": check_type,
-                        "status": "passed",
-                        "source": "platform_scan"
-                        if check_type == "secret_scan"
-                        else "platform_verifier",
-                        "independent": True,
-                        "summary": "passed",
-                        "evidence_ref": f"platform://gate/2/{check_type}",
-                    }
-                    for check_type in ("unit_test", "type_check", "secret_scan")
-                ],
-                "execution_attestation": signed_execution_attestation(
-                    signing_key, runner_task_id=second_gate_task["id"]
-                ),
-            },
+            "result_json": second_gate_result,
         },
         headers={"X-Runner-Token": "verifier-secret"},
     )

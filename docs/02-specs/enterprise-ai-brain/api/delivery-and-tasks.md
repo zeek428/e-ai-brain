@@ -6,6 +6,19 @@
 
 产品需求是研发协同唯一入口。调用顺序为：创建需求 → 正式评估 → 规划版本归组 → 创建协作运行 → 执行工作项/审核/返工 → 质量门禁与远程 Git 提交 → 按策略停在 `ready_for_release` 或经人工确认进入部署。默认不部署时，产品版本保持 `ready_for_release`，协作运行进入 `completed`，并记录 `completion_reason=ready_for_release`。
 
+## 验收计划与独立验证
+
+需求创建后、协作运行启动前，具备 `requirement.create` 或 `task.execute` 权限且拥有产品范围的产品、开发或测试岗位可通过以下公开 API 建立验收计划：
+
+- `POST /api/requirements/{requirement_id}/acceptance-test-plans`：请求体为 `product_id/title`，创建 `draft` 计划；
+- `POST /api/acceptance-test-plans/{plan_id}/cases`：请求体为 `case_code/criterion/title`，并可选 `verification`；
+- `POST /api/acceptance-test-plans/{plan_id}/activate`：冻结用例快照并把该需求原 active 计划置为 `superseded`；激活计划不可再增加用例；
+- `POST /api/acceptance-test-runs`：记录人工或外部测试的事实，必须包含 `case_id/status`，可附带 `commit_sha/artifact_ref/input_fingerprint/verifier_task_id`。
+
+当前平台支持的自动验证配置为 `verification={"type":"file_contains","path":"相对工作区路径","required_text":["必须出现的文本"]}`。`path` 必须是非绝对、无盘符且不含 `..` 的工作区相对路径，`required_text` 不能为空；不支持的验证类型或不安全路径返回 `400 VALIDATION_ERROR`。验证 Runner 必须从本次编码 Runner 已报告的 local commit 读取最多 1 MiB 的 Git blob；工作树不干净、commit/blob 不存在、超限或缺少任一文本均生成失败证据，不能把未提交文件内容伪装为已提交交付物。
+
+实现 Runner 成功后，质量门禁会冻结当时 active 验收计划 ID、用例 ID、验证配置指纹和编码 local commit 到 `quality_gate_run.policy_snapshot`，并把相同的只读快照传给隔离验证 Runner。验证 Runner 对完整结果（含验收结果）生成 Ed25519 证明；证明载荷绑定 `runner_task_id/status/result_sha256`。服务端只接受签名有效、属于该冻结快照、指纹与 commit 完全匹配、带 `runner://` 证据并且属于**当前 quality gate run** 的 `passed|failed` 结果写入验收运行；`(quality_gate_run_id, case_id)` 由唯一索引约束。验收运行、门禁终态、检查项和审计在同一数据库事务提交，重试复用稳定的验收记录 ID；随后仅以该次门禁的证据计算覆盖、Flaky 和阻断原因。运行期间后来激活的替代计划、历史门禁结果或未提交工作树内容都不得解锁在途门禁。未配置可自动验证的用例仍必须有已通过的人工/外部验收运行，否则返回 `ACCEPTANCE_GATE_BLOCKED`；同一 commit 与输入产生相反结果时返回 `ACCEPTANCE_FLAKY`。
+
 阶段边界：P0 覆盖需求评估、版本归组、协作开发测试、工作项取消、基础反馈归因和可信远程交付，并以 `ready_for_release` 为终点；P1 额外覆盖显式资源声明的并行冲突串行化、冻结 AI 席位容量调度、岗位经验审核/复用和可选部署。本分册同时描述 P0 与 P1 契约，P1 小节会显式标注，不能据此把 P1 当作 P0 阻塞项。
 
 ### 正式需求评估与版本归组
@@ -649,6 +662,14 @@ SHA、对账 ID、对账证据哈希和验证时间为空；`reconciled` 记录�
 已持久化的 Provider Inbox 事实。响应不返回 Outbox、工作区或 worktree 路径、
 推送审批、Runner 身份、Provider 回调 ID/哈希/上下文、凭据、Token 或原始
 payload，也不接受客户端提交远程 SHA 或对账状态。
+
+签名 Git 回调包含 `ai_brain.rd_delivery_id` 时，服务端先按该 ID 读取不可变
+交付记录，并使用其中冻结的 `product_id/repository_id/provider` 选择仓库；随后才
+校验回调中的仓库身份、工作分支和远程 Commit。同一 GitHub/GitLab 仓库可被多个
+产品配置，但不得按仓库列表顺序选择第一条；交付不存在、Provider/仓库/分支不匹配
+时返回交付证据不匹配且不能生成对账记录。`external_event_inbox` 在验签接收时保存的
+`_context` 不可修改；映射配置修复后由 Provider 使用新的 Delivery ID 重发，历史
+失败事件保留审计，不允许通过重试改写其冻结上下文。
 
 原生 Runner 终态结果兼容顶层 JSON 以及安装包写入的 `result` /
 `parsed_output` 包装；平台只从首个含 `git_delivery` 的对象采信

@@ -115,8 +115,7 @@ export function PluginRunnerFormFields({ editingRunner }: { editingRunner: boole
           <Select options={aiExecutorRunnerTargetOsOptions} style={{ width: 180 }} />
         </Form.Item>
         <Form.Item noStyle shouldUpdate={(prev, current) => prev.package_arch !== current.package_arch}>
-          {({ getFieldValue }) => {
-            const selectedArch = getFieldValue('package_arch');
+          {() => {
             return (
               <Form.Item label="CPU 架构" name="package_arch" rules={[{ required: true, message: '请选择 CPU 架构' }]}>
                 <Select
