@@ -22,6 +22,7 @@
 - 修复钉钉 AI 表格动作在连接未配置 Base ID 时字段不可输入的问题，支持动作级兜底输入并保留连接级自动带出。
 
 ### Changed
+- 修复真实全链路 Runner 可靠性回归：运行中任务取消现在先校验 `cancel_requested`，再由 Runner 确认 `cancelled` 后进入人工重试；结构化报告同时兼容带证据和不带证据的拆分模块结果，避免成功链路在生成 JSON 报告时因结果对象字段不一致而失败。
 - 修复迭代版本列表与总览把 `ready_for_release`、`deploying` 归一化为“开发中”的问题；版本状态类型、筛选标签和状态推进目标现保留完整交付阶段，测试中版本只推进到待发布，不再跳过待发布直达已发布。帮助中心同步更新真实“待发布 + 协同 completed”页面截图。
 - 研发交付的签名 Git 回调在同一远端仓库被多个产品配置时，改为优先按不可变 `rd_delivery_id` 绑定冻结产品、仓库和 Provider，再校验仓库身份、分支与 Commit；不再按仓库查询顺序误选其他产品。Inbox 已冻结的历史上下文保持不可变，修复配置后使用新的 Provider Delivery 重发，错误事件继续保留审计。
 - Codex Runner 在 linked Git worktree 内执行时，会仅向 Codex 追加经过仓库 `.git` 边界校验的 worktree/common Git 元数据写入目录，解决 `index.lock` 无法创建而不扩大代码工作区或任意父目录权限。

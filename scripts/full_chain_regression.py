@@ -136,7 +136,11 @@ def build_regression_report(
         "steps": [
             {
                 **{"detail": step.detail, "name": step.name},
-                **({"evidence": step.evidence} if step.evidence is not None else {}),
+                **(
+                    {"evidence": evidence}
+                    if (evidence := getattr(step, "evidence", None)) is not None
+                    else {}
+                ),
             }
             for step in steps
         ],

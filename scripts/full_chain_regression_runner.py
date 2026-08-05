@@ -178,10 +178,28 @@ def validate_runner_cancel_retry(
         {"reason": "full-chain cancel retry gate"},
     )
     cancelled_task = cancelled.get("task") or {}
-    _assert(cancelled_task.get("status") == "cancelled", f"Runner task was not cancelled: {cancelled}")
     _assert(
-        cancelled_task.get("error_code") == "AI_EXECUTOR_TASK_CANCELLED",
-        f"Runner cancelled task error code drifted: {cancelled}",
+        cancelled_task.get("status") == "cancel_requested",
+        f"Runner task was not marked for cancellation: {cancelled}",
+    )
+    _assert(
+        cancelled_task.get("error_code") == "AI_EXECUTOR_TASK_CANCEL_REQUESTED",
+        f"Runner cancellation request error code drifted: {cancelled}",
+    )
+    confirmed_cancel = client.post(
+        f"/api/system/ai-executor-tasks/{cancel_task_id}/complete",
+        {
+            "error_code": "AI_EXECUTOR_TASK_CANCELLED",
+            "error_message": "full-chain cancel retry gate",
+            "runner_id": runner["id"],
+            "status": "cancelled",
+        },
+        headers=runner_headers,
+    )
+    cancelled_task = confirmed_cancel.get("task") or {}
+    _assert(
+        cancelled_task.get("status") == "cancelled",
+        f"Runner did not confirm cancellation: {confirmed_cancel}",
     )
 
     retried = client.post(

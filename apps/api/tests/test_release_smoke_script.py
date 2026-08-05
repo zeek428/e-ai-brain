@@ -241,7 +241,7 @@ def test_full_chain_regression_script_writes_structured_json_report():
         '"steps": [',
         '"detail": step.detail',
         '"name": step.name',
-        '"evidence": step.evidence',
+        'getattr(step, "evidence", None)',
         "for step in steps",
         'status="passed"',
         'status="failed"',
@@ -482,6 +482,27 @@ def test_full_chain_regression_report_includes_suite_coverage():
     assert "rd_collaboration" in targeted_coverage["covered_keys"]
     assert "full_chain_trace" in targeted_coverage["skipped_keys"]
     assert targeted_coverage["covered_domain_count"] > dashboard_coverage["covered_domain_count"]
+
+
+def test_full_chain_regression_report_accepts_helper_step_without_evidence():
+    module = _load_full_chain_regression_module()
+    runner_module = sys.modules["full_chain_regression_runner"]
+
+    report = module.build_regression_report(
+        api_base_url="http://api.test",
+        duration_ms=123,
+        error=None,
+        finished_at="2026-06-30T00:00:01+00:00",
+        started_at="2026-06-30T00:00:00+00:00",
+        status="passed",
+        steps=[runner_module.StepResult("runner_reliability", "passed")],
+        suite="runner-reliability",
+        task_execution_mode="simulated_runner",
+    )
+
+    assert report["steps"] == [
+        {"detail": "passed", "name": "runner_reliability"}
+    ]
 
 
 def test_full_chain_regression_slugs_are_unique_for_targeted_suites():
